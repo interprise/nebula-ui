@@ -1,0 +1,150 @@
+/* Layout table for detail/query views */
+.layout-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.layout-table td {
+  padding: 3px 6px;
+  vertical-align: middle;
+}
+
+/* Prompt cells (labels) */
+.prompt-cell {
+  text-align: right;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #333;
+  padding-right: 8px;
+}
+
+/* Content cells (controls) */
+.content-cell {
+  text-align: left;
+}
+
+/* Section headers */
+.section-header {
+  background: #e8e8e8;
+  font-weight: bold;
+  padding: 6px 8px;
+  border-bottom: 1px solid #ccc;
+  text-align: left;
+}
+
+/* Container cells for embedded views/tabs */
+.container-cell {
+  padding: 0;
+}
+
+/* Filler cells */
+.filler-cell {
+  /* empty space */
+}
+
+/* Selector cells */
+.selector-cell {
+  text-align: center;
+}
+
+/* View container */
+.view-container {
+  width: 100%;
+}
+
+.view-title {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 0;
+  border-bottom: 1px solid #e8e8e8;
+  margin-bottom: 8px;
+}
+
+.view-body {
+  overflow-x: auto;
+}
+
+/* Toolbar */
+.toolbar {
+  padding: 8px 0;
+  border-bottom: 1px solid #e8e8e8;
+  margin-bottom: 8px;
+}
+
+/* List container */
+.list-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Tab content area */
+.tab-content {
+  background: #fff;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+/* Hint and highlight text */
+.hint-text {
+  color: #888;
+  font-style: italic;
+}
+
+.highlight-text {
+  color: #1677ff;
+}
+
+/* Break row (section separator) */
+tr.breakRow td {
+  padding-top: 12px;
+}
+
+/* Mandatory field indicator */
+.ant-input-status-error,
+.ant-select-status-error .ant-select-selector {
+  border-color: #ff4d4f !important;
+}
+
+/* Vertical app bar (general operations) */
+.app-bar {
+  width: 48px;
+  min-width: 48px;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 100;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app-bar-btn {
+  width: 36px;
+  height: 36px;
+  color: rgba(255, 255, 255, 0.7) !important;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.app-bar-btn:hover {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* AG Grid sizing */
+.ag-theme-alpine {
+  --ag-row-height: 32px;
+  --ag-header-height: 36px;
+}
