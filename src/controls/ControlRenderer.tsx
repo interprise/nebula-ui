@@ -16,6 +16,16 @@ import {
   DownloadOutlined,
   UploadOutlined,
   BarcodeOutlined,
+  PhoneOutlined,
+  MobileOutlined,
+  MailOutlined,
+  PrinterOutlined,
+  DeleteOutlined,
+  HomeOutlined,
+  DollarOutlined,
+  ToolOutlined,
+  ShoppingOutlined,
+  CarOutlined,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
 import dayjs from 'dayjs';
@@ -67,14 +77,19 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     case 'number':
     case 'money':
       return (
-        <InputNumber
-          {...commonProps}
-          value={value as number}
-          precision={control.decimals}
-          prefix={type === 'money' ? (control.currencySymbol || '€') : undefined}
-          style={{ width: control.size ? control.size * 8 + 32 : 120 }}
-          onChange={handleChange}
-        />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <InputNumber
+            {...commonProps}
+            value={value as number}
+            precision={control.decimals}
+            prefix={type === 'money' ? (control.currencySymbol || '€') : undefined}
+            style={{ width: control.size ? control.size * 8 + 32 : 120 }}
+            onChange={handleChange}
+          />
+          {(control as Record<string, unknown>).unitSuffix && (
+            <span className="unit-suffix">{(control as Record<string, unknown>).unitSuffix as string}</span>
+          )}
+        </span>
       );
 
     case 'date':
@@ -333,6 +348,140 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
 
     case 'highlight':
       return <strong className="highlight-text">{value as string}</strong>;
+
+    // --- EntrAsp custom controls ---
+
+    case 'contatti': {
+      const contacts = (control as Record<string, unknown>).contacts as Array<Record<string, unknown>> | undefined;
+      if (!contacts || contacts.length === 0) return null;
+      return (
+        <div className="contatti-list">
+          {contacts.map((c, i) => (
+            <div key={i} className="contatto-row" style={{ marginBottom: 4 }}>
+              <span style={{ fontWeight: 500, marginRight: 8 }}>
+                {c.flagDefault && <HomeOutlined title="Principale" style={{ marginRight: 2 }} />}
+                {c.flagAmministrazione && <DollarOutlined title="Amministrazione" style={{ marginRight: 2 }} />}
+                {c.flagTecnico && <ToolOutlined title="Tecnico" style={{ marginRight: 2 }} />}
+                {c.flagCommerciale && <ShoppingOutlined title="Commerciale" style={{ marginRight: 2 }} />}
+                {c.flagSpedizione && <CarOutlined title="Logistica" style={{ marginRight: 2 }} />}
+                {c.name as string}:
+              </span>
+              {(c.phone || c.phone2) && <span style={{ marginRight: 8 }}><PhoneOutlined /> {c.phone as string}{c.phone2 ? ` / ${c.phone2}` : ''}</span>}
+              {(c.mobile || c.mobile2) && <span style={{ marginRight: 8 }}><MobileOutlined /> {c.mobile as string}{c.mobile2 ? ` / ${c.mobile2}` : ''}</span>}
+              {(c.fax || c.fax2) && <span style={{ marginRight: 8 }}><PrinterOutlined /> {c.fax as string}{c.fax2 ? ` / ${c.fax2}` : ''}</span>}
+              {(c.email || c.email2) && <span><MailOutlined /> {c.email as string}{c.email2 ? ` / ${c.email2}` : ''}</span>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    case 'reportBar': {
+      const reports = (control as Record<string, unknown>).reports as Array<{ value: string; text: string }> | undefined;
+      const selected = (control as Record<string, unknown>).selected as string;
+      if (!reports || reports.length === 0) return null;
+      return (
+        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          {reports.length > 1 && (
+            <Select
+              size="small"
+              defaultValue={selected}
+              style={{ minWidth: 200 }}
+              options={reports.map((r) => ({ value: r.value, label: r.text }))}
+              onChange={(val) => onChange('$ReportBarItem', val)}
+            />
+          )}
+          <Button size="small" icon={<PrinterOutlined />} onClick={() => onAction('ExecuteBarReport')}>PDF</Button>
+          <Button size="small" icon={<MailOutlined />} onClick={() => onAction('EmailBarReport')}>Email</Button>
+        </span>
+      );
+    }
+
+    case 'allegati': {
+      const files = (control as Record<string, unknown>).files as Array<{ key: string; fileName: string }> | undefined;
+      return (
+        <div>
+          {control.editable && (
+            <Upload beforeUpload={() => false} maxCount={1}>
+              <Button size="small" icon={<UploadOutlined />}>Allega</Button>
+            </Upload>
+          )}
+          {files && files.map((f) => (
+            <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <a onClick={() => onAction('EmailAllegatiDownload', { option1: f.key })} style={{ cursor: 'pointer' }}>{f.fileName}</a>
+              {control.editable && (
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onAction('EmailAllegatiDelete', { option1: f.key })} />
+              )}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    case 'varianti': {
+      const variants = (control as Record<string, unknown>).variants as Array<{
+        code: string; seq: string; description: string; value: string;
+        options: Array<{ value: string; text: string }>;
+      }> | undefined;
+      if (!variants || variants.length === 0) return null;
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto 1fr', gap: '4px 8px', alignItems: 'center' }}>
+          {variants.map((v) => (
+            <React.Fragment key={v.code}>
+              <span className="prompt-cell">{v.description}:</span>
+              <Select
+                size="small"
+                value={v.value}
+                style={{ minWidth: 120 }}
+                disabled={!control.editable}
+                options={v.options.map((o) => ({ value: o.value, label: o.text }))}
+                onChange={(val) => onChange(`${fieldName}.${v.seq}`, val)}
+              />
+            </React.Fragment>
+          ))}
+        </div>
+      );
+    }
+
+    case 'array': {
+      const values = (control as Record<string, unknown>).values as string[] | undefined;
+      if (!values) return null;
+      return (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {values.map((v, i) => (
+            <Input
+              key={i}
+              size="small"
+              value={v}
+              disabled={!control.editable}
+              maxLength={control.maxLength}
+              style={{ width: Math.min((control.maxLength || 20) * 9, 200) }}
+              onChange={(e) => onChange(`${fieldName}.${i}`, e.target.value)}
+            />
+          ))}
+        </div>
+      );
+    }
+
+    // Complex custom controls - basic fallback rendering
+    case 'ruoli':
+    case 'sottoconti':
+    case 'partitario':
+    case 'disponibilita':
+    case 'assegnazioni':
+    case 'cdmsClass':
+    case 'consuntivazione':
+    case 'gestorePrivilegi':
+    case 'lgtcCalendario':
+    case 'lgtcMap':
+    case 'richOffAtt':
+    case 'gantt':
+    case 'promptbuilder':
+      return (
+        <div className="custom-control-placeholder" style={{ padding: 4, color: '#999', fontStyle: 'italic' }}>
+          [{type}] {value != null ? String(value) : ''}
+        </div>
+      );
 
     default:
       return (
