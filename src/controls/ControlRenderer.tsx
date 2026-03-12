@@ -1,4 +1,5 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { getCustomControl } from './customControls';
 import {
   Input,
   InputNumber,
@@ -8,7 +9,6 @@ import {
   Checkbox,
   Button,
   Upload,
-  Switch,
 } from 'antd';
 import {
   SearchOutlined,
@@ -26,41 +26,264 @@ import {
   ToolOutlined,
   ShoppingOutlined,
   CarOutlined,
+  CaretRightOutlined,
+  CaretDownOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
+import { SidContext } from '../components/ViewRenderer';
+import * as api from '../services/api';
 import dayjs from 'dayjs';
+
+// Convert Java date format (dd/MM/yyyy) to dayjs format (DD/MM/YYYY)
+function javaToDayjsFormat(fmt: string | undefined): string | undefined {
+  if (!fmt) return undefined;
+  return fmt.replace(/dd/g, 'DD').replace(/yyyy/g, 'YYYY').replace(/yy/g, 'YY');
+}
+
+// Decode HTML entities like &#x20AC; → €
+function decodeHtmlEntities(s: string): string {
+  const el = document.createElement('span');
+  el.innerHTML = s;
+  return el.textContent || s;
+}
+
+// Money/number input: shows currency symbol only when blurred and value is non-empty
+const MoneyInput: React.FC<{
+  commonProps: Record<string, unknown>;
+  value: unknown;
+  decimals?: number;
+  currencySymbol?: string;
+  unitSuffix?: unknown;
+  width: number;
+  onChange: (val: unknown) => void;
+}> = ({ commonProps, value, decimals, currencySymbol, unitSuffix, width, onChange }) => {
+  const [focused, setFocused] = useState(false);
+  const symbol = currencySymbol !== undefined ? decodeHtmlEntities(String(currencySymbol || '€')) : undefined;
+  const showPrefix = symbol && !focused && value != null && value !== '';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <InputNumber
+        {...commonProps}
+        value={value as number}
+        precision={decimals}
+        prefix={showPrefix ? symbol : undefined}
+        placeholder={symbol || undefined}
+        style={{ width }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={onChange}
+      />
+      {!!unitSuffix && (
+        <span className="unit-suffix">{String(unitSuffix)}</span>
+      )}
+    </span>
+  );
+};
+
+// Separate component for boolean/checkbox — needs local state since
+// handleFieldChange in Shell only updates a ref (no re-render).
+const BooleanControl: React.FC<{
+  control: UIControl;
+  isQuery: boolean;
+  isDisabled: boolean;
+  handleChange: (val: unknown) => void;
+}> = ({ control, isQuery, isDisabled, handleChange }) => {
+  const serverVal = control.value;
+  const toBool = (v: unknown) => v === true || v === 'true' || v === '1';
+  const toNull = (v: unknown) => v === null || v === undefined || v === '';
+
+  const [localVal, setLocalVal] = useState(serverVal);
+  useEffect(() => { setLocalVal(serverVal); }, [serverVal]);
+
+  const boolVal = toBool(localVal);
+  const isNull = toNull(localVal);
+
+  if (isQuery) {
+    // Tri-state: null (indeterminate) → true → false → null
+    const handleTriState = () => {
+      let next: unknown;
+      if (isNull) next = true;
+      else if (boolVal) next = false;
+      else next = null;
+      setLocalVal(next);
+      handleChange(next);
+    };
+    return (
+      <Checkbox
+        id={control.id}
+        checked={!isNull && boolVal}
+        indeterminate={isNull}
+        disabled={isDisabled}
+        onChange={handleTriState}
+      />
+    );
+  }
+
+  return (
+    <Checkbox
+      id={control.id}
+      checked={boolVal}
+      disabled={isDisabled}
+      onChange={(e) => {
+        setLocalVal(e.target.checked);
+        handleChange(e.target.checked);
+      }}
+    />
+  );
+};
+
+// Workflow state pill — consistent color derived from state name
+const WorkflowPill: React.FC<{ state: string; prevState?: string }> = ({ state, prevState }) => {
+  // Hash string to a hue (0-360)
+  let hash = 0;
+  for (let i = 0; i < state.length; i++) {
+    hash = state.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  const bg = `hsl(${hue}, 55%, 45%)`;
+  // Luminance check: HSL lightness 45% with medium saturation → always use white text
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span style={{
+        background: bg,
+        color: '#fff',
+        fontWeight: 600,
+        fontSize: 12,
+        padding: '2px 12px',
+        borderRadius: 12,
+        whiteSpace: 'nowrap',
+        letterSpacing: 0.3,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+      }}>
+        {state}
+      </span>
+      {prevState && (
+        <span style={{ fontSize: 11, color: '#999' }}>
+          da {prevState}
+        </span>
+      )}
+    </span>
+  );
+};
+
+// Remote combo (ListUIControl) — fetches options from server as user types
+const RemoteCombo: React.FC<{
+  control: UIControl;
+  commonProps: Record<string, unknown>;
+  value: unknown;
+  onChange: (val: unknown) => void;
+}> = ({ control, commonProps, value, onChange }) => {
+  const sid = useContext(SidContext);
+  const displayText = control.displayText as string | undefined;
+  const navpath = control.navpath as string;
+  const controlName = control.controlName as string || control.name || '';
+
+  // Start with the current value as the only option
+  const [options, setOptions] = useState<{ value: string; label: string }[]>(
+    value ? [{ value: value as string, label: displayText || (value as string) }] : []
+  );
+  const [fetching, setFetching] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Update options when server sends new value
+  useEffect(() => {
+    if (value) {
+      setOptions(prev => {
+        const exists = prev.some(o => o.value === value);
+        if (exists) return prev;
+        return [{ value: value as string, label: displayText || (value as string) }, ...prev];
+      });
+    }
+  }, [value, displayText]);
+
+  const loadedRef = useRef(false);
+
+  const fetchOptions = useCallback(async (query: string) => {
+    setFetching(true);
+    try {
+      const results = await api.fetchComboOptions(navpath, controlName, query, sid);
+      setOptions(results.map(r => ({ value: r.value, label: r.text })));
+    } catch {
+      // keep existing options on error
+    } finally {
+      setFetching(false);
+      setHasFetched(true);
+    }
+  }, [navpath, controlName, sid]);
+
+  const handleSearch = useCallback((query: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchOptions(query), 300);
+  }, [fetchOptions]);
+
+  const handleDropdownOpen = useCallback((open: boolean) => {
+    if (open && !loadedRef.current) {
+      loadedRef.current = true;
+      fetchOptions('');
+    }
+  }, [fetchOptions]);
+
+  return (
+    <Select
+      {...commonProps}
+      value={value as string || undefined}
+      showSearch
+      filterOption={false}
+      loading={fetching}
+      notFoundContent={fetching ? 'Caricamento...' : (hasFetched ? 'Nessun risultato' : null)}
+      onDropdownVisibleChange={handleDropdownOpen}
+      style={{ width: '100%' }}
+      options={options}
+      onSearch={handleSearch}
+      onChange={onChange}
+    />
+  );
+};
 
 interface ControlRendererProps {
   control: UIControl;
+  pageType?: number; // 0=QUERY, 1=LIST, 2=DETAIL
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
 }
 
-const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, onChange }) => {
+const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, onAction, onChange }) => {
   const { type, name, editable, value, hint, mandatory, disabled } = control;
-  const readOnly = editable === false;
+
+  // No controlled open — let Ant Design handle combo open/close natively
+  // Editability is decided server-side (ViewItem.isEditable) and sent as the `editable` flag.
+  // The frontend simply uses it: non-editable controls are disabled.
+  const isDisabled = !!disabled || editable === false;
   const fieldName = name || control.id || '';
 
   const handleChange = useCallback(
     (val: unknown) => {
       onChange(fieldName, val);
+      // Server sends reload trigger as a string, with command/navpath/option1 as separate fields
       if (control.reload) {
-        onAction(control.reload.action, {
-          navpath: control.reload.navpath || '',
-          option1: control.reload.option1 || '',
-          option2: control.reload.option2 || '',
-        });
+        const command = (control.command as string) || 'Post';
+        const navpath = (control.navpath as string) || '';
+        const option1 = (control.option1 as string) || '';
+        onAction(command, { navpath, option1 });
       }
     },
-    [fieldName, onChange, onAction, control.reload]
+    [fieldName, onChange, onAction, control.reload, control.command, control.navpath, control.option1]
   );
 
   const commonProps = {
     id: control.id,
     title: hint,
-    disabled: disabled || readOnly,
+    disabled: isDisabled,
     status: mandatory && !value ? ('error' as const) : undefined,
   };
+
+  // Check custom control registry before built-in types
+  const CustomControl = type ? getCustomControl(type) : undefined;
+  if (CustomControl) {
+    return <CustomControl control={control} pageType={pageType} onAction={onAction} onChange={onChange} />;
+  }
 
   switch (type) {
     case 'text':
@@ -69,7 +292,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
           {...commonProps}
           value={value as string}
           maxLength={control.maxLength}
-          style={control.size ? { width: control.size * 8 + 16 } : undefined}
+          style={{ width: '100%' }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -77,30 +300,28 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     case 'number':
     case 'money':
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <InputNumber
-            {...commonProps}
-            value={value as number}
-            precision={control.decimals}
-            prefix={type === 'money' ? (control.currencySymbol || '€') : undefined}
-            style={{ width: control.size ? control.size * 8 + 32 : 120 }}
-            onChange={handleChange}
-          />
-          {(control as Record<string, unknown>).unitSuffix && (
-            <span className="unit-suffix">{(control as Record<string, unknown>).unitSuffix as string}</span>
-          )}
-        </span>
+        <MoneyInput
+          commonProps={commonProps}
+          value={value}
+          decimals={control.decimals}
+          currencySymbol={type === 'money' ? (control.currencySymbol as string) : undefined}
+          unitSuffix={control.unitSuffix}
+          width={control.size ? control.size * 8 + 32 : 120}
+          onChange={handleChange}
+        />
       );
 
-    case 'date':
+    case 'date': {
+      const dateFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY';
       return (
         <DatePicker
           {...commonProps}
-          value={value ? dayjs(value as string, control.format || 'DD/MM/YYYY') : null}
-          format={control.format || 'DD/MM/YYYY'}
+          value={value ? dayjs(value as string, dateFmt) : null}
+          format={dateFmt}
           onChange={(_d, dateStr) => handleChange(dateStr)}
         />
       );
+    }
 
     case 'time':
       return (
@@ -112,16 +333,18 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
         />
       );
 
-    case 'timestamp':
+    case 'timestamp': {
+      const tsFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY HH:mm';
       return (
         <DatePicker
           {...commonProps}
           showTime
-          value={value ? dayjs(value as string, control.format || 'DD/MM/YYYY HH:mm') : null}
-          format={control.format || 'DD/MM/YYYY HH:mm'}
+          value={value ? dayjs(value as string, tsFmt) : null}
+          format={tsFmt}
           onChange={(_d, dateStr) => handleChange(dateStr)}
         />
       );
+    }
 
     case 'durata':
       return (
@@ -134,50 +357,35 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
       );
 
     case 'boolean':
-      return (
-        <Checkbox
-          id={control.id}
-          checked={value === true || value === 'true' || value === '1'}
-          disabled={commonProps.disabled}
-          onChange={(e) => handleChange(e.target.checked)}
-        />
-      );
-
     case 'checkbox':
       return (
-        <Switch
-          id={control.id}
-          checked={value === true || value === 'true' || value === '1'}
-          disabled={commonProps.disabled}
-          onChange={handleChange}
+        <BooleanControl
+          control={control}
+          isQuery={pageType === 0}
+          isDisabled={isDisabled}
+          handleChange={handleChange}
         />
       );
 
-    case 'combo':
+    case 'combo': {
       if (control.remote) {
         return (
-          <Select
-            {...commonProps}
-            value={value as string}
-            showSearch
-            filterOption={false}
-            style={{ width: '100%' }}
+          <RemoteCombo
+            control={control}
+            commonProps={commonProps}
+            value={value}
             onChange={handleChange}
-            onSearch={(searchText) => {
-              onAction('ListFilter', {
-                option1: fieldName,
-                option2: searchText,
-              });
-            }}
           />
         );
       }
       return (
         <Select
           {...commonProps}
-          value={value as string}
+
+          value={(value as string) || undefined}
           showSearch
           optionFilterProp="label"
+          allowClear
           style={{ width: '100%' }}
           onChange={handleChange}
           options={(control.options || []).map((o) => ({
@@ -186,6 +394,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
           }))}
         />
       );
+    }
 
     case 'multiselect':
       return (
@@ -207,7 +416,8 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
         <Input.TextArea
           {...commonProps}
           value={value as string}
-          rows={control.rows || 3}
+          autoSize={{ minRows: 2, maxRows: 10 }}
+          style={{ maxWidth: 500 }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -217,6 +427,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
         <Input.Password
           {...commonProps}
           value={value as string}
+          style={{ width: '100%' }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -226,7 +437,8 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
         <Input.TextArea
           {...commonProps}
           value={value as string}
-          rows={control.rows || 6}
+          autoSize={{ minRows: 2, maxRows: 10 }}
+          style={{ maxWidth: 500 }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -276,7 +488,6 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
       );
 
     case 'lookup':
-    case 'navigateView':
       return (
         <Button
           id={control.id}
@@ -286,6 +497,23 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
           onClick={() => control.action && onAction(control.action)}
           title={hint}
         />
+      );
+
+    case 'navigateView':
+      return (
+        <span
+          id={control.id}
+          className="navigate-view-link"
+          style={{ cursor: 'pointer', color: '#1677ff', whiteSpace: 'nowrap', marginRight: 12 }}
+          title={hint}
+          onClick={() => control.action && onAction(control.action, {
+            navpath: control.navpath as string,
+            option1: control.name as string,
+          })}
+        >
+          <LinkOutlined style={{ marginRight: 4, fontSize: 12 }} />
+          {control.prompt as string}
+        </span>
       );
 
     case 'add':
@@ -343,33 +571,111 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     case 'html':
       return <span dangerouslySetInnerHTML={{ __html: (value as string) || '' }} />;
 
-    case 'hint':
+    case 'hint': {
+      const forGroup = control.forGroup as string | undefined;
+      if (forGroup) {
+        const collapsed = control.collapsed as boolean;
+        const collapseKey = control.collapseKey as string;
+        const path = control.path as string;
+        return (
+          <span
+            className="hint-group-toggle"
+            style={{ cursor: 'pointer', userSelect: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            onClick={() => onAction('ToggleGroupExpand', { navpath: path, option1: collapseKey })}
+          >
+            {collapsed ? <CaretRightOutlined style={{ fontSize: 10 }} /> : <CaretDownOutlined style={{ fontSize: 10 }} />}
+            <span className="hint-text">{value as string}</span>
+          </span>
+        );
+      }
       return <span className="hint-text">{value as string}</span>;
+    }
 
     case 'highlight':
       return <strong className="highlight-text">{value as string}</strong>;
 
+    case 'htmlFormat':
+      return (
+        <span
+          className={control.cls as string || ''}
+          dangerouslySetInnerHTML={{ __html: (value as string) || '' }}
+        />
+      );
+
+    case 'warning': {
+      const warningHtml = control.html as string | undefined;
+      if (!warningHtml) return null;
+      return (
+        <div className="warning-control" style={{ display: 'flex', gap: 8, padding: '4px 0' }}>
+          <span style={{ fontSize: 16, color: '#faad14', flexShrink: 0 }}>&#9888;</span>
+          <div dangerouslySetInnerHTML={{ __html: warningHtml }} />
+        </div>
+      );
+    }
+
+    case 'actionBar': {
+      const actions = control.actions as Array<{ index: number; prompt: string; highlight?: boolean; hint?: string }> | undefined;
+      const wfState = control.workflowState as string | undefined;
+      const prevState = control.prevWorkflowState as string | undefined;
+      const actionPath = control.path as string;
+      if (!actions?.length && !wfState) return null;
+      return (
+        <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {wfState && <WorkflowPill state={wfState} prevState={prevState} />}
+          {actions?.map((act) => (
+            <Button
+              key={act.index}
+              size="small"
+              type={act.highlight ? 'primary' : 'default'}
+              title={act.hint}
+              onClick={() => onAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
+            >
+              {act.prompt}
+            </Button>
+          ))}
+        </div>
+      );
+    }
+
+    case 'buttonBar': {
+      const buttons = control.buttons as Array<Record<string, unknown>> | undefined;
+      if (!buttons?.length) return null;
+      return (
+        <div className="button-bar" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {buttons.map((btn, i) => (
+            <ControlRenderer
+              key={i}
+              control={btn as unknown as UIControl}
+              pageType={pageType}
+              onAction={onAction}
+              onChange={onChange}
+            />
+          ))}
+        </div>
+      );
+    }
+
     // --- EntrAsp custom controls ---
 
     case 'contatti': {
-      const contacts = (control as Record<string, unknown>).contacts as Array<Record<string, unknown>> | undefined;
+      const contacts = control.contacts as Array<Record<string, unknown>> | undefined;
       if (!contacts || contacts.length === 0) return null;
       return (
         <div className="contatti-list">
           {contacts.map((c, i) => (
             <div key={i} className="contatto-row" style={{ marginBottom: 4 }}>
               <span style={{ fontWeight: 500, marginRight: 8 }}>
-                {c.flagDefault && <HomeOutlined title="Principale" style={{ marginRight: 2 }} />}
-                {c.flagAmministrazione && <DollarOutlined title="Amministrazione" style={{ marginRight: 2 }} />}
-                {c.flagTecnico && <ToolOutlined title="Tecnico" style={{ marginRight: 2 }} />}
-                {c.flagCommerciale && <ShoppingOutlined title="Commerciale" style={{ marginRight: 2 }} />}
-                {c.flagSpedizione && <CarOutlined title="Logistica" style={{ marginRight: 2 }} />}
-                {c.name as string}:
+                {!!c.flagDefault && <HomeOutlined title="Principale" style={{ marginRight: 2 }} />}
+                {!!c.flagAmministrazione && <DollarOutlined title="Amministrazione" style={{ marginRight: 2 }} />}
+                {!!c.flagTecnico && <ToolOutlined title="Tecnico" style={{ marginRight: 2 }} />}
+                {!!c.flagCommerciale && <ShoppingOutlined title="Commerciale" style={{ marginRight: 2 }} />}
+                {!!c.flagSpedizione && <CarOutlined title="Logistica" style={{ marginRight: 2 }} />}
+                {String(c.name)}:
               </span>
-              {(c.phone || c.phone2) && <span style={{ marginRight: 8 }}><PhoneOutlined /> {c.phone as string}{c.phone2 ? ` / ${c.phone2}` : ''}</span>}
-              {(c.mobile || c.mobile2) && <span style={{ marginRight: 8 }}><MobileOutlined /> {c.mobile as string}{c.mobile2 ? ` / ${c.mobile2}` : ''}</span>}
-              {(c.fax || c.fax2) && <span style={{ marginRight: 8 }}><PrinterOutlined /> {c.fax as string}{c.fax2 ? ` / ${c.fax2}` : ''}</span>}
-              {(c.email || c.email2) && <span><MailOutlined /> {c.email as string}{c.email2 ? ` / ${c.email2}` : ''}</span>}
+              {!!(c.phone || c.phone2) && <span style={{ marginRight: 8 }}><PhoneOutlined /> {String(c.phone || '')}{c.phone2 ? ` / ${c.phone2}` : ''}</span>}
+              {!!(c.mobile || c.mobile2) && <span style={{ marginRight: 8 }}><MobileOutlined /> {String(c.mobile || '')}{c.mobile2 ? ` / ${c.mobile2}` : ''}</span>}
+              {!!(c.fax || c.fax2) && <span style={{ marginRight: 8 }}><PrinterOutlined /> {String(c.fax || '')}{c.fax2 ? ` / ${c.fax2}` : ''}</span>}
+              {!!(c.email || c.email2) && <span><MailOutlined /> {String(c.email || '')}{c.email2 ? ` / ${c.email2}` : ''}</span>}
             </div>
           ))}
         </div>
@@ -377,8 +683,8 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     }
 
     case 'reportBar': {
-      const reports = (control as Record<string, unknown>).reports as Array<{ value: string; text: string }> | undefined;
-      const selected = (control as Record<string, unknown>).selected as string;
+      const reports = control.reports as Array<{ value: string; text: string }> | undefined;
+      const selected = control.selected as string;
       if (!reports || reports.length === 0) return null;
       return (
         <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
@@ -398,7 +704,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     }
 
     case 'allegati': {
-      const files = (control as Record<string, unknown>).files as Array<{ key: string; fileName: string }> | undefined;
+      const files = control.files as Array<{ key: string; fileName: string }> | undefined;
       return (
         <div>
           {control.editable && (
@@ -419,7 +725,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     }
 
     case 'varianti': {
-      const variants = (control as Record<string, unknown>).variants as Array<{
+      const variants = control.variants as Array<{
         code: string; seq: string; description: string; value: string;
         options: Array<{ value: string; text: string }>;
       }> | undefined;
@@ -444,7 +750,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
     }
 
     case 'array': {
-      const values = (control as Record<string, unknown>).values as string[] | undefined;
+      const values = control.values as string[] | undefined;
       if (!values) return null;
       return (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -488,6 +794,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, onAction, on
         <Input
           {...commonProps}
           value={value as string}
+          style={{ width: '100%' }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );

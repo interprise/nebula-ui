@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, message } from 'antd';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, message, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -26,16 +26,17 @@ import type {
   MenuItem,
   LoginInfo,
   UITree,
+  UIRow,
   ToolbarItem,
   UIData,
   ErrorItem,
   ServerResponse,
 } from '../types/ui';
 import Toolbar from './Toolbar';
-import ViewRenderer from './ViewRenderer';
+import ViewRenderer, { SidContext } from './ViewRenderer';
 import * as api from '../services/api';
 
-const { Header, Sider, Content } = Layout;
+const { Header, Content } = Layout;
 const { Text } = Typography;
 
 interface TabState {
@@ -53,13 +54,14 @@ interface ShellProps {
   menuItems: MenuItem[];
   loginInfo: LoginInfo;
   onLogout: () => void;
+  onReloadMenu: () => void;
 }
 
 function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
   const lowerFilter = filter.toLowerCase();
   const result: MenuItem[] = [];
   for (const item of items) {
-    const textMatches = item.text.toLowerCase().includes(lowerFilter);
+    const textMatches = item.description.toLowerCase().includes(lowerFilter);
     const filteredChildren = item.children ? filterMenuTree(item.children, filter) : [];
     if (textMatches || filteredChildren.length > 0) {
       result.push({
@@ -85,19 +87,37 @@ function collectOpenKeys(items: MenuItem[]): string[] {
 function buildMenuItems(items: MenuItem[]): NonNullable<React.ComponentProps<typeof Menu>['items']> {
   return items.map((item) => ({
     key: item.id,
-    label: item.text,
+    label: item.description,
+    title: item.description,
     children: item.children && item.children.length > 0 ? buildMenuItems(item.children) : undefined,
   }));
 }
 
-let tabCounter = 0;
+let tabCounter = 1;
 
-const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
+const defaultTab: TabState = {
+  key: 'tab_1',
+  label: 'Sessione 1',
+  sid: 'S1',
+  formValues: {},
+};
+
+const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadMenu }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const [tabs, setTabs] = useState<TabState[]>([]);
-  const [activeTab, setActiveTab] = useState<string>('');
+  const [tabs, setTabs] = useState<TabState[]>([defaultTab]);
+  const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
-  const formValuesRef = useRef<Record<string, Record<string, string>>>({});
+  const formValuesRef = useRef<Record<string, Record<string, string>>>({ tab_1: defaultTab.formValues });
+
+  const handleAziendaChange = useCallback(async (value: string) => {
+    await api.postAction2('CambioAzienda', { navpath: value });
+    onReloadMenu();
+  }, [onReloadMenu]);
+
+  const handleSedeChange = useCallback(async (value: string) => {
+    await api.postAction2('CambioSede', { navpath: value });
+    onReloadMenu();
+  }, [onReloadMenu]);
 
   const filteredMenu = menuFilter ? filterMenuTree(menuItems, menuFilter) : menuItems;
   const menuOpenKeys = menuFilter ? collectOpenKeys(filteredMenu) : undefined;
@@ -146,8 +166,62 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
     }
   }, [getActiveTabState]);
 
-  const processResponse = useCallback(
+  // Extract values from editable form controls only — the server already has readonly values
+  const extractFormValues = useCallback((ui: UITree): Record<string, string> => {
+    const values: Record<string, string> = {};
+    const walkRows = (rows: UIRow[]) => {
+      for (const row of rows) {
+        for (const cell of row.cells) {
+          const ctrl = cell.control;
+          if (!ctrl) continue;
+          // Only collect from editable controls (server already has readonly state)
+          if (ctrl.editable && !ctrl.noPost && !ctrl.disabled) {
+            const name = ctrl.name || ctrl.id;
+            if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
+              values[name] = String(ctrl.value);
+            }
+          }
+          // Recurse into embedded/detail views and tabs
+          if (ctrl.contentRows) {
+            walkRows(ctrl.contentRows);
+          }
+        }
+      }
+    };
+    if (ui.rows) walkRows(ui.rows);
+    return values;
+  }, []);
+
+  const processResponseInnerRef = useRef<(tabKey: string, resp: ServerResponse) => void>(() => {});
+
+  const pollProgress = useCallback(
+    async (tabKey: string, sid: string) => {
+      const poll = async (): Promise<void> => {
+        const resp = await api.checkProgress(sid);
+        // If the job is still running, poll again
+        if (resp.trackAsynchJob && !resp.ui) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return poll();
+        }
+        // Job finished — process the final response
+        processResponseInnerRef.current(tabKey, resp);
+      };
+      await poll();
+    },
+    []
+  );
+
+  const processResponseInner = useCallback(
     (tabKey: string, resp: ServerResponse) => {
+      const r = resp as Record<string, unknown>;
+      if (r.notLoggedIn) {
+        message.error('Sessione scaduta. Effettuare nuovamente il login.');
+        return;
+      }
+      if (r.noSession) {
+        message.error('Sessione non valida. Riprovare.');
+        return;
+      }
       if (resp.errors && resp.errors.length > 0) {
         handleErrors(resp.errors);
       }
@@ -156,7 +230,26 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
         return;
       }
       const update: Partial<TabState> = {};
-      if (resp.ui) update.ui = resp.ui;
+      if (resp.ui) {
+        if (resp.ui.pageOnly) {
+          // Pagination-only response: merge rows into existing UI, keep columns/headers/toolbar
+          const existingTab = tabs.find(t => t.key === tabKey);
+          if (existingTab?.ui) {
+            update.ui = {
+              ...existingTab.ui,
+              rows: resp.ui.rows,
+              paging: resp.ui.paging,
+            };
+          }
+        } else {
+          update.ui = resp.ui;
+          // Initialize form values from all controls in the UI tree
+          const newFormValues = extractFormValues(resp.ui);
+          formValuesRef.current[tabKey] = newFormValues;
+          // Also update the tab state's formValues
+          update.formValues = newFormValues;
+        }
+      }
       if (resp.toolbar) update.toolbar = resp.toolbar;
       if (resp.uiData) update.uiData = resp.uiData;
       if (resp.currField) update.currField = resp.currField;
@@ -164,31 +257,42 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
         updateTabState(tabKey, update);
       }
     },
-    [handleErrors, updateTabState]
+    [handleErrors, updateTabState, extractFormValues]
+  );
+
+  processResponseInnerRef.current = processResponseInner;
+
+  const processResponse = useCallback(
+    (tabKey: string, resp: ServerResponse, sid?: string) => {
+      // Server says "poll me for progress"
+      if ((resp.uiData?.showProgress || resp.uiData?.trackAsynchJob || resp.trackAsynchJob) && !resp.ui) {
+        const tabSid = sid || tabs.find((t) => t.key === tabKey)?.sid || 'S1';
+        pollProgress(tabKey, tabSid);
+        return;
+      }
+      processResponseInner(tabKey, resp);
+    },
+    [processResponseInner, pollProgress, tabs]
   );
 
   const handleMenuClick = useCallback(
     async (menuId: string, menuLabel: string) => {
-      const sid = `S${++tabCounter}`;
-      const newTab: TabState = {
-        key: `tab_${tabCounter}`,
-        label: menuLabel,
-        sid,
-        formValues: {},
-      };
-      formValuesRef.current[newTab.key] = newTab.formValues;
+      const tab = getActiveTabState();
+      if (!tab) return;
 
-      setTabs((prev) => [...prev, newTab]);
-      setActiveTab(newTab.key);
+      // Reset form values for the new screen
+      tab.formValues = {};
+      formValuesRef.current[tab.key] = tab.formValues;
+      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
 
       try {
-        const resp = await api.executeMenuItem(menuId, sid);
-        processResponse(newTab.key, resp);
+        const resp = await api.executeMenuItem(menuId, tab.sid);
+        processResponse(tab.key, resp);
       } catch (e) {
         message.error(`Error: ${e}`);
       }
     },
-    [processResponse]
+    [getActiveTabState, processResponse, updateTabState]
   );
 
   const handleAction = useCallback(
@@ -197,7 +301,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
       if (!tab) return;
 
       try {
-        const resp = await api.postAction(action, params, tab.formValues, tab.sid);
+        const resp = await api.postAction(action, params, formValuesRef.current[tab.key], tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
         message.error(`Error: ${e}`);
@@ -239,19 +343,41 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
     }
   };
 
-  const findMenuLabel = (items: MenuItem[], id: string): string => {
+  const findMenuLabel = (items: MenuItem[], id: string): string | undefined => {
     for (const item of items) {
-      if (item.id === id) return item.text;
+      if (item.id === id) return item.description;
       if (item.children) {
         const found = findMenuLabel(item.children, id);
-        if (found) return found;
+        if (found !== undefined) return found;
       }
     }
-    return id;
+    return undefined;
   };
 
   const currentTab = getActiveTabState();
   const breadcrumbs = currentTab?.ui?.breadcrumbs;
+
+  // Parse HTML breadcrumbs into structured items
+  const parsedBreadcrumbs = useMemo(() => {
+    if (!breadcrumbs) return [];
+    const items: { title: string; action?: string; navpath?: string; option1?: string }[] = [];
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${breadcrumbs}</div>`, 'text/html');
+    doc.querySelectorAll('.breadcrumbElement, [onclick]').forEach((el) => {
+      const title = (el.getAttribute('title') || el.textContent || '').replace(/^<<\s*/, '');
+      const onclick = el.getAttribute('onclick') || '';
+      const m = onclick.match(/doAction[23]?\(\s*'([^']+)'(?:\s*,\s*'([^']*)')?(?:\s*,\s*'([^']*)')?\s*\)/);
+      if (title) {
+        items.push({
+          title,
+          action: m?.[1],
+          navpath: m?.[2],
+          option1: m?.[3],
+        });
+      }
+    });
+    return items;
+  }, [breadcrumbs]);
 
   const APPBAR_WIDTH = 48;
   const siderWidth = collapsed ? 80 : 260;
@@ -270,7 +396,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => api.postAction2('ShowEmail'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
     { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => api.postAction2('ShowDocArea'), visible: !!loginInfo.areaDocumenti },
-    { key: 'newSession', icon: <PlusSquareOutlined />, tooltip: 'Nuova Sessione', onClick: () => { tabCounter++; setTabs(prev => [...prev, { key: `tab_${tabCounter}`, label: `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: {} }]); setActiveTab(`tab_${tabCounter}`); }, visible: true },
+    { key: 'newSession', icon: <PlusSquareOutlined />, tooltip: 'Nuova Sessione', onClick: () => { tabCounter++; const fv = {}; formValuesRef.current[`tab_${tabCounter}`] = fv; setTabs(prev => [...prev, { key: `tab_${tabCounter}`, label: `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv }]); setActiveTab(`tab_${tabCounter}`); }, visible: true },
     { key: 'help', icon: <QuestionCircleOutlined />, tooltip: 'Aiuto', onClick: () => {}, visible: !!loginInfo.assistenza },
     { key: 'cdms', icon: <PictureOutlined />, tooltip: 'Documentale', onClick: () => api.postAction2('CdmsEdit'), visible: !!loginInfo.cdms },
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => api.postAction2('ShowAvvisi'), visible: !!loginInfo.avvisi },
@@ -290,74 +416,74 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
           .filter((b) => b.visible)
           .map((b) => (
             <Tooltip key={b.key} title={b.tooltip} placement="right">
-              <Button
-                type="text"
-                danger={b.danger}
-                icon={
-                  b.badge ? (
-                    <Badge dot size="small">{b.icon}</Badge>
-                  ) : (
-                    b.icon
-                  )
-                }
-                onClick={b.onClick}
-                className="app-bar-btn"
-              />
+              <Badge dot={b.badge} size="small" offset={[-4, 4]}>
+                <Button
+                  type="text"
+                  danger={b.danger}
+                  icon={b.icon}
+                  onClick={b.onClick}
+                  className="app-bar-btn"
+                />
+              </Badge>
             </Tooltip>
           ))}
       </div>
 
       {/* Sidebar with menu */}
-      <Sider
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        width={260}
+      <div
+        className="sidebar"
         style={{
-          overflow: 'auto',
+          width: collapsed ? 80 : 260,
+          minWidth: collapsed ? 80 : 260,
           height: '100vh',
           position: 'fixed',
           left: APPBAR_WIDTH,
           top: 0,
           bottom: 0,
+          overflow: 'auto',
+          background: '#fff',
+          borderRight: '1px solid #e8e8e8',
+          transition: 'width 0.2s',
+          zIndex: 99,
         }}
       >
-        <div style={{ padding: '16px', textAlign: 'center', color: '#fff' }}>
-          {loginInfo.logoaz?.[0] ? (
-            <img src={loginInfo.logoaz[0]} alt="Logo" style={{ maxWidth: '100%', maxHeight: 40 }} />
-          ) : (
-            <Text strong style={{ color: '#fff', fontSize: 16 }}>
-              {loginInfo.title || 'NebulaERP'}
-            </Text>
-          )}
+        <div style={{ padding: '12px', textAlign: 'center' }}>
+          <img src="/entrasp/images/logos/LogoSixtema.jpg" alt="Sixtema" style={{ maxWidth: '100%', maxHeight: 40, objectFit: 'contain' }} />
         </div>
         {!collapsed && (
           <div style={{ padding: '0 12px 8px' }}>
             <Input
               placeholder="Cerca nel menu..."
-              prefix={<SearchOutlined style={{ color: 'rgba(255,255,255,0.45)' }} />}
+              prefix={<SearchOutlined />}
               allowClear
               value={menuFilter}
               onChange={(e) => setMenuFilter(e.target.value)}
-              style={{ background: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.2)', color: '#fff' }}
-              styles={{ input: { color: '#fff' } }}
             />
           </div>
         )}
-        <Menu
-          theme="dark"
-          mode="inline"
-          items={buildMenuItems(filteredMenu)}
-          {...(menuOpenKeys !== undefined ? { openKeys: menuOpenKeys } : {})}
-          onClick={({ key }) => {
-            const label = findMenuLabel(menuItems, key);
-            handleMenuClick(key, label);
-          }}
-        />
-      </Sider>
+        <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#fff', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
+          <Menu
+            mode="inline"
+            inlineCollapsed={collapsed}
+            items={buildMenuItems(filteredMenu)}
+            {...(menuOpenKeys !== undefined ? { openKeys: menuOpenKeys } : {})}
+            onClick={({ key }) => {
+              const label = findMenuLabel(menuItems, key) || key;
+              handleMenuClick(key, label);
+            }}
+          />
+        </ConfigProvider>
+        <div style={{ textAlign: 'center', padding: 8 }}>
+          <Button
+            type="text"
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed(!collapsed)}
+          />
+        </div>
+      </div>
 
       {/* Main content */}
-      <Layout style={{ marginLeft: APPBAR_WIDTH + siderWidth, transition: 'margin-left 0.2s' }}>
+      <Layout style={{ marginLeft: APPBAR_WIDTH + siderWidth, transition: 'margin-left 0.2s', minWidth: 0, maxWidth: `calc(100vw - ${APPBAR_WIDTH + siderWidth}px)`, height: '100vh', overflow: 'hidden' }}>
         <Header
           style={{
             padding: '0 16px',
@@ -365,79 +491,116 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout }) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            height: 'auto',
+            minHeight: 48,
+            lineHeight: 'normal',
           }}
         >
           <Space>
-            {React.createElement(collapsed ? MenuUnfoldOutlined : MenuFoldOutlined, {
-              onClick: () => setCollapsed(!collapsed),
-              style: { fontSize: 18, cursor: 'pointer' },
-            })}
-            {breadcrumbs && (
-              <Breadcrumb
-                items={breadcrumbs
-                  .split('>')
-                  .map((s: string) => s.trim())
-                  .filter(Boolean)
-                  .map((b: string) => ({ title: b }))}
-              />
-            )}
+            <img src="/entrasp/images/logos/logo_sx.png" alt="Sixtema" style={{ height: 36, objectFit: 'contain' }} />
           </Space>
-          <Dropdown
-            menu={{
-              items: [
-                { key: 'user', label: `${loginInfo.login} (${loginInfo.profile})`, icon: <UserOutlined />, disabled: true },
-                ...(loginInfo.aziende && loginInfo.aziende.length > 1
-                  ? [{ key: 'company', label: `Azienda: ${loginInfo.customerKey}` }]
-                  : []),
-                { type: 'divider' as const, key: 'div' },
-                { key: 'logout', label: 'Esci', icon: <LogoutOutlined />, danger: true },
-              ],
-              onClick: ({ key }) => {
-                if (key === 'logout') onLogout();
-              },
-            }}
-          >
-            <Space style={{ cursor: 'pointer' }}>
-              <Badge dot={!!loginInfo.notifications}>
-                <UserOutlined style={{ fontSize: 18 }} />
-              </Badge>
-              <Text>{loginInfo.login}</Text>
-            </Space>
-          </Dropdown>
+          <Space size="middle" wrap>
+            <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
+            <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
+            {loginInfo.aziende && loginInfo.aziende.length === 1 && (
+              <Text style={{ color: '#fff' }}>Azienda: <Text strong style={{ color: '#fff' }}>{loginInfo.aziende[0].text}</Text></Text>
+            )}
+            {loginInfo.aziende && loginInfo.aziende.length > 1 && (
+              <Space size={4}>
+                <Text style={{ color: '#fff' }}>Azienda:</Text>
+                <Select
+                  value={loginInfo.customerKey}
+                  onChange={handleAziendaChange}
+                  style={{ width: 320 }}
+                  options={loginInfo.aziende}
+                  fieldNames={{ label: 'text', value: 'value' }}
+                />
+              </Space>
+            )}
+            {loginInfo.sedi && loginInfo.sedi.length === 1 && (
+              <Text style={{ color: '#fff' }}>Sede: <Text strong style={{ color: '#fff' }}>{loginInfo.sedi[0].text}</Text></Text>
+            )}
+            {loginInfo.sedi && loginInfo.sedi.length > 1 && (
+              <Space size={4}>
+                <Text style={{ color: '#fff' }}>Sede:</Text>
+                <Select
+                  value={loginInfo.sede}
+                  onChange={handleSedeChange}
+                  style={{ width: 320 }}
+                  options={loginInfo.sedi}
+                  fieldNames={{ label: 'text', value: 'value' }}
+                />
+              </Space>
+            )}
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'user', label: `${loginInfo.login} (${loginInfo.profile})`, icon: <UserOutlined />, disabled: true },
+                  { type: 'divider' as const, key: 'div' },
+                  { key: 'logout', label: 'Esci', icon: <LogoutOutlined />, danger: true },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'logout') onLogout();
+                },
+              }}
+            >
+              <Space style={{ cursor: 'pointer', color: '#fff' }}>
+                <Badge dot={!!loginInfo.notifications}>
+                  <UserOutlined style={{ fontSize: 18, color: '#fff' }} />
+                </Badge>
+              </Space>
+            </Dropdown>
+          </Space>
         </Header>
 
-        <Content style={{ margin: '8px 16px', overflow: 'auto' }}>
-          {tabs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 80, color: '#999' }}>
-              <HomeOutlined style={{ fontSize: 48 }} />
-              <div style={{ marginTop: 16 }}>Seleziona una voce dal menu</div>
-            </div>
-          ) : (
-            <>
-              <Tabs
-                type="editable-card"
-                hideAdd
-                activeKey={activeTab}
-                onChange={handleTabChange}
-                onEdit={handleTabEdit}
-                items={tabs.map((t) => ({
-                  key: t.key,
-                  label: t.label,
-                }))}
-              />
-              {currentTab && (
-                <div className="tab-content">
-                  <Toolbar items={currentTab.toolbar || []} onAction={handleAction} />
-                  {currentTab.ui && (
+        <Content style={{ padding: '8px 16px', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+          <Tabs
+            type="editable-card"
+            hideAdd
+            activeKey={activeTab}
+            onChange={handleTabChange}
+            onEdit={handleTabEdit}
+            items={tabs.map((t) => ({
+              key: t.key,
+              label: t.label,
+              closable: tabs.length > 1,
+            }))}
+          />
+          {currentTab && (
+            <SidContext.Provider value={currentTab.sid}>
+              <div className="tab-content">
+                {currentTab.ui ? (
+                  <>
+                    {parsedBreadcrumbs.length > 0 && (
+                      <Breadcrumb
+                        style={{ padding: '6px 8px' }}
+                        items={parsedBreadcrumbs.map((b) => ({
+                          title: b.action ? (
+                            <a onClick={() => {
+                              const params: Record<string, string> = {};
+                              if (b.navpath) params.navpath = b.navpath;
+                              if (b.option1) params.option1 = b.option1;
+                              handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
+                            }}>{b.title}</a>
+                          ) : b.title,
+                        }))}
+                      />
+                    )}
+                    <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} onAction={handleAction} />
                     <ViewRenderer
                       ui={currentTab.ui}
                       onAction={handleAction}
                       onChange={handleFieldChange}
                     />
-                  )}
-                </div>
-              )}
-            </>
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: 80, color: '#999' }}>
+                    <HomeOutlined style={{ fontSize: 48 }} />
+                    <div style={{ marginTop: 16 }}>Seleziona una voce dal menu</div>
+                  </div>
+                )}
+              </div>
+            </SidContext.Provider>
           )}
         </Content>
       </Layout>

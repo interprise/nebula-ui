@@ -18,16 +18,16 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/entrasp/controller': {
-        target: 'http://localhost:8080',
+      '/entrasp/controller2': {
+        target: 'http://localhost:9080',
         changeOrigin: true,
       },
-      '/entrasp/controller2': {
-        target: 'http://localhost:8080',
+      '/entrasp/controller': {
+        target: 'http://localhost:9080',
         changeOrigin: true,
       },
       '/entrasp/images': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:9080',
         changeOrigin: true,
       },
     },

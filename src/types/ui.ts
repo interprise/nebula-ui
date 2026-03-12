@@ -8,14 +8,13 @@ export interface UIControl {
   mandatory?: boolean;
   tabStop?: boolean;
   value?: unknown;
+  // Allow extra properties from custom server controls
+  [key: string]: unknown;
   displayValue?: string;
-  reload?: {
-    action: string;
-    navpath?: string;
-    option1?: string;
-    option2?: string;
-    change?: boolean;
-  };
+  reload?: string; // reload trigger: "true" or "change"
+  command?: string; // command for reload (default "Post")
+  navpath?: string; // navigation path for reload
+  option1?: string; // option1 for reload
   // text
   size?: number;
   maxLength?: number;
@@ -71,11 +70,14 @@ export interface UIRow {
 }
 
 export interface ListColumn {
-  name: string;
-  prompt: string;
-  sortExpr?: string;
-  width?: number;
-  cls?: string;
+  elementType: number;
+  control?: UIControl;
+  selector?: {
+    command: string;
+    basePath: string;
+    canEdit?: boolean;
+    canDelete?: boolean;
+  };
 }
 
 export interface ListRow {
@@ -84,22 +86,63 @@ export interface ListRow {
   data?: Record<string, unknown>;
 }
 
+export interface ListHeader {
+  text: string;
+  sortExpression?: string;
+  sortDir?: 'asc' | 'desc';
+  sortPosition?: number;
+  hint?: string;
+  cls?: string;
+  type?: string; // 'selector' for row selector column
+  colspan?: number;
+}
+
+export interface ListMeta {
+  title?: string;
+  path?: string;
+  recordCount?: number;
+  position?: number;
+  pageSize?: number;
+  addCommand?: string;
+  addLabel?: string;
+}
+
+export interface ListFooter {
+  addCommand: string;
+  path?: string;
+  label?: string;
+}
+
 export interface UITree {
   rows: UIRow[];
   path?: string;
-  pageType?: number; // 0=DETAIL, 1=LIST, 2=QUERY
+  pageType?: number; // 0=QUERY, 1=LIST, 2=DETAIL
   breadcrumbs?: string;
   viewName?: string;
   viewType?: string;
   layoutType?: string;
   totalCols?: number;
+  totalWidth?: number;
   title?: string;
   attachments?: string;
+  headers?: ListHeader[];
+  header?: ListMeta;
+  footer?: ListFooter;
+  columns?: ListColumn[];
+  pageOnly?: boolean;
+  paging?: {
+    currentPage: number;
+    totalPages: number;
+    totalRows: number;
+    position: number;
+    pageSize: number;
+  };
 }
 
 export interface ToolbarItem {
   id: string;
   text: string;
+  tooltip?: string;
   icon?: string;
   handler?: string;
   disabled?: boolean;
@@ -154,7 +197,7 @@ export interface LoginInfo {
   sedi?: { value: string; text: string }[];
   title?: string;
   bkColor?: string;
-  logoaz?: string[];
+  logoaz?: string;
   dbVersion?: string;
   cdms?: boolean;
   emailSent?: boolean;
@@ -174,7 +217,7 @@ export interface LoginInfo {
 
 export interface MenuItem {
   id: string;
-  text: string;
+  description: string;
   children?: MenuItem[];
   leaf?: boolean;
   iconCls?: string;

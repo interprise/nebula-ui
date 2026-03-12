@@ -1,21 +1,33 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
 /* Layout table for detail/query views */
 .layout-table {
-  width: 100%;
   border-collapse: collapse;
+  font-size: 13px;
 }
 
 .layout-table td {
-  padding: 3px 6px;
-  vertical-align: middle;
+  padding: 2px 4px;
+  vertical-align: top;
+  line-height: 26px;
+}
+
+.layout-table td.content-cell {
+  overflow: hidden;
 }
 
 /* Prompt cells (labels) */
 .prompt-cell {
   text-align: right;
-  white-space: nowrap;
-  font-weight: 500;
+  font-weight: normal;
   color: #333;
-  padding-right: 8px;
+  padding-right: 4px;
+  white-space: nowrap;
 }
 
 /* Content cells (controls) */
@@ -25,16 +37,83 @@
 
 /* Section headers */
 .section-header {
-  background: #e8e8e8;
+  background: linear-gradient(to bottom, #dae6f4 0%, #c2d6eb 100%);
   font-weight: bold;
-  padding: 6px 8px;
-  border-bottom: 1px solid #ccc;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid #99bbe8;
+  color: #15428b;
   text-align: left;
 }
 
 /* Container cells for embedded views/tabs */
 .container-cell {
   padding: 0;
+}
+
+/* Keep tabs within visible area even when table is wider than viewport */
+.tab-sticky-wrapper {
+  max-width: calc(100vw - 350px); /* viewport minus app bar (48px) + sidebar (260px) + scrollbar (~20px) + margins */
+  overflow: hidden;
+}
+
+/* Compact Ant Design controls inside layout table */
+.layout-table .ant-input,
+.layout-table .ant-input-number,
+.layout-table .ant-picker,
+.layout-table .ant-select-selector {
+  font-size: 13px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 6px !important;
+  line-height: 26px !important;
+}
+
+.layout-table .ant-input-number-input {
+  height: 24px !important;
+  padding: 0 6px !important;
+}
+
+.layout-table .ant-select {
+  font-size: 13px !important;
+  height: 26px !important;
+}
+
+.layout-table .ant-select-selection-item {
+  line-height: 24px !important;
+}
+
+.layout-table .ant-checkbox-wrapper {
+  font-size: 13px;
+  line-height: 26px;
+}
+
+
+.layout-table .ant-picker-input > input {
+  font-size: 13px !important;
+}
+
+/* Disabled controls: override antd CSS variables for readable text */
+.layout-table {
+  --ant-color-text-disabled: #333;
+  --ant-color-bg-container-disabled: #f5f5f5;
+}
+
+.layout-table .ant-input-disabled,
+.layout-table .ant-input[disabled] {
+  color: #333 !important;
+  -webkit-text-fill-color: #333 !important;
+}
+
+.layout-table .ant-select-disabled {
+  color: #333 !important;
+  -webkit-text-fill-color: #333 !important;
+}
+
+.layout-table .ant-picker-disabled,
+.layout-table .ant-picker-disabled .ant-picker-input > input {
+  color: #333 !important;
+  -webkit-text-fill-color: #333 !important;
 }
 
 /* Filler cells */
@@ -50,25 +129,53 @@
 /* View container */
 .view-container {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .view-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid #e8e8e8;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .view-body {
-  overflow-x: auto;
+  overflow: auto;
+  max-width: 100%;
+  flex: 1;
+  min-height: 0;
+  background: #f0f2f5;
+  padding: 4px;
+}
+
+/* Split layout: scrollable form on top, fixed bottom panel (tabs/details) */
+.view-split-form {
+  overflow: auto;
+  max-width: 100%;
+  flex: 1 1 0;
+  min-height: 120px;
+  background: #f0f2f5;
+  padding: 4px;
+  border-bottom: 2px solid #d9d9d9;
+}
+
+.view-split-bottom {
+  flex: 1 1 0;
+  min-height: 120px;
+  overflow: auto;
+  background: #f0f2f5;
+  padding: 0 4px;
 }
 
 /* Toolbar */
 .toolbar {
-  padding: 8px 0;
+  padding: 4px 0;
   border-bottom: 1px solid #e8e8e8;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 /* List container */
@@ -76,13 +183,21 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Tab content area */
 .tab-content {
   background: #fff;
-  padding: 12px;
+  padding: 4px 8px;
   border-radius: 4px;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Hint and highlight text */
@@ -91,13 +206,40 @@
   font-style: italic;
 }
 
+/* Header items separator (after group toggle) */
+.header-items-separator {
+  height: 1px;
+  background: #d9d9d9;
+  margin: 4px 0 2px;
+}
+
 .highlight-text {
   color: #1677ff;
 }
 
+/* Navigate view links */
+.navigate-view-link:hover {
+  color: #4096ff;
+  text-decoration: underline;
+}
+
+/* Warning control */
+.warning-control ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.warning-control li {
+  margin-bottom: 2px;
+}
+
+/* Action/button bar */
+.action-bar, .button-bar {
+  padding: 2px 0;
+}
+
 /* Break row (section separator) */
 tr.breakRow td {
-  padding-top: 12px;
+  padding-top: 6px;
 }
 
 /* Mandatory field indicator */
@@ -119,7 +261,7 @@ tr.breakRow td {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
+  padding: 72px 0 8px;
   gap: 2px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -145,6 +287,8 @@ tr.breakRow td {
 
 /* AG Grid sizing */
 .ag-theme-alpine {
-  --ag-row-height: 32px;
+  --ag-row-height: 22px;
   --ag-header-height: 36px;
+  --ag-font-size: 12px;
+  --ag-cell-horizontal-padding: 4px;
 }

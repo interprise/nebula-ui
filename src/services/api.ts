@@ -37,7 +37,13 @@ async function post(
   return resp.json();
 }
 
+export async function getConfig(): Promise<ServerResponse> {
+  return post(CMD2_URL, { action: 'GetConfig' });
+}
+
 export async function login(username: string, password: string): Promise<ServerResponse> {
+  // GetConfig establishes the HTTP session on the server
+  await getConfig();
   return post(CMD2_URL, {
     action: 'JSONMenu',
     username,
@@ -94,6 +100,28 @@ export async function uploadFile(
   return resp.json();
 }
 
+export async function reloadMenu(): Promise<ServerResponse> {
+  return post(CMD2_URL, { action: 'JSONMenu' });
+}
+
 export async function checkProgress(sid: string = 'S1'): Promise<ServerResponse> {
   return post(CMD_URL, { action: 'JSONProgress', sid });
+}
+
+export async function fetchComboOptions(
+  navpath: string,
+  controlName: string,
+  query: string,
+  sid: string = 'S1'
+): Promise<{ value: string; text: string }[]> {
+  const resp = await post(CMD_URL, {
+    action: 'ListUIControlList',
+    sid,
+    navpath,
+    option1: controlName,
+    query,
+    limit: '100',
+  });
+  // Server returns { rows: [{ value, text }], resultSize }
+  return (resp as unknown as { rows: { value: string; text: string }[] }).rows || [];
 }

@@ -6,9 +6,10 @@ interface LoginFormProps {
   onLogin: (username: string, password: string) => Promise<void>;
   error?: string;
   loading?: boolean;
+  title?: string;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error, loading }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error, loading, title }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
@@ -28,7 +29,11 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error, loading }) => {
         background: '#f0f2f5',
       }}
     >
-      <Card style={{ width: 360 }} title="Login">
+      <Card style={{ width: 360 }}>
+        <div style={{ textAlign: 'center', marginBottom: 16 }}>
+          <img src="/entrasp/images/logos/logo_box.png" alt="Logo" style={{ height: 64 }} />
+          {title && <div style={{ fontSize: 16, fontWeight: 500, marginTop: 8, color: '#333' }}>{title}</div>}
+        </div>
         <Form onFinish={handleSubmit}>
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             {error && <Alert type="error" message={error} showIcon />}
