@@ -9,7 +9,9 @@ import * as api from './services/api';
 // Register application-specific custom controls
 import { registerControl } from './controls/customControls';
 import RuoliControl from './controls/custom/RuoliControl';
+import WorkflowStatusControl from './controls/custom/WorkflowStatusControl';
 registerControl('ruoli', RuoliControl);
+registerControl('workflowStatus', WorkflowStatusControl);
 
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(false);

@@ -32,8 +32,8 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
   if (!controlType) return null;
   const CustomComponent = getCustomControl(controlType);
   if (!CustomComponent) return null;
-  // Build a minimal UIControl-like object for the custom component
-  const control = { type: controlType, value: params.value, editable: false };
+  const colMeta = params.data?.[`_meta_${idx}`] as Record<string, unknown> | undefined;
+  const control = { type: controlType, value: params.value, editable: false, ...colMeta };
   const noop = () => {};
   return <CustomComponent control={control} onAction={noop} onChange={noop} />;
 };
@@ -70,6 +70,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     // Detect which columns need special rendering (HTML or custom controls)
     const htmlColumns = new Set<number>();
     const customColumns = new Map<number, string>(); // idx → control type
+    const customColumnMeta = new Map<number, Record<string, unknown>>(); // idx → column control metadata
     if (ui.columns) {
       ui.columns.forEach((col, idx) => {
         const ctrlType = col.control?.type;
@@ -77,6 +78,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
           htmlColumns.add(idx);
         } else if (ctrlType && getCustomControl(ctrlType)) {
           customColumns.set(idx, ctrlType);
+          customColumnMeta.set(idx, col.control as Record<string, unknown>);
         }
       });
     } else {
@@ -188,9 +190,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
         if (selectorIndices.has(idx) || cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.control) {
           if (customColumns.has(idx)) {
-            // Custom controls: store raw value + type for the cell renderer
+            // Custom controls: store raw value + type + column meta for the cell renderer
             rowObj[`col_${idx}`] = cell.control.value;
             rowObj[`_type_${idx}`] = customColumns.get(idx);
+            const meta = customColumnMeta.get(idx);
+            if (meta) rowObj[`_meta_${idx}`] = meta;
           } else {
             rowObj[`col_${idx}`] = cell.control.displayValue ?? cell.control.value ?? '';
           }

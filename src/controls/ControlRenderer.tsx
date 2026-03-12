@@ -134,7 +134,7 @@ const BooleanControl: React.FC<{
 };
 
 // Workflow state pill — consistent color derived from state name
-const WorkflowPill: React.FC<{ state: string; prevState?: string }> = ({ state, prevState }) => {
+export const WorkflowPill: React.FC<{ state: string; prevState?: string }> = ({ state, prevState }) => {
   // Hash string to a hue (0-360)
   let hash = 0;
   for (let i = 0; i < state.length; i++) {
