@@ -3,12 +3,19 @@ html, body {
   padding: 0;
   overflow: hidden;
   height: 100%;
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 /* Layout table for detail/query views */
 .layout-table {
   border-collapse: collapse;
   font-size: 13px;
+}
+
+/* Layout tables in bottom panels (tabs/embedded views) should fill width */
+.view-split-bottom .layout-table,
+.view-body .layout-table {
+  width: 100%;
 }
 
 .layout-table td {
@@ -49,16 +56,18 @@ html, body {
 /* Container cells for embedded views/tabs */
 .container-cell {
   padding: 0;
+  overflow: visible;
 }
 
 /* Keep tabs within visible area even when table is wider than viewport */
 .tab-sticky-wrapper {
   max-width: calc(100vw - 350px); /* viewport minus app bar (48px) + sidebar (260px) + scrollbar (~20px) + margins */
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 /* Compact Ant Design controls inside layout table */
-.layout-table .ant-input,
+.layout-table .ant-input:not(textarea),
 .layout-table .ant-input-number,
 .layout-table .ant-picker,
 .layout-table .ant-select-selector {
@@ -67,6 +76,12 @@ html, body {
   min-height: 26px !important;
   padding: 0 6px !important;
   line-height: 26px !important;
+}
+
+.layout-table textarea.ant-input {
+  font-size: 13px !important;
+  padding: 4px 6px !important;
+  line-height: 1.4 !important;
 }
 
 .layout-table .ant-input-number-input {
@@ -93,6 +108,13 @@ html, body {
   font-size: 13px !important;
 }
 
+/* Tabular figures for number/money inputs in forms */
+.layout-table .ant-input-number,
+.layout-table .ant-input-number-input {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
 /* Disabled controls: override antd CSS variables for readable text */
 .layout-table {
   --ant-color-text-disabled: #333;
@@ -116,9 +138,10 @@ html, body {
   -webkit-text-fill-color: #333 !important;
 }
 
-/* Filler cells */
+/* Filler cells — collapse in auto layout so they don't absorb extra width */
 .filler-cell {
-  /* empty space */
+  width: 0;
+  padding: 0;
 }
 
 /* Selector cells */
@@ -144,31 +167,46 @@ html, body {
 }
 
 .view-body {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: auto;
   max-width: 100%;
   flex: 1;
   min-height: 0;
   background: #f0f2f5;
   padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: auto;
+  overflow-x: hidden;
 }
 
 /* Split layout: scrollable form on top, fixed bottom panel (tabs/details) */
 .view-split-form {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   max-width: 100%;
   flex: 1 1 0;
   min-height: 120px;
   background: #f0f2f5;
   padding: 4px;
   border-bottom: 2px solid #d9d9d9;
+  scrollbar-width: thin;
+  scrollbar-color: auto;
+}
+
+/* Reveal horizontal scrollbar when mouse is near bottom edge */
+.view-body.scrollbar-visible,
+.view-split-form.scrollbar-visible {
+  overflow-x: auto;
 }
 
 .view-split-bottom {
   flex: 1 1 0;
   min-height: 120px;
-  overflow: auto;
+  overflow: hidden;
   background: #f0f2f5;
   padding: 0 4px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Toolbar */
@@ -187,6 +225,14 @@ html, body {
   min-height: 0;
 }
 
+/* Tab container: flex column so tab bar stays fixed, content scrolls */
+.tab-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 /* Tab content area */
 .tab-content {
   background: #fff;
@@ -198,6 +244,7 @@ html, body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
 
 /* Hint and highlight text */
@@ -230,6 +277,14 @@ html, body {
 }
 .warning-control li {
   margin-bottom: 2px;
+}
+
+/* Sticky action bar above scrollable form */
+.action-bar-sticky {
+  flex-shrink: 0;
+  background: #f0f2f5;
+  padding: 4px;
+  border-bottom: 1px solid #d9d9d9;
 }
 
 /* Action/button bar */
@@ -291,4 +346,36 @@ tr.breakRow td {
   --ag-header-height: 36px;
   --ag-font-size: 12px;
   --ag-cell-horizontal-padding: 4px;
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Tabular figures for number/money columns in grids */
+.ag-right-aligned-cell {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+/* Multi-row record: continuation rows — remove top border */
+.ag-row.continuation-row {
+  border-top-color: transparent !important;
+}
+
+/* Multi-row record: first row of group — remove bottom border */
+.ag-row.record-first-row {
+  border-bottom-color: transparent !important;
+}
+
+/* Suppress AG Grid's built-in hover on multi-row first rows — our group class handles it */
+.ag-row.record-first-row {
+  --ag-row-hover-color: transparent;
+}
+
+/* Grouped hover: applied via JS to all rows of a logical record */
+.ag-row.record-group-hover {
+  background-color: color-mix(in srgb, transparent, #2196f3 8%) !important;
+}
+
+/* Grouped selection: applied via JS to all rows of a logical record */
+.ag-row.record-group-selected {
+  background-color: var(--ag-selected-row-background-color) !important;
 }

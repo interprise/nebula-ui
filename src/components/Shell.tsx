@@ -573,16 +573,25 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   <>
                     {parsedBreadcrumbs.length > 0 && (
                       <Breadcrumb
-                        style={{ padding: '6px 8px' }}
+                        style={{ padding: '6px 8px', maxWidth: '100%' }}
                         items={parsedBreadcrumbs.map((b) => ({
                           title: b.action ? (
-                            <a onClick={() => {
-                              const params: Record<string, string> = {};
-                              if (b.navpath) params.navpath = b.navpath;
-                              if (b.option1) params.option1 = b.option1;
-                              handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
-                            }}>{b.title}</a>
-                          ) : b.title,
+                            <a
+                              title={b.title}
+                              style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
+                              onClick={() => {
+                                const params: Record<string, string> = {};
+                                if (b.navpath) params.navpath = b.navpath;
+                                if (b.option1) params.option1 = b.option1;
+                                handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
+                              }}
+                            >{b.title}</a>
+                          ) : (
+                            <span
+                              title={b.title}
+                              style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
+                            >{b.title}</span>
+                          ),
                         }))}
                       />
                     )}

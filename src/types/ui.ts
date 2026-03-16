@@ -129,6 +129,7 @@ export interface UITree {
   header?: ListMeta;
   footer?: ListFooter;
   columns?: ListColumn[];
+  continuationHeaders?: ListHeader[][];
   pageOnly?: boolean;
   paging?: {
     currentPage: number;

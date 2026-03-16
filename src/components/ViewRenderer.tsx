@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useRef } from 'react';
 import { Tabs } from 'antd';
 import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
 import {
@@ -11,6 +11,23 @@ import {
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ListRenderer from './ListRenderer';
+
+/** Shows horizontal scrollbar only when mouse is near the bottom edge */
+const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
+function useEdgeScrollReveal() {
+  const ref = useRef<HTMLDivElement>(null);
+  const onMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const distFromBottom = rect.bottom - e.clientY;
+    el.classList.toggle('scrollbar-visible', distFromBottom <= SCROLL_REVEAL_ZONE);
+  }, []);
+  const onMouseLeave = useCallback(() => {
+    ref.current?.classList.remove('scrollbar-visible');
+  }, []);
+  return { ref, onMouseMove, onMouseLeave };
+}
 
 interface ViewRendererProps {
   ui: UITree;
@@ -29,6 +46,11 @@ function isBottomPanelRow(row: UIRow): boolean {
     const type = cell.control?.type;
     return type === 'tab' || type === 'embeddedView' || type === 'detailView';
   });
+}
+
+/** Check if a row contains an actionBar control */
+function isActionBarRow(row: UIRow): boolean {
+  return row.cells.some((cell) => cell.control?.type === 'actionBar');
 }
 
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, embedded }) => {
@@ -58,6 +80,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
   // Bottom panel = trailing rows that contain tab/embeddedView/detailView
   let formRows = ui.rows;
   let bottomRows: UIRow[] = [];
+  let actionBarRows: UIRow[] = [];
 
   if (!embedded && pageType === 2) {
     // Find where the bottom panel starts: scan from the end
@@ -73,26 +96,53 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
       formRows = ui.rows.slice(0, splitIdx);
       bottomRows = ui.rows.slice(splitIdx);
     }
+    // Extract actionBar rows from form rows so they stay fixed above the scroll area
+    actionBarRows = formRows.filter(isActionBarRow);
+    formRows = formRows.filter((r) => !isActionBarRow(r));
   }
 
-  const tableStyle: React.CSSProperties | undefined = ui.totalWidth
-    ? { width: ui.totalWidth, maxWidth: '100%', tableLayout: 'fixed' }
-    : undefined;
+  // Compute actual column count from form rows only (exclude container/section-header rows
+  // whose colspans include child sub-views and inflate the auto-layout table)
+  const formCols = (() => {
+    let max = 0;
+    for (const row of ui.rows) {
+      let sum = 0;
+      let isFormRow = false;
+      for (const cell of row.cells) {
+        sum += cell.colspan || 1;
+        if (cell.elementType === ELTYPE_PROMPT || cell.elementType === ELTYPE_CONTENT || cell.elementType === ELTYPE_SELECTOR) {
+          isFormRow = true;
+        }
+      }
+      if (isFormRow && sum > max) max = sum;
+    }
+    return max || undefined;
+  })();
+
+  const tableStyle: React.CSSProperties = { width: '100%' };
+  const edgeScroll = useEdgeScrollReveal();
 
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
     return (
       <div className="view-container">
         {ui.title && <div className="view-title">{ui.title}</div>}
-        <div className="view-split-form">
+        {actionBarRows.length > 0 && (
+          <div className="action-bar-sticky">
+            {actionBarRows.map((row, ri) => (
+              <RowRenderer key={row.id || `ab_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} asDiv />
+            ))}
+          </div>
+        )}
+        <div className="view-split-form" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
           <table className="layout-table" style={tableStyle}>
             <tbody>
               {formRows.map((row, ri) => (
                 <React.Fragment key={row.id || ri}>
-                  <RowRenderer row={row} pageType={pageType} onAction={onAction} onChange={onChange} />
+                  <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
                   {ri === lastHeaderRowIdx && (
                     <tr className="header-separator-row">
-                      <td colSpan={ui.totalCols || 100}>
+                      <td colSpan={formCols || 100}>
                         <div className="header-items-separator" />
                       </td>
                     </tr>
@@ -115,15 +165,15 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
   return (
     <div className="view-container">
       {ui.title && <div className="view-title">{ui.title}</div>}
-      <div className="view-body">
+      <div className="view-body" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
         <table className="layout-table" style={tableStyle}>
           <tbody>
             {ui.rows.map((row, ri) => (
               <React.Fragment key={row.id || ri}>
-                <RowRenderer row={row} pageType={pageType} onAction={onAction} onChange={onChange} />
+                <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
                 {ri === lastHeaderRowIdx && (
                   <tr className="header-separator-row">
-                    <td colSpan={ui.totalCols || 100}>
+                    <td colSpan={formCols || 100}>
                       <div className="header-items-separator" />
                     </td>
                   </tr>
@@ -149,7 +199,7 @@ const BottomPanelRow: React.FC<{
       {row.cells.map((cell, ci) => {
         if (!cell.control) return null;
         return (
-          <div key={cell.id || ci}>
+          <div key={cell.id || ci} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             {renderContainerControl(cell.control, onAction, onChange)}
           </div>
         );
@@ -161,13 +211,28 @@ const BottomPanelRow: React.FC<{
 const RowRenderer: React.FC<{
   row: UIRow;
   pageType?: number;
+  formCols?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
-}> = ({ row, pageType, onAction, onChange }) => {
+  asDiv?: boolean;
+}> = ({ row, pageType, formCols, onAction, onChange, asDiv }) => {
+  if (asDiv) {
+    // Render outside table context (e.g. sticky action bar)
+    return (
+      <div id={row.id} className={row.cls || ''}>
+        {row.cells.map((cell, ci) => {
+          if (!cell.control) return null;
+          return (
+            <ControlRenderer key={cell.id || ci} control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <tr id={row.id} className={row.cls || ''}>
       {row.cells.map((cell, ci) => (
-        <CellRenderer key={cell.id || ci} cell={cell} pageType={pageType} onAction={onAction} onChange={onChange} />
+        <CellRenderer key={cell.id || ci} cell={cell} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
       ))}
     </tr>
   );
@@ -176,12 +241,20 @@ const RowRenderer: React.FC<{
 const CellRenderer: React.FC<{
   cell: UICell;
   pageType?: number;
+  formCols?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
-}> = ({ cell, pageType, onAction, onChange }) => {
+}> = ({ cell, pageType, formCols, onAction, onChange }) => {
+  // For container/section-header/filler cells, clamp colspan to formCols so
+  // sub-view colspans don't inflate the auto-layout table width
+  const isFullWidthCell = cell.elementType === ELTYPE_CONTAINER
+    || cell.elementType === ELTYPE_SECTION_HEADER
+    || cell.elementType === ELTYPE_FILLER;
+  const colSpan = isFullWidthCell && formCols ? formCols : cell.colspan;
+
   const tdProps: React.TdHTMLAttributes<HTMLTableCellElement> = {
     id: cell.id,
-    colSpan: cell.colspan,
+    colSpan,
     rowSpan: cell.rowspan,
     className: cell.cls || '',
   };
@@ -243,7 +316,7 @@ const CellRenderer: React.FC<{
           </td>
         );
       }
-      return <td {...tdProps} className={`filler-cell ${cell.cls || ''}`} />;
+      return null;
 
     default:
       return <td {...tdProps} />;
@@ -259,7 +332,7 @@ function renderContainerControl(
     case 'tab': {
       const activeTab = control.tabs?.find((t) => t.selected)?.name || control.tabs?.[0]?.name;
       return (
-        <>
+        <div className="tab-container">
           <div className="tab-sticky-wrapper">
             <Tabs
               activeKey={activeTab}
@@ -280,7 +353,7 @@ function renderContainerControl(
               />
             </div>
           )}
-        </>
+        </div>
       );
     }
 

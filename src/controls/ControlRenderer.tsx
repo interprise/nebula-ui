@@ -172,8 +172,9 @@ const RemoteCombo: React.FC<{
   control: UIControl;
   commonProps: Record<string, unknown>;
   value: unknown;
+  maxWidth?: number;
   onChange: (val: unknown) => void;
-}> = ({ control, commonProps, value, onChange }) => {
+}> = ({ control, commonProps, value, maxWidth, onChange }) => {
   const sid = useContext(SidContext);
   const displayText = control.displayText as string | undefined;
   const navpath = control.navpath as string;
@@ -234,7 +235,7 @@ const RemoteCombo: React.FC<{
       loading={fetching}
       notFoundContent={fetching ? 'Caricamento...' : (hasFetched ? 'Nessun risultato' : null)}
       onDropdownVisibleChange={handleDropdownOpen}
-      style={{ width: '100%' }}
+      style={{ width: '100%', ...(maxWidth && { maxWidth }) }}
       options={options}
       onSearch={handleSearch}
       onChange={onChange}
@@ -285,17 +286,22 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
     return <CustomControl control={control} pageType={pageType} onAction={onAction} onChange={onChange} />;
   }
 
+  // Cap text field width based on server size, with a max of 500px
+  const textMaxWidth = control.size ? Math.min(control.size * 8 + 16, 500) : 500;
+
   switch (type) {
-    case 'text':
+    case 'text': {
+      const isUppercase = !!control.uppercase;
       return (
         <Input
           {...commonProps}
           value={value as string}
           maxLength={control.maxLength}
-          style={{ width: '100%' }}
-          onChange={(e) => handleChange(e.target.value)}
+          style={{ width: '100%', maxWidth: textMaxWidth, ...(isUppercase && { textTransform: 'uppercase' }) }}
+          onChange={(e) => handleChange(isUppercase ? e.target.value.toUpperCase() : e.target.value)}
         />
       );
+    }
 
     case 'number':
     case 'money':
@@ -306,7 +312,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           decimals={control.decimals}
           currencySymbol={type === 'money' ? (control.currencySymbol as string) : undefined}
           unitSuffix={control.unitSuffix}
-          width={control.size ? control.size * 8 + 32 : 120}
+          width={control.size ? control.size * 9 + 34 : 125}
           onChange={handleChange}
         />
       );
@@ -318,6 +324,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           {...commonProps}
           value={value ? dayjs(value as string, dateFmt) : null}
           format={dateFmt}
+          style={{ minWidth: 96 }}
           onChange={(_d, dateStr) => handleChange(dateStr)}
         />
       );
@@ -329,6 +336,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           {...commonProps}
           value={value ? dayjs(value as string, 'HH:mm') : null}
           format="HH:mm"
+          style={{ minWidth: 95 }}
           onChange={(_t, timeStr) => handleChange(timeStr)}
         />
       );
@@ -341,6 +349,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           showTime
           value={value ? dayjs(value as string, tsFmt) : null}
           format={tsFmt}
+          style={{ minWidth: 170 }}
           onChange={(_d, dateStr) => handleChange(dateStr)}
         />
       );
@@ -374,6 +383,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
             control={control}
             commonProps={commonProps}
             value={value}
+            maxWidth={textMaxWidth}
             onChange={handleChange}
           />
         );
@@ -386,7 +396,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           showSearch
           optionFilterProp="label"
           allowClear
-          style={{ width: '100%' }}
+          style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={handleChange}
           options={(control.options || []).map((o) => ({
             value: o.value,
@@ -402,7 +412,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           {...commonProps}
           mode="multiple"
           value={value as string[]}
-          style={{ width: '100%' }}
+          style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={handleChange}
           options={(control.options || []).map((o) => ({
             value: o.value,
@@ -412,12 +422,14 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
       );
 
     case 'textarea':
+    case 'htmlarea':
+    case 'expBuilder':
       return (
         <Input.TextArea
           {...commonProps}
           value={value as string}
-          autoSize={{ minRows: 2, maxRows: 10 }}
-          style={{ maxWidth: 500 }}
+          autoSize={{ minRows: 3, maxRows: 10 }}
+          style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -427,18 +439,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
         <Input.Password
           {...commonProps}
           value={value as string}
-          style={{ width: '100%' }}
-          onChange={(e) => handleChange(e.target.value)}
-        />
-      );
-
-    case 'htmlarea':
-      return (
-        <Input.TextArea
-          {...commonProps}
-          value={value as string}
-          autoSize={{ minRows: 2, maxRows: 10 }}
-          style={{ maxWidth: 500 }}
+          style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
@@ -606,8 +607,12 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
       const warningHtml = control.html as string | undefined;
       if (!warningHtml) return null;
       return (
-        <div className="warning-control" style={{ display: 'flex', gap: 8, padding: '4px 0' }}>
-          <span style={{ fontSize: 16, color: '#faad14', flexShrink: 0 }}>&#9888;</span>
+        <div className="warning-control" style={{
+          display: 'flex', gap: 10, padding: '8px 12px',
+          background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8,
+          lineHeight: 1.4, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 16, color: '#faad14', flexShrink: 0, lineHeight: '20px' }}>&#9888;</span>
           <div dangerouslySetInnerHTML={{ __html: warningHtml }} />
         </div>
       );
@@ -794,7 +799,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
         <Input
           {...commonProps}
           value={value as string}
-          style={{ width: '100%' }}
+          style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );

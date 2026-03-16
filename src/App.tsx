@@ -114,7 +114,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <ConfigProvider locale={itIT}>
+    <ConfigProvider locale={itIT} theme={{ token: { fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" } }}>
       <AntApp>
         {!loggedIn ? (
           showLogin ? (
