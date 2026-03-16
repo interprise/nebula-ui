@@ -250,6 +250,36 @@ interface ControlRendererProps {
   onChange: (name: string, value: unknown) => void;
 }
 
+/** Wraps a control with NavigateView/NavigateAdd decoration icons */
+const withPostDecorations = (
+  element: React.ReactNode,
+  control: UIControl,
+  onAction: (action: string, params?: Record<string, string>) => void,
+): React.ReactNode => {
+  const nav = control.navigateView as { command: string; navpath: string; controlName: string } | undefined;
+  const add = control.navigateAdd as { command: string; navpath: string; controlName: string } | undefined;
+  if (!nav && !add) return element;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, width: '100%' }}>
+      {element}
+      {nav && (
+        <LinkOutlined
+          style={{ fontSize: 14, color: '#1677ff', cursor: 'pointer', flexShrink: 0 }}
+          title="Apri dettaglio"
+          onClick={() => onAction(nav.command, { navpath: nav.navpath, option1: nav.controlName })}
+        />
+      )}
+      {add && (
+        <PlusOutlined
+          style={{ fontSize: 14, color: '#52c41a', cursor: 'pointer', flexShrink: 0 }}
+          title="Nuovo"
+          onClick={() => onAction(add.command, { navpath: add.navpath, option1: add.controlName })}
+        />
+      )}
+    </span>
+  );
+};
+
 const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, onAction, onChange }) => {
   const { type, name, editable, value, hint, mandatory, disabled } = control;
 
@@ -292,14 +322,16 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
   switch (type) {
     case 'text': {
       const isUppercase = !!control.uppercase;
-      return (
+      return withPostDecorations(
         <Input
           {...commonProps}
           value={value as string}
           maxLength={control.maxLength}
           style={{ width: '100%', maxWidth: textMaxWidth, ...(isUppercase && { textTransform: 'uppercase' }) }}
           onChange={(e) => handleChange(isUppercase ? e.target.value.toUpperCase() : e.target.value)}
-        />
+        />,
+        control,
+        onAction,
       );
     }
 
@@ -378,17 +410,19 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
 
     case 'combo': {
       if (control.remote) {
-        return (
+        return withPostDecorations(
           <RemoteCombo
             control={control}
             commonProps={commonProps}
             value={value}
             maxWidth={textMaxWidth}
             onChange={handleChange}
-          />
+          />,
+          control,
+          onAction,
         );
       }
-      return (
+      return withPostDecorations(
         <Select
           {...commonProps}
 
@@ -402,7 +436,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
             value: o.value,
             label: o.text,
           }))}
-        />
+        />,
+        control,
+        onAction,
       );
     }
 
@@ -795,13 +831,15 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
       );
 
     default:
-      return (
+      return withPostDecorations(
         <Input
           {...commonProps}
           value={value as string}
           style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
-        />
+        />,
+        control,
+        onAction,
       );
   }
 };

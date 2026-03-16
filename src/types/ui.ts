@@ -39,6 +39,9 @@ export interface UIControl {
   disabled?: boolean;
   // navigate
   targetViewName?: string;
+  // post-decorations: navigation icons next to field
+  navigateView?: { command: string; navpath: string; controlName: string };
+  navigateAdd?: { command: string; navpath: string; controlName: string };
   // embedded / detail view
   contentViewName?: string;
   contentRows?: UIRow[];
@@ -147,7 +150,7 @@ export interface ToolbarItem {
   icon?: string;
   handler?: string;
   disabled?: boolean;
-  menu?: ToolbarItem[];
+  menu?: ToolbarItem[] | { items: ToolbarItem[] };
   keys?: string;
   shift?: boolean;
 }

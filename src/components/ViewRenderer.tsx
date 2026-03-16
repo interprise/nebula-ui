@@ -119,7 +119,12 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
     return max || undefined;
   })();
 
-  const tableStyle: React.CSSProperties = { width: '100%' };
+  // Fixed table layout with pixel widths so colspans produce proportional columns
+  // Use totalWidth from server (totalCols * charWidth * gridSize) when available
+  const tableWidth = ui.totalWidth || ((ui.totalCols || formCols) ? (ui.totalCols || formCols)! * 16 : 0);
+  const tableStyle: React.CSSProperties = tableWidth
+    ? { width: tableWidth, tableLayout: 'fixed' }
+    : { width: '100%' };
   const edgeScroll = useEdgeScrollReveal();
 
   // Split layout: form scrolls, bottom panel always visible
@@ -229,10 +234,21 @@ const RowRenderer: React.FC<{
       </div>
     );
   }
+  // Detect which CONTENT cells have no preceding PROMPT (companion fields)
+  const noPrecedingPrompt = new Set<number>();
+  for (let i = 0; i < row.cells.length; i++) {
+    if (row.cells[i].elementType === ELTYPE_CONTENT) {
+      const prev = i > 0 ? row.cells[i - 1] : null;
+      if (!prev || prev.elementType !== ELTYPE_PROMPT) {
+        noPrecedingPrompt.add(i);
+      }
+    }
+  }
+
   return (
     <tr id={row.id} className={row.cls || ''}>
       {row.cells.map((cell, ci) => (
-        <CellRenderer key={cell.id || ci} cell={cell} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
       ))}
     </tr>
   );
@@ -240,11 +256,12 @@ const RowRenderer: React.FC<{
 
 const CellRenderer: React.FC<{
   cell: UICell;
+  companion?: boolean;
   pageType?: number;
   formCols?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
-}> = ({ cell, pageType, formCols, onAction, onChange }) => {
+}> = ({ cell, companion, pageType, formCols, onAction, onChange }) => {
   // For container/section-header/filler cells, clamp colspan to formCols so
   // sub-view colspans don't inflate the auto-layout table width
   const isFullWidthCell = cell.elementType === ELTYPE_CONTAINER
@@ -276,8 +293,9 @@ const CellRenderer: React.FC<{
         tdProps.colSpan = 1;
         tdProps.style = { ...tdProps.style, width: '1%' };
       }
+      const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${cell.cls || ''}`;
       return (
-        <td {...tdProps} className={`content-cell ${cell.cls || ''}`}>
+        <td {...tdProps} className={cellClass}>
           {cell.control ? (
             <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
           ) : null}

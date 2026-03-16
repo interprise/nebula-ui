@@ -152,13 +152,18 @@ function renderToolbarItem(
   }
   if (!item.id && !item.handler) return null;
 
-  if (item.menu && item.menu.length > 0) {
+  // Normalize menu: server may send { items: [...] } object or direct array
+  const menuItems = item.menu
+    ? (Array.isArray(item.menu) ? item.menu : (item.menu as { items: ToolbarItem[] }).items)
+    : undefined;
+
+  if (menuItems && menuItems.length > 0) {
     return (
       <Dropdown
         key={item.id || idx}
         menu={{
-          items: item.menu.map((sub) => ({
-            key: sub.id,
+          items: menuItems.map((sub, si) => ({
+            key: sub.id || `sub_${si}`,
             label: sub.text,
             disabled: sub.disabled,
             onClick: () => sub.handler && invokeHandler(sub.handler, onAction),
