@@ -9,6 +9,26 @@ import { getCustomControl } from '../controls/customControls';
 
 const { Text } = Typography;
 
+/** Ref-based sort dispatch — shared between custom headers and ListRenderer */
+type SortDispatch = (sortExpression: string) => void;
+const sortDispatchRef = { current: null as SortDispatch | null };
+
+/** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort */
+const ServerSortHeader = (props: { displayName: string; sortExpression?: string; sortDir?: string }) => {
+  const { displayName, sortExpression, sortDir } = props;
+  if (!sortExpression) return <span>{displayName}</span>;
+  return (
+    <div
+      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, width: '100%', userSelect: 'none' }}
+      onClick={() => sortDispatchRef.current?.(sortExpression)}
+    >
+      <span>{displayName}</span>
+      {sortDir === 'asc' && <span style={{ fontSize: 10 }}>&#9650;</span>}
+      {sortDir === 'desc' && <span style={{ fontSize: 10 }}>&#9660;</span>}
+    </div>
+  );
+};
+
 /** Comparator that sorts on raw values stored in _raw_{idx}, handling numbers and dates */
 const rawValueComparator = (colIdx: number) =>
   (_a: unknown, _b: unknown, nodeA: { data?: Record<string, unknown> }, nodeB: { data?: Record<string, unknown> }): number => {
@@ -104,6 +124,14 @@ interface ListRendererProps {
 }
 
 const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) => {
+  // All data local (no paging or single page) — can do client-side sort
+  const meta = ui.header;
+  const allDataLocal = (() => {
+    if (ui.paging) return ui.paging.totalPages <= 1;
+    if (meta?.recordCount && meta?.pageSize) return meta.recordCount <= meta.pageSize;
+    return true; // No paging info — assume all data is local
+  })();
+
   const { columnDefs, rowData } = useMemo(() => {
     if (!ui.rows || ui.rows.length === 0) return { columnDefs: [], rowData: [] };
 
@@ -162,8 +190,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
         cols.push({
           field: `col_${idx}`,
           headerName: hdr.text || '',
-          sortable: true,
-          comparator: rawValueComparator(idx),
+          sortable: allDataLocal,
+          comparator: allDataLocal ? rawValueComparator(idx) : undefined,
           cellClass: isRightAlign ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[] : hdr.cls,
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
@@ -172,7 +200,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
           cellRenderer,
           autoHeight,
           wrapText: isHtml,
-          headerComponentParams: hdr.sortExpression ? { sortExpression: hdr.sortExpression } : undefined,
+          // Server-sorted lists: custom header handles sort dispatch; client-sorted: AG Grid native
+          ...(!allDataLocal && hdr.sortExpression ? {
+            headerComponent: ServerSortHeader,
+            headerComponentParams: { sortExpression: hdr.sortExpression, sortDir: hdr.sortDir },
+          } : {}),
         });
       });
     } else {
@@ -324,7 +356,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     }
 
     return { columnDefs: cols, rowData: rows };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders]);
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, allDataLocal]);
 
   // Refs and helpers for grouped hover/selection on multi-row records
   const gridApiRef = useRef<GridApi | null>(null);
@@ -448,26 +480,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     };
   }, [applyClassByPath]);
 
-  // All data local (no paging or single page) — always use client-side sort
-  const allDataLocal = !ui.paging || ui.paging.totalPages <= 1;
-
-  // Sort handler: server-side only for multi-page data with sortExpression, client-side otherwise
-  const handleSortChanged = useCallback(() => {
-    const api = gridApiRef.current;
-    if (!api) return;
-    const sortModel = api.getColumnState().filter(c => c.sort);
-    if (sortModel.length === 0) return;
-    if (allDataLocal) return; // AG Grid handles client-side sort natively
-    const sortedCol = sortModel[0];
-    const colIdx = parseInt(sortedCol.colId?.replace('col_', '') || '', 10);
-    const hdr = ui.headers?.[colIdx];
-    if (hdr?.sortExpression) {
-      const params: Record<string, string> = { option1: hdr.sortExpression };
-      if (ui.path) params.navpath = ui.path;
-      onAction('SortColumn', params);
-      api.applyColumnState({ defaultState: { sort: null } });
-    }
-  }, [onAction, ui.headers, ui.path, allDataLocal]);
+  // Server-side sort dispatch (used by custom header components via ref)
+  sortDispatchRef.current = useCallback((sortExpression: string) => {
+    const params: Record<string, string> = { option1: sortExpression };
+    if (ui.path) params.navpath = ui.path;
+    onAction('SortColumn', params);
+  }, [onAction, ui.path]);
 
   // Inject continuation header rows into the AG Grid DOM after the ag-header
   const injectContinuationHeaders = useCallback(() => {
@@ -496,7 +514,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     });
   }, [ui.continuationHeaders]);
 
-  const meta = ui.header;
   const footer = ui.footer;
 
   // Compute minimum width from header colspans (similar to detail view: ~10px per column unit)
@@ -519,7 +536,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
           rowData={rowData}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); }}
           onRowClicked={handleRowClicked}
-          onSortChanged={handleSortChanged}
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={fullWidthCellRenderer}
           getRowClass={getRowClass}
