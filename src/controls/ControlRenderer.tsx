@@ -31,7 +31,7 @@ import {
   LinkOutlined,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
-import { SidContext } from '../components/ViewRenderer';
+import { SidContext, PathContext } from '../components/ViewRenderer';
 import * as api from '../services/api';
 import dayjs from 'dayjs';
 
@@ -282,6 +282,14 @@ const withPostDecorations = (
 
 const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, onAction, onChange }) => {
   const { type, name, editable, value, hint, mandatory, disabled } = control;
+  const viewPath = useContext(PathContext);
+
+  // Wrap onAction to always include navpath from the current view context
+  const doAction = useCallback((action: string, params?: Record<string, string>) => {
+    const p = { ...params };
+    if (viewPath && !p.navpath) p.navpath = viewPath;
+    onAction(action, p);
+  }, [onAction, viewPath]);
 
   // No controlled open — let Ant Design handle combo open/close natively
   // Editability is decided server-side (ViewItem.isEditable) and sent as the `editable` flag.
@@ -297,10 +305,10 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
         const command = (control.command as string) || 'Post';
         const navpath = (control.navpath as string) || '';
         const option1 = (control.option1 as string) || '';
-        onAction(command, { navpath, option1 });
+        doAction(command, { navpath, option1 });
       }
     },
-    [fieldName, onChange, onAction, control.reload, control.command, control.navpath, control.option1]
+    [fieldName, onChange, doAction, control.reload, control.command, control.navpath, control.option1]
   );
 
   const commonProps = {
@@ -313,7 +321,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
   // Check custom control registry before built-in types
   const CustomControl = type ? getCustomControl(type) : undefined;
   if (CustomControl) {
-    return <CustomControl control={control} pageType={pageType} onAction={onAction} onChange={onChange} />;
+    return <CustomControl control={control} pageType={pageType} onAction={doAction} onChange={onChange} />;
   }
 
   // Cap text field width based on server size, with a max of 500px
@@ -331,7 +339,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           onChange={(e) => handleChange(isUppercase ? e.target.value.toUpperCase() : e.target.value)}
         />,
         control,
-        onAction,
+        doAction,
       );
     }
 
@@ -438,7 +446,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           }))}
         />,
         control,
-        onAction,
+        doAction,
       );
     }
 
@@ -486,7 +494,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           id={control.id}
           disabled={control.disabled}
           icon={control.icon ? <img src={`/entrasp/images/${control.icon}`} width={16} height={16} /> : undefined}
-          onClick={() => control.action && onAction(control.action)}
+          onClick={() => control.action && doAction(control.action)}
           title={hint}
         >
           {control.prompt}
@@ -499,7 +507,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           id={control.id}
           type="link"
           disabled={control.disabled}
-          onClick={() => control.action && onAction(control.action)}
+          onClick={() => control.action && doAction(control.action)}
         >
           {control.prompt}
         </Button>
@@ -515,7 +523,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
             if (control.openWin) {
               window.open(`/entrasp/controller?action=${control.action}`, '_blank');
             } else {
-              control.action && onAction(control.action);
+              control.action && doAction(control.action);
             }
           }}
           title={hint}
@@ -531,7 +539,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           size="small"
           icon={<SearchOutlined />}
           disabled={control.disabled}
-          onClick={() => control.action && onAction(control.action)}
+          onClick={() => control.action && doAction(control.action)}
           title={hint}
         />
       );
@@ -543,7 +551,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           className="navigate-view-link"
           style={{ cursor: 'pointer', color: '#1677ff', whiteSpace: 'nowrap', marginRight: 12 }}
           title={hint}
-          onClick={() => control.action && onAction(control.action, {
+          onClick={() => control.action && doAction(control.action, {
             navpath: control.navpath as string,
             option1: control.name as string,
           })}
@@ -560,7 +568,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           size="small"
           icon={<PlusOutlined />}
           disabled={control.disabled}
-          onClick={() => control.action && onAction(control.action)}
+          onClick={() => control.action && doAction(control.action)}
           title={hint}
         />
       );
@@ -581,7 +589,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
         <Button
           id={control.id}
           icon={<DownloadOutlined />}
-          onClick={() => control.action && onAction(control.action)}
+          onClick={() => control.action && doAction(control.action)}
           title={hint}
         >
           {control.prompt || 'Download'}
@@ -618,7 +626,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           <span
             className="hint-group-toggle"
             style={{ cursor: 'pointer', userSelect: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-            onClick={() => onAction('ToggleGroupExpand', { navpath: path, option1: collapseKey })}
+            onClick={() => doAction('ToggleGroupExpand', { navpath: path, option1: collapseKey })}
           >
             {collapsed ? <CaretRightOutlined style={{ fontSize: 10 }} /> : <CaretDownOutlined style={{ fontSize: 10 }} />}
             <span className="hint-text">{value as string}</span>
@@ -669,7 +677,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
               size="small"
               type={act.highlight ? 'primary' : 'default'}
               title={act.hint}
-              onClick={() => onAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
+              onClick={() => doAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
             >
               {act.prompt}
             </Button>
@@ -738,8 +746,8 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
               onChange={(val) => onChange('$ReportBarItem', val)}
             />
           )}
-          <Button size="small" icon={<PrinterOutlined />} onClick={() => onAction('ExecuteBarReport')}>PDF</Button>
-          <Button size="small" icon={<MailOutlined />} onClick={() => onAction('EmailBarReport')}>Email</Button>
+          <Button size="small" icon={<PrinterOutlined />} onClick={() => doAction('ExecuteBarReport')}>PDF</Button>
+          <Button size="small" icon={<MailOutlined />} onClick={() => doAction('EmailBarReport')}>Email</Button>
         </span>
       );
     }
@@ -755,9 +763,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           )}
           {files && files.map((f) => (
             <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <a onClick={() => onAction('EmailAllegatiDownload', { option1: f.key })} style={{ cursor: 'pointer' }}>{f.fileName}</a>
+              <a onClick={() => doAction('EmailAllegatiDownload', { option1: f.key })} style={{ cursor: 'pointer' }}>{f.fileName}</a>
               {control.editable && (
-                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onAction('EmailAllegatiDelete', { option1: f.key })} />
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => doAction('EmailAllegatiDelete', { option1: f.key })} />
               )}
             </div>
           ))}
@@ -839,7 +847,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           onChange={(e) => handleChange(e.target.value)}
         />,
         control,
-        onAction,
+        doAction,
       );
   }
 };

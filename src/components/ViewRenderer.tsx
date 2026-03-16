@@ -40,6 +40,9 @@ interface ViewRendererProps {
 // Session ID context — used by remote combos to call the server
 export const SidContext = React.createContext<string>('S1');
 
+// View path context — used by controls to send navpath with commands
+export const PathContext = React.createContext<string | undefined>(undefined);
+
 /** Check if a row contains a tab, embeddedView, or detailView control */
 function isBottomPanelRow(row: UIRow): boolean {
   return row.cells.some((cell) => {
@@ -58,7 +61,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
 
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
-    return <ListRenderer ui={ui} onAction={onAction} embedded={embedded} />;
+    return (
+      <PathContext.Provider value={ui.path}>
+        <ListRenderer ui={ui} onAction={onAction} embedded={embedded} />
+      </PathContext.Provider>
+    );
   }
 
   // Find last header-item row index (rows containing controls with group or forGroup)
@@ -130,6 +137,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
     return (
+      <PathContext.Provider value={ui.path}>
       <div className="view-container">
         {ui.title && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
@@ -163,11 +171,13 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
           ))}
         </div>
       </div>
+      </PathContext.Provider>
     );
   }
 
   // No split: single scrollable view (query pages, simple detail pages, embedded views)
   return (
+    <PathContext.Provider value={ui.path}>
     <div className="view-container">
       {ui.title && <div className="view-title">{ui.title}</div>}
       <div className="view-body" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
@@ -189,6 +199,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
         </table>
       </div>
     </div>
+    </PathContext.Provider>
   );
 };
 
@@ -381,15 +392,19 @@ function renderContainerControl(
       const rows = (control.rows ?? control.contentRows) as UIRow[] | undefined;
       if (rows) {
         const isHorizontal = control.layoutType === 'horizontal';
+        const embeddedHeader = control.header as UITree['header'];
+        const embeddedFooter = control.footer as UITree['footer'];
         const embeddedUi: UITree = {
           rows,
           viewName: (control.viewName ?? control.contentViewName) as string,
           pageType: isHorizontal ? 1 : (control.pageType as number | undefined),
           totalCols: control.totalCols as number | undefined,
-          header: control.header as UITree['header'],
+          // Derive path from header or footer (server puts it there for embedded views)
+          path: embeddedHeader?.path || embeddedFooter?.path || (control.path as string | undefined),
+          header: embeddedHeader,
           headers: control.headers as UITree['headers'],
           columns: control.columns as UITree['columns'],
-          footer: control.footer as UITree['footer'],
+          footer: embeddedFooter,
         };
         return <ViewRenderer ui={embeddedUi} onAction={onAction} onChange={onChange} embedded />;
       }

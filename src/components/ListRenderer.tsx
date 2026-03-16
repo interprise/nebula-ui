@@ -9,6 +9,20 @@ import { getCustomControl } from '../controls/customControls';
 
 const { Text } = Typography;
 
+/** Comparator that sorts on raw values stored in _raw_{idx}, handling numbers and dates */
+const rawValueComparator = (colIdx: number) =>
+  (_a: unknown, _b: unknown, nodeA: { data?: Record<string, unknown> }, nodeB: { data?: Record<string, unknown> }): number => {
+    const rawA = nodeA.data?.[`_raw_${colIdx}`];
+    const rawB = nodeB.data?.[`_raw_${colIdx}`];
+    if (rawA == null && rawB == null) return 0;
+    if (rawA == null) return 1;
+    if (rawB == null) return -1;
+    const numA = typeof rawA === 'number' ? rawA : Number(rawA);
+    const numB = typeof rawB === 'number' ? rawB : Number(rawB);
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+    return String(rawA).localeCompare(String(rawB));
+  };
+
 const gridTheme = themeAlpine.withParams({
   rowHeight: 22,
   headerHeight: 36,
@@ -148,7 +162,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
         cols.push({
           field: `col_${idx}`,
           headerName: hdr.text || '',
-          sortable: !!hdr.sortExpression,
+          sortable: true,
+          comparator: rawValueComparator(idx),
           cellClass: isRightAlign ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[] : hdr.cls,
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
@@ -299,6 +314,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
           } else {
             rowObj[`col_${idx}`] = cell.control.displayValue ?? cell.control.value ?? '';
           }
+          // Store raw value for client-side sorting (avoids locale-formatted string comparison)
+          if (cell.control.value !== undefined) {
+            rowObj[`_raw_${idx}`] = cell.control.value;
+          }
         }
       });
       rows.push(rowObj);
@@ -429,22 +448,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     };
   }, [applyClassByPath]);
 
-  // Server-side sort: when AG Grid header is clicked, extract sortExpression and dispatch
+  // All data local (no paging or single page) — always use client-side sort
+  const allDataLocal = !ui.paging || ui.paging.totalPages <= 1;
+
+  // Sort handler: server-side only for multi-page data with sortExpression, client-side otherwise
   const handleSortChanged = useCallback(() => {
     const api = gridApiRef.current;
     if (!api) return;
     const sortModel = api.getColumnState().filter(c => c.sort);
     if (sortModel.length === 0) return;
+    if (allDataLocal) return; // AG Grid handles client-side sort natively
     const sortedCol = sortModel[0];
-    // Find the matching header to get its sortExpression
     const colIdx = parseInt(sortedCol.colId?.replace('col_', '') || '', 10);
     const hdr = ui.headers?.[colIdx];
     if (hdr?.sortExpression) {
-      onAction('SortColumn', { option1: hdr.sortExpression });
+      const params: Record<string, string> = { option1: hdr.sortExpression };
+      if (ui.path) params.navpath = ui.path;
+      onAction('SortColumn', params);
+      api.applyColumnState({ defaultState: { sort: null } });
     }
-    // Reset AG Grid's sort state — the server will send back a fresh grid
-    api.applyColumnState({ defaultState: { sort: null } });
-  }, [onAction, ui.headers]);
+  }, [onAction, ui.headers, ui.path, allDataLocal]);
 
   // Inject continuation header rows into the AG Grid DOM after the ag-header
   const injectContinuationHeaders = useCallback(() => {
@@ -531,7 +554,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
         <div style={{ marginTop: 8 }}>
           <Button
             icon={<PlusOutlined />}
-            onClick={() => onAction(meta.addCommand!)}
+            onClick={() => onAction(meta.addCommand!, ui.path ? { navpath: ui.path } : undefined)}
           >
             {meta.addLabel || 'Nuovo'}
           </Button>
