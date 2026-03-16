@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, message, ConfigProvider } from 'antd';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, message, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -48,6 +48,8 @@ interface TabState {
   uiData?: UIData;
   currField?: string;
   formValues: Record<string, string>;
+  loading?: boolean;
+  progressPct?: number; // 0-100 during async job polling
 }
 
 interface ShellProps {
@@ -196,19 +198,28 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
   const pollProgress = useCallback(
     async (tabKey: string, sid: string) => {
+      let delay = 500;
       const poll = async (): Promise<void> => {
         const resp = await api.checkProgress(sid);
-        // If the job is still running, poll again
-        if (resp.trackAsynchJob && !resp.ui) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          return poll();
+        const progress = (resp as Record<string, unknown>).progress as number | undefined;
+        // Update progress percentage for the loading indicator
+        if (progress != null && progress >= 0 && progress < 100) {
+          updateTabState(tabKey, { progressPct: progress });
         }
-        // Job finished — process the final response
-        processResponseInnerRef.current(tabKey, resp);
+        // Job complete: progress is -1 or 100, or no trackAsynchJob flag
+        if (!resp.trackAsynchJob || progress === -1 || progress === 100) {
+          updateTabState(tabKey, { loading: false, progressPct: undefined });
+          processResponseInnerRef.current(tabKey, resp);
+          return;
+        }
+        // Still running — poll again with exponential backoff (max 5s)
+        delay = Math.min(delay * 2, 5000);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return poll();
       };
       await poll();
     },
-    []
+    [updateTabState]
   );
 
   const processResponseInner = useCallback(
@@ -251,7 +262,30 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         }
       }
       if (resp.toolbar) update.toolbar = resp.toolbar;
-      if (resp.uiData) update.uiData = resp.uiData;
+      if (resp.uiData) {
+        update.uiData = resp.uiData;
+        // Handle file download callback from server
+        const cb = resp.uiData.callback as string | undefined;
+        if (cb && cb.includes('handleFileDownload')) {
+          const m = cb.match(/fileName:\s*"([^"]+)".*?type:\s*"([^"]+)".*?index:\s*"([^"]*)"/)
+               || cb.match(/fileName:\s*\\?"([^"\\]+)\\?".*?type:\s*\\?"([^"\\]+)\\?".*?index:\s*\\?"([^"\\]*)\\?"/);
+          if (m) {
+            const fileName = decodeURIComponent(m[1]);
+            const fileType = m[2];
+            const index = decodeURIComponent(m[3]);
+            const CMD2 = '/entrasp/controller2';
+            if (fileType === 'application/pdf') {
+              window.open(`${CMD2}?action=LoadPdf&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}&type=application/pdf`);
+            } else if (fileType === 'text/html') {
+              window.open(`${CMD2}?action=LoadHtml&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}`);
+            } else {
+              // Excel, CSV, ZIP, etc. — trigger download
+              const url = `${CMD2}?action=LoadFile&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}&type=${encodeURIComponent(fileType)}`;
+              window.location.href = url;
+            }
+          }
+        }
+      }
       if (resp.currField) update.currField = resp.currField;
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
@@ -270,25 +304,29 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         pollProgress(tabKey, tabSid);
         return;
       }
+      // Request complete — clear loading
+      updateTabState(tabKey, { loading: false, progressPct: undefined });
       processResponseInner(tabKey, resp);
     },
-    [processResponseInner, pollProgress, tabs]
+    [processResponseInner, pollProgress, tabs, updateTabState]
   );
 
   const handleMenuClick = useCallback(
     async (menuId: string, menuLabel: string) => {
       const tab = getActiveTabState();
       if (!tab) return;
+      if (tab.loading) return; // Block while a request is pending
 
       // Reset form values for the new screen
       tab.formValues = {};
       formValuesRef.current[tab.key] = tab.formValues;
-      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
+      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues, loading: true, progressPct: undefined });
 
       try {
         const resp = await api.executeMenuItem(menuId, tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
+        updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
       }
     },
@@ -299,15 +337,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
       if (!tab) return;
+      if (tab.loading) return; // Block while a request is pending
 
+      updateTabState(tab.key, { loading: true, progressPct: undefined });
       try {
         const resp = await api.postAction(action, params, formValuesRef.current[tab.key], tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
+        updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
       }
     },
-    [getActiveTabState, processResponse]
+    [getActiveTabState, processResponse, updateTabState]
   );
 
   const handleFieldChange = useCallback(
@@ -568,7 +609,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           />
           {currentTab && (
             <SidContext.Provider value={currentTab.sid}>
-              <div className="tab-content">
+              <div className="tab-content" style={{ position: 'relative' }}>
+                {currentTab.loading && (
+                  <div className="loading-overlay">
+                    <Spin size="large" tip={currentTab.progressPct != null ? `${currentTab.progressPct}%` : undefined}>
+                      <div style={{ minHeight: 60 }} />
+                    </Spin>
+                  </div>
+                )}
                 {currentTab.ui ? (
                   <>
                     {parsedBreadcrumbs.length > 0 && (
@@ -604,8 +652,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   </>
                 ) : (
                   <div style={{ textAlign: 'center', padding: 80, color: '#999' }}>
-                    <HomeOutlined style={{ fontSize: 48 }} />
-                    <div style={{ marginTop: 16 }}>Seleziona una voce dal menu</div>
+                    {currentTab.loading ? null : (
+                      <>
+                        <HomeOutlined style={{ fontSize: 48 }} />
+                        <div style={{ marginTop: 16 }}>Seleziona una voce dal menu</div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

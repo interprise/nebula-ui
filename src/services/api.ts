@@ -105,7 +105,7 @@ export async function reloadMenu(): Promise<ServerResponse> {
 }
 
 export async function checkProgress(sid: string = 'S1'): Promise<ServerResponse> {
-  return post(CMD_URL, { action: 'JSONProgress', sid });
+  return post(CMD2_URL, { action: 'JSONProgress', sid });
 }
 
 export async function fetchComboOptions(

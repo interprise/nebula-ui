@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Typography } from 'antd';
-import { PlusOutlined, CaretUpOutlined, CaretDownOutlined } from '@ant-design/icons';
+import { PlusOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, ListHeader } from '../types/ui';
 import { ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getCustomControl } from '../controls/customControls';
@@ -148,14 +148,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
         cols.push({
           field: `col_${idx}`,
           headerName: hdr.text || '',
-          sortable: false,
+          sortable: !!hdr.sortExpression,
           cellClass: isRightAlign ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[] : hdr.cls,
+          headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
           flex: hdr.colspan || 1,
           minWidth: hdrMinWidth,
           cellRenderer,
           autoHeight,
           wrapText: isHtml,
+          headerComponentParams: hdr.sortExpression ? { sortExpression: hdr.sortExpression } : undefined,
         });
       });
     } else {
@@ -427,13 +429,49 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     };
   }, [applyClassByPath]);
 
-  const handleSort = (sortExpression: string) => {
-    onAction('SortColumn', { option1: sortExpression });
-  };
+  // Server-side sort: when AG Grid header is clicked, extract sortExpression and dispatch
+  const handleSortChanged = useCallback(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    const sortModel = api.getColumnState().filter(c => c.sort);
+    if (sortModel.length === 0) return;
+    const sortedCol = sortModel[0];
+    // Find the matching header to get its sortExpression
+    const colIdx = parseInt(sortedCol.colId?.replace('col_', '') || '', 10);
+    const hdr = ui.headers?.[colIdx];
+    if (hdr?.sortExpression) {
+      onAction('SortColumn', { option1: hdr.sortExpression });
+    }
+    // Reset AG Grid's sort state — the server will send back a fresh grid
+    api.applyColumnState({ defaultState: { sort: null } });
+  }, [onAction, ui.headers]);
 
-  const updateColWidths = useCallback((_api: GridApi) => {
-    // placeholder — widths now match via flex + minWidth:0
-  }, []);
+  // Inject continuation header rows into the AG Grid DOM after the ag-header
+  const injectContinuationHeaders = useCallback(() => {
+    const container = gridContainerRef.current;
+    const contHeaders = ui.continuationHeaders;
+    if (!container || !contHeaders || contHeaders.length === 0) return;
+
+    const agHeader = container.querySelector('.ag-header');
+    if (!agHeader) return;
+
+    // Remove any previously injected continuation headers
+    container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
+
+    // Insert after ag-header
+    contHeaders.forEach((rowHeaders) => {
+      const row = document.createElement('div');
+      row.className = 'continuation-header-row';
+      row.style.cssText = 'display:flex;font-size:12px;color:#888;background:#fafafa;border-bottom:1px solid #f0f0f0;padding:0 4px;';
+      rowHeaders.forEach((hdr) => {
+        const cell = document.createElement('div');
+        cell.style.cssText = `flex:${hdr.colspan || 1};padding:3px 4px;`;
+        cell.textContent = hdr.text || '';
+        row.appendChild(cell);
+      });
+      agHeader.insertAdjacentElement('afterend', row);
+    });
+  }, [ui.continuationHeaders]);
 
   const meta = ui.header;
   const footer = ui.footer;
@@ -446,52 +484,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
     <div className="list-container" style={minListWidth ? { minWidth: minListWidth } : undefined}>
       {meta?.title && <div className="view-title">{meta.title}</div>}
 
-      {/* Column headers synced with AG Grid column widths */}
-      {ui.headers && ui.headers.length > 0 && (
-        <div className="list-headers" style={{ background: '#fafafa', borderBottom: '2px solid #e8e8e8' }}>
-          <div style={{ display: 'flex', fontWeight: 600, fontSize: 13 }}>
-            {ui.headers.map((hdr, idx) => {
-              if (hdr.type === 'selector') return null;
-              const sortable = !!hdr.sortExpression;
-              const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-              const hdrMinWidth = longestWord.length * 7 + 12;
-              return (
-                <div
-                  key={idx}
-                  className={hdr.cls || ''}
-                  title={hdr.hint}
-                  style={{
-                    flex: hdr.colspan || 1,
-                    minWidth: hdrMinWidth,
-                    padding: '6px 4px',
-                    cursor: sortable ? 'pointer' : 'default',
-                    userSelect: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                  onClick={sortable ? () => handleSort(hdr.sortExpression!) : undefined}
-                >
-                  {hdr.text}
-                  {hdr.sortDir === 'asc' && <CaretUpOutlined style={{ fontSize: 10, color: '#1677ff' }} />}
-                  {hdr.sortDir === 'desc' && <CaretDownOutlined style={{ fontSize: 10, color: '#1677ff' }} />}
-                </div>
-              );
-            })}
-          </div>
-          {/* Continuation row headers */}
-          {ui.continuationHeaders?.map((rowHeaders, rIdx) => (
-            <div key={`cont_hdr_${rIdx}`} style={{ display: 'flex', fontSize: 12, color: '#888', borderTop: '1px solid #f0f0f0' }}>
-              {rowHeaders.map((hdr, idx) => (
-                <div key={idx} style={{ flex: hdr.colspan || 1, padding: '3px 8px' }}>
-                  {hdr.text}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-
       <div
         ref={gridContainerRef}
         style={{ width: '100%', flex: embedded ? undefined : 1, minHeight: 0 }}
@@ -502,16 +494,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
           theme={gridTheme}
           columnDefs={columnDefs}
           rowData={rowData}
-          onGridReady={(params) => { gridApiRef.current = params.api; updateColWidths(params.api); }}
-          onFirstDataRendered={(params) => updateColWidths(params.api)}
+          onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); }}
           onRowClicked={handleRowClicked}
+          onSortChanged={handleSortChanged}
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={fullWidthCellRenderer}
           getRowClass={getRowClass}
           getRowHeight={getRowHeight}
           suppressRowClickSelection
           suppressCellFocus
-          headerHeight={0}
           domLayout={embedded ? 'autoHeight' : undefined}
           overlayNoRowsTemplate="Nessun record da visualizzare"
         />
