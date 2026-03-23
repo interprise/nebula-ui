@@ -116,6 +116,13 @@ export interface ListFooter {
   label?: string;
 }
 
+export interface ListAction {
+  label: string;
+  command: string;
+  path: string;
+  option?: string;
+}
+
 export interface UITree {
   rows: UIRow[];
   path?: string;
@@ -133,6 +140,7 @@ export interface UITree {
   footer?: ListFooter;
   columns?: ListColumn[];
   continuationHeaders?: ListHeader[][];
+  listActions?: ListAction[];
   pageOnly?: boolean;
   paging?: {
     currentPage: number;

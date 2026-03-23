@@ -3,7 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, ListHeader } from '../types/ui';
+import type { UITree, UIRow, UICell, ListHeader, ListAction } from '../types/ui';
 import { ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getCustomControl } from '../controls/customControls';
 
@@ -523,6 +523,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, embedded }) =
   return (
     <div className="list-container" style={minListWidth ? { minWidth: minListWidth } : undefined}>
       {meta?.title && <div className="view-title">{meta.title}</div>}
+
+      {ui.listActions && ui.listActions.length > 0 && (
+        <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '4px 8px' }}>
+          {ui.listActions.map((act: ListAction, i: number) => (
+            <Button
+              key={i}
+              size="small"
+              onClick={() => onAction(act.command, { navpath: act.path, ...(act.option ? { option1: act.option } : {}) })}
+            >
+              {act.label}
+            </Button>
+          ))}
+        </div>
+      )}
 
       <div
         ref={gridContainerRef}
