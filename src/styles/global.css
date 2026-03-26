@@ -14,14 +14,15 @@ html, body {
 
 /* Layout tables in bottom panels (tabs/embedded views) should fill width */
 .view-split-bottom .layout-table,
-.view-body .layout-table {
+.view-body .layout-table,
+.tab-content .layout-table {
   width: 100%;
 }
 
 .layout-table td {
   padding: 2px 4px;
   vertical-align: top;
-  line-height: 26px;
+  line-height: 18px;
 }
 
 .layout-table td.content-cell {
@@ -34,7 +35,9 @@ html, body {
   font-weight: normal;
   color: #333;
   padding-right: 4px;
-  white-space: nowrap;
+  overflow: hidden;
+  word-wrap: break-word;
+  line-height: 16px;
 }
 
 /* Content cells (controls) */

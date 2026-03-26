@@ -126,12 +126,41 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
     return max || undefined;
   })();
 
-  // Fixed table layout with pixel widths so colspans produce proportional columns
-  // Use totalWidth from server (totalCols * charWidth * gridSize) when available
-  const tableWidth = ui.totalWidth || ((ui.totalCols || formCols) ? (ui.totalCols || formCols)! * 16 : 0);
-  const tableStyle: React.CSSProperties = tableWidth
-    ? { width: tableWidth, tableLayout: 'fixed' }
-    : { width: '100%' };
+  // Compute max width across form fields and embedded DetailView controls
+  // (tabs are excluded as they start independent layout regions)
+  const embeddedMaxWidth = (() => {
+    let max = 0;
+    for (const row of ui.rows) {
+      for (const cell of row.cells) {
+        if (cell.elementType === ELTYPE_CONTAINER && cell.control) {
+          const type = cell.control.type;
+          if (type === 'detailView' || type === 'embeddedView') {
+            const tw = cell.control.totalWidth as number | undefined;
+            if (tw && tw > max) max = tw;
+          }
+        }
+      }
+    }
+    return max;
+  })();
+
+  // Table width: max of form width and widest embedded DetailView
+  // Each grid unit = charWidth * gridSize (server default: 6 * 5 = 30px)
+  const formWidth = ui.totalWidth || ((ui.totalCols || formCols) ? (ui.totalCols || formCols)! * 16 : 0);
+  const tableWidth = Math.max(formWidth, embeddedMaxWidth);
+  const tableStyle: React.CSSProperties = { minWidth: tableWidth || '100%' };
+
+  // Ruler row: hidden row defining the grid columns with fixed widths,
+  // so colspans in subsequent rows distribute space correctly (mirrors old HTML ruler)
+  const totalCols = ui.totalCols || formCols || 0;
+  const colWidth = totalCols && tableWidth ? tableWidth / totalCols : 0;
+  const rulerRow = totalCols > 0 && colWidth > 0 ? (
+    <tr style={{ height: 0, lineHeight: 0, fontSize: 0 }}>
+      {Array.from({ length: totalCols }, (_, i) => (
+        <td key={i} style={{ width: colWidth, padding: 0, border: 'none', height: 0 }} />
+      ))}
+    </tr>
+  ) : null;
   const edgeScroll = useEdgeScrollReveal();
 
   // Split layout: form scrolls, bottom panel always visible
@@ -150,6 +179,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
         <div className="view-split-form" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
           <table className="layout-table" style={tableStyle}>
             <tbody>
+              {rulerRow}
               {formRows.map((row, ri) => (
                 <React.Fragment key={row.id || ri}>
                   <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
@@ -166,9 +196,44 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
           </table>
         </div>
         <div className="view-split-bottom">
-          {bottomRows.map((row, ri) => (
-            <BottomPanelRow key={row.id || `bp_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} />
-          ))}
+          {bottomRows.map((row, ri) => {
+            // Tab rows: render tab bar + content rows in a table sharing the master grid
+            const tabCell = row.cells.find((c) => c.control?.type === 'tab');
+            if (tabCell?.control) {
+              const tabControl = tabCell.control;
+              const tabActiveTab = tabControl.tabs?.find((t) => t.selected)?.name || tabControl.tabs?.[0]?.name;
+              return (
+                <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                  <div className="tab-sticky-wrapper">
+                    <Tabs
+                      activeKey={tabActiveTab}
+                      onChange={(key) => onAction('ChangeTab', { navpath: tabControl.navpath as string, option1: tabControl.controlName as string, option2: key })}
+                      items={(tabControl.tabs || []).map((tab) => ({
+                        key: tab.name,
+                        label: tab.prompt,
+                      }))}
+                    />
+                  </div>
+                  {tabControl.contentRows && (
+                    <div className="tab-content" style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
+                      <table className="layout-table" style={tableStyle}>
+                        <tbody>
+                          {rulerRow}
+                          {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
+                            <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            // Non-tab bottom panel rows
+            return (
+              <BottomPanelRow key={row.id || `bp_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} />
+            );
+          })}
         </div>
       </div>
       </PathContext.Provider>
@@ -183,6 +248,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
       <div className="view-body" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
         <table className="layout-table" style={tableStyle}>
           <tbody>
+            {rulerRow}
             {ui.rows.map((row, ri) => (
               <React.Fragment key={row.id || ri}>
                 <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
@@ -375,7 +441,12 @@ function renderContainerControl(
           {control.contentRows && (
             <div className="tab-content">
               <ViewRenderer
-                ui={{ rows: control.contentRows, viewName: control.contentViewName }}
+                ui={{
+                  rows: control.contentRows,
+                  viewName: control.contentViewName,
+                  totalCols: control.totalCols as number | undefined,
+                  totalWidth: control.totalWidth as number | undefined,
+                }}
                 onAction={onAction}
                 onChange={onChange}
                 embedded
