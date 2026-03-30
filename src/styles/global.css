@@ -383,6 +383,12 @@ tr.breakRow td {
   background-color: var(--ag-selected-row-background-color) !important;
 }
 
+/* Wait cursor on grid while listEdit row is loading */
+.grid-waiting,
+.grid-waiting * {
+  cursor: wait !important;
+}
+
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
    don't stretch controls to fill the cell — let them sit at their natural width */
 .companion-cell .ant-input,

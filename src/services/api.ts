@@ -5,7 +5,7 @@ const CMD2_URL = '/entrasp/controller2';
 
 function buildFormData(
   params: Record<string, string>,
-  formValues?: Record<string, string>
+  formValues?: Record<string, string | string[]>
 ): URLSearchParams {
   const data = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -13,7 +13,13 @@ function buildFormData(
   }
   if (formValues) {
     for (const [k, v] of Object.entries(formValues)) {
-      data.append(k, v);
+      if (Array.isArray(v)) {
+        for (const item of v) {
+          data.append(k, item);
+        }
+      } else {
+        data.append(k, v);
+      }
     }
   }
   return data;
@@ -22,7 +28,7 @@ function buildFormData(
 async function post(
   url: string,
   params: Record<string, string>,
-  formValues?: Record<string, string>
+  formValues?: Record<string, string | string[]>
 ): Promise<ServerResponse> {
   const body = buildFormData(params, formValues);
   const resp = await fetch(url, {
@@ -69,7 +75,7 @@ export async function executeMenuItem(
 export async function postAction(
   action: string,
   params: Record<string, string> = {},
-  formValues?: Record<string, string>,
+  formValues?: Record<string, string | string[]>,
   sid: string = 'S1'
 ): Promise<ServerResponse> {
   return post(CMD_URL, { action, sid, ...params }, formValues);

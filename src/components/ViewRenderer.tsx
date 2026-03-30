@@ -33,6 +33,7 @@ interface ViewRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
   /** When true, this is a nested/embedded view — don't apply the split layout */
   embedded?: boolean;
 }
@@ -56,14 +57,14 @@ function isActionBarRow(row: UIRow): boolean {
   return row.cells.some((cell) => cell.control?.type === 'actionBar');
 }
 
-const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, embedded }) => {
+const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, embedded }) => {
   if (!ui || !ui.rows) return null;
 
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
     return (
       <PathContext.Provider value={ui.path}>
-        <ListRenderer ui={ui} onAction={onAction} embedded={embedded} />
+        <ListRenderer ui={ui} onAction={onAction} onGridChange={onGridChange} embedded={embedded} />
       </PathContext.Provider>
     );
   }
@@ -172,7 +173,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
             {actionBarRows.map((row, ri) => (
-              <RowRenderer key={row.id || `ab_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} asDiv />
+              <RowRenderer key={row.id || `ab_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} asDiv />
             ))}
           </div>
         )}
@@ -182,7 +183,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
               {rulerRow}
               {formRows.map((row, ri) => (
                 <React.Fragment key={row.id || ri}>
-                  <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+                  <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
                   {ri === lastHeaderRowIdx && (
                     <tr className="header-separator-row">
                       <td colSpan={formCols || 100}>
@@ -220,7 +221,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
                         <tbody>
                           {rulerRow}
                           {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
-                            <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+                            <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
                           ))}
                         </tbody>
                       </table>
@@ -231,7 +232,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
             }
             // Non-tab bottom panel rows
             return (
-              <BottomPanelRow key={row.id || `bp_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} />
+              <BottomPanelRow key={row.id || `bp_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
             );
           })}
         </div>
@@ -251,7 +252,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, emb
             {rulerRow}
             {ui.rows.map((row, ri) => (
               <React.Fragment key={row.id || ri}>
-                <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+                <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
                 {ri === lastHeaderRowIdx && (
                   <tr className="header-separator-row">
                     <td colSpan={formCols || 100}>
@@ -275,14 +276,15 @@ const BottomPanelRow: React.FC<{
   pageType?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
-}> = ({ row, onAction, onChange }) => {
+  onGridChange?: (name: string, values: string[]) => void;
+}> = ({ row, onAction, onChange, onGridChange }) => {
   return (
     <>
       {row.cells.map((cell, ci) => {
         if (!cell.control) return null;
         return (
           <div key={cell.id || ci} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-            {renderContainerControl(cell.control, onAction, onChange)}
+            {renderContainerControl(cell.control, onAction, onChange, onGridChange)}
           </div>
         );
       })}
@@ -296,8 +298,9 @@ const RowRenderer: React.FC<{
   formCols?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
   asDiv?: boolean;
-}> = ({ row, pageType, formCols, onAction, onChange, asDiv }) => {
+}> = ({ row, pageType, formCols, onAction, onChange, onGridChange, asDiv }) => {
   if (asDiv) {
     // Render outside table context (e.g. sticky action bar)
     return (
@@ -325,7 +328,7 @@ const RowRenderer: React.FC<{
   return (
     <tr id={row.id} className={row.cls || ''}>
       {row.cells.map((cell, ci) => (
-        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} />
+        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
       ))}
     </tr>
   );
@@ -338,7 +341,8 @@ const CellRenderer: React.FC<{
   formCols?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
-}> = ({ cell, companion, pageType, formCols, onAction, onChange }) => {
+  onGridChange?: (name: string, values: string[]) => void;
+}> = ({ cell, companion, pageType, formCols, onAction, onChange, onGridChange }) => {
   // For container/section-header/filler cells, clamp colspan to formCols so
   // sub-view colspans don't inflate the auto-layout table width
   const isFullWidthCell = cell.elementType === ELTYPE_CONTAINER
@@ -383,7 +387,7 @@ const CellRenderer: React.FC<{
     case ELTYPE_CONTAINER:
       return (
         <td {...tdProps} className={`container-cell ${cell.cls || ''}`}>
-          {cell.control && renderContainerControl(cell.control, onAction, onChange)}
+          {cell.control && renderContainerControl(cell.control, onAction, onChange, onGridChange)}
         </td>
       );
 
@@ -407,7 +411,7 @@ const CellRenderer: React.FC<{
       if (cell.control) {
         return (
           <td {...tdProps} className={`container-cell ${cell.cls || ''}`}>
-            {renderContainerControl(cell.control, onAction, onChange)}
+            {renderContainerControl(cell.control, onAction, onChange, onGridChange)}
           </td>
         );
       }
@@ -421,7 +425,8 @@ const CellRenderer: React.FC<{
 function renderContainerControl(
   control: UIControl,
   onAction: (action: string, params?: Record<string, string>) => void,
-  onChange: (name: string, value: unknown) => void
+  onChange: (name: string, value: unknown) => void,
+  onGridChange?: (name: string, values: string[]) => void
 ): React.ReactNode {
   switch (control.type) {
     case 'tab': {
@@ -449,6 +454,7 @@ function renderContainerControl(
                 }}
                 onAction={onAction}
                 onChange={onChange}
+                onGridChange={onGridChange}
                 embedded
               />
             </div>
@@ -476,8 +482,10 @@ function renderContainerControl(
           headers: control.headers as UITree['headers'],
           columns: control.columns as UITree['columns'],
           footer: embeddedFooter,
+          multiEdit: control.multiEdit as boolean | undefined,
+          listEdit: control.listEdit as boolean | undefined,
         };
-        return <ViewRenderer ui={embeddedUi} onAction={onAction} onChange={onChange} embedded />;
+        return <ViewRenderer ui={embeddedUi} onAction={onAction} onChange={onChange} onGridChange={onGridChange} embedded />;
       }
       return null;
     }

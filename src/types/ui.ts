@@ -127,6 +127,8 @@ export interface UITree {
   rows: UIRow[];
   path?: string;
   pageType?: number; // 0=QUERY, 1=LIST, 2=DETAIL
+  multiEdit?: boolean;
+  listEdit?: boolean;
   breadcrumbs?: string;
   viewName?: string;
   viewType?: string;

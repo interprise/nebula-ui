@@ -11,7 +11,6 @@ import {
   MailOutlined,
   CalendarOutlined,
   PrinterOutlined,
-  PlusSquareOutlined,
   QuestionCircleOutlined,
   PictureOutlined,
   BellOutlined,
@@ -47,7 +46,7 @@ interface TabState {
   toolbar?: ToolbarItem[];
   uiData?: UIData;
   currField?: string;
-  formValues: Record<string, string>;
+  formValues: Record<string, string | string[]>;
   loading?: boolean;
   progressPct?: number; // 0-100 during async job polling
 }
@@ -109,7 +108,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const [tabs, setTabs] = useState<TabState[]>([defaultTab]);
   const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
-  const formValuesRef = useRef<Record<string, Record<string, string>>>({ tab_1: defaultTab.formValues });
+  const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
 
   const handleAziendaChange = useCallback(async (value: string) => {
     await api.postAction2('CambioAzienda', { navpath: value });
@@ -169,8 +168,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   }, [getActiveTabState]);
 
   // Extract values from editable form controls only — the server already has readonly values
-  const extractFormValues = useCallback((ui: UITree): Record<string, string> => {
-    const values: Record<string, string> = {};
+  const extractFormValues = useCallback((ui: UITree): Record<string, string | string[]> => {
+    const values: Record<string, string | string[]> = {};
     const walkRows = (rows: UIRow[]) => {
       for (const row of rows) {
         for (const cell of row.cells) {
@@ -193,6 +192,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     if (ui.rows) walkRows(ui.rows);
     return values;
   }, []);
+
+  // Handle grid column value changes (array of values for all rows in a column)
+  const handleGridChange = useCallback(
+    (name: string, values: string[]) => {
+      const tab = getActiveTabState();
+      if (!tab) return;
+      tab.formValues[name] = values;
+      formValuesRef.current[tab.key] = tab.formValues;
+    },
+    [getActiveTabState]
+  );
 
   const processResponseInnerRef = useRef<(tabKey: string, resp: ServerResponse) => void>(() => {});
 
@@ -337,18 +347,26 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
       if (!tab) return;
+
       if (tab.loading) return; // Block while a request is pending
 
-      updateTabState(tab.key, { loading: true, progressPct: undefined });
+      // _noSpinner: do the full roundtrip and process response, but skip loading overlay
+      // Used by listEdit to avoid flashing the spinner on row click
+      const noSpinner = params._noSpinner === 'true';
+      const serverParams = noSpinner ? (({ _noSpinner, ...rest }) => rest)(params) : params;
+
+      if (!noSpinner) {
+        updateTabState(tab.key, { loading: true, progressPct: undefined });
+      }
       try {
-        const resp = await api.postAction(action, params, formValuesRef.current[tab.key], tab.sid);
+        const resp = await api.postAction(action, serverParams, formValuesRef.current[tab.key], tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
       }
     },
-    [getActiveTabState, processResponse, updateTabState]
+    [getActiveTabState, processResponse, updateTabState, handleErrors]
   );
 
   const handleFieldChange = useCallback(
@@ -368,7 +386,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     targetKey: React.MouseEvent | React.KeyboardEvent | string,
     action: 'add' | 'remove'
   ) => {
-    if (action === 'remove') {
+    if (action === 'add') {
+      tabCounter++;
+      const fv = {};
+      formValuesRef.current[`tab_${tabCounter}`] = fv;
+      setTabs(prev => [...prev, { key: `tab_${tabCounter}`, label: `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv }]);
+      setActiveTab(`tab_${tabCounter}`);
+    } else if (action === 'remove') {
       const key = typeof targetKey === 'string' ? targetKey : '';
       setTabs((prev) => {
         const idx = prev.findIndex((t) => t.key === key);
@@ -437,7 +461,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => api.postAction2('ShowEmail'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
     { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => api.postAction2('ShowDocArea'), visible: !!loginInfo.areaDocumenti },
-    { key: 'newSession', icon: <PlusSquareOutlined />, tooltip: 'Nuova Sessione', onClick: () => { tabCounter++; const fv = {}; formValuesRef.current[`tab_${tabCounter}`] = fv; setTabs(prev => [...prev, { key: `tab_${tabCounter}`, label: `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv }]); setActiveTab(`tab_${tabCounter}`); }, visible: true },
+    // newSession moved to tab bar add button
     { key: 'help', icon: <QuestionCircleOutlined />, tooltip: 'Aiuto', onClick: () => {}, visible: !!loginInfo.assistenza },
     { key: 'cdms', icon: <PictureOutlined />, tooltip: 'Documentale', onClick: () => api.postAction2('CdmsEdit'), visible: !!loginInfo.cdms },
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => api.postAction2('ShowAvvisi'), visible: !!loginInfo.avvisi },
@@ -597,7 +621,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         <Content style={{ padding: '8px 16px', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
           <Tabs
             type="editable-card"
-            hideAdd
             activeKey={activeTab}
             onChange={handleTabChange}
             onEdit={handleTabEdit}
@@ -648,6 +671,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                       ui={currentTab.ui}
                       onAction={handleAction}
                       onChange={handleFieldChange}
+                      onGridChange={handleGridChange}
                     />
                   </>
                 ) : (
