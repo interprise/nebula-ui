@@ -268,11 +268,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (colMeta) {
           const ctrlType = colMeta.type as string | undefined;
           if (isBooleanType(ctrlType)) {
-            // Boolean: never set editable on ColDef (AG Grid would intercept clicks
-            // and open a text editor). BooleanCellRenderer handles toggling itself
-            // and checks _editable_ flag from row data via cellRendererParams.colIdx.
+            // Boolean: BooleanCellRenderer handles click toggling (with stopPropagation
+            // so AG Grid doesn't enter edit mode on click). BooleanCellEditor handles
+            // Tab/Enter toggling when AG Grid enters edit mode via keyboard.
             editCellRenderer = BooleanCellRenderer;
-            cellEditorParams = { colMeta, colIdx: idx };
+            cellEditor = 'booleanCellEditor';
+            cellEditorParams = { colMeta, onBooleanChange: stableBooleanChange };
+            editable = (params: { data?: Record<string, unknown> }) => {
+              return !!params.data?.[`_editable_${idx}`];
+            };
           } else if (isMultiEdit) {
             // MultiEdit: all rows editable
             editable = true;
@@ -312,7 +316,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           minWidth: hdrMinWidth,
           cellRenderer: editCellRenderer || cellRenderer,
           cellRendererParams: editCellRenderer
-            ? { colMeta, colIdx: idx, onBooleanChange: isBooleanType(colMeta?.type as string) ? stableBooleanChange : undefined }
+            ? { colMeta, colIdx: idx, ...(isBooleanType(colMeta?.type as string) ? { onBooleanChange: stableBooleanChange } : {}) }
             : undefined,
           autoHeight,
           wrapText: isHtml,
@@ -756,13 +760,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     });
   }, [ui.continuationHeaders]);
 
-  // For listEdit: after server re-renders the grid, restore cursor and auto-focus
+  // For listEdit: after server re-renders the grid, restore cursor, selection, and auto-focus
   useEffect(() => {
     gridContainerRef.current?.classList.remove('grid-waiting');
     if (!isListEdit || !editingRowPath.current) return;
     const api = gridApiRef.current;
     if (!api) return;
     const editPath = editingRowPath.current;
+    // Re-apply row selection highlight (lost during grid re-render)
+    applyClassByPath(editPath, 'record-group-selected');
     let editRowIdx: number | undefined;
     api.forEachNode((node: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
       if (node.data?._selectorPath === editPath && editRowIdx === undefined) {

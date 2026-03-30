@@ -191,22 +191,18 @@ export const RemoteComboCellEditor = React.forwardRef(
 );
 RemoteComboCellEditor.displayName = 'RemoteComboCellEditor';
 
-/** Boolean cell renderer — clickable Checkbox (not an editor, toggles on click).
- *  Checks editability from row data _editable_{colIdx} flag, not from colDef.editable
- *  (since AG Grid's editable would intercept clicks and open a text editor).
- *  Calls onBooleanChange directly instead of relying on AG Grid's onCellValueChanged
- *  (which doesn't fire for columns with editable=false). */
+/** Boolean cell renderer — clickable Checkbox that toggles on click.
+ *  Uses direct onClick + onBooleanChange callback since AG Grid's edit mode
+ *  doesn't work well with checkbox components. */
 export const BooleanCellRenderer: React.FC<ICellRendererParams & {
-  onBooleanChange?: (fieldName: string, value: string) => void;
+  onBooleanChange?: (field: string, value: string) => void;
 }> = (props) => {
   const val = props.value;
   const isChecked = val === 'true' || val === true || val === '1' || val === 'Y' || val === 'S';
   const [checked, setChecked] = useState(isChecked);
 
-  // Sync with external value changes (e.g. grid re-render)
   useEffect(() => { setChecked(isChecked); }, [isChecked]);
 
-  // Derive column index from field name (e.g. "col_4" → 4)
   const field = props.colDef?.field;
   const colIdx = field ? parseInt(field.replace('col_', ''), 10) : NaN;
   const isEditable = !isNaN(colIdx) && !!props.node?.data?.[`_editable_${colIdx}`];
@@ -216,13 +212,11 @@ export const BooleanCellRenderer: React.FC<ICellRendererParams & {
     if (!isEditable) return;
     const newVal = checked ? 'false' : 'true';
     setChecked(!checked);
-    // Update AG Grid data directly
     const node = props.node;
     const colId = props.column?.getColId();
     if (node && colId) {
       node.setDataValue(colId, newVal);
     }
-    // Notify parent directly (AG Grid won't fire onCellValueChanged for editable=false)
     if (props.onBooleanChange && field) {
       props.onBooleanChange(field, newVal);
     }
@@ -234,6 +228,31 @@ export const BooleanCellRenderer: React.FC<ICellRendererParams & {
     </div>
   );
 };
+
+/** Cell editor for boolean columns — toggles the value when AG Grid enters edit mode
+ *  via Tab/Enter (click is handled by BooleanCellRenderer). */
+export const BooleanCellEditor = React.forwardRef(
+  (props: ICellEditorParams & { onBooleanChange?: (field: string, value: string) => void }, ref) => {
+    const val = props.value;
+    const wasChecked = val === 'true' || val === true || val === '1' || val === 'Y' || val === 'S';
+    const newVal = wasChecked ? 'false' : 'true';
+
+    useEffect(() => {
+      const field = props.column?.getColId();
+      if (props.onBooleanChange && field) {
+        props.onBooleanChange(field, newVal);
+      }
+      setTimeout(() => props.stopEditing(), 0);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    React.useImperativeHandle(ref, () => ({
+      getValue: () => newVal,
+    }));
+
+    return <Checkbox checked={!wasChecked} style={{ pointerEvents: 'none' }} />;
+  }
+);
+BooleanCellEditor.displayName = 'BooleanCellEditor';
 
 /** Maps control type to cell editor component name (registered with AG Grid) */
 export function getCellEditorForType(type?: string): string | undefined {
@@ -265,4 +284,5 @@ export const cellEditorComponents = {
   dateCellEditor: DateCellEditor,
   comboCellEditor: ComboCellEditor,
   remoteComboCellEditor: RemoteComboCellEditor,
+  booleanCellEditor: BooleanCellEditor,
 };
