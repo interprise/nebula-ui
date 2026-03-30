@@ -64,7 +64,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   if (pageType === 1) {
     return (
       <PathContext.Provider value={ui.path}>
-        <ListRenderer ui={ui} onAction={onAction} onGridChange={onGridChange} embedded={embedded} />
+        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} embedded={embedded} />
       </PathContext.Provider>
     );
   }

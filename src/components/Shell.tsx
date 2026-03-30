@@ -351,15 +351,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (tab.loading) return; // Block while a request is pending
 
       // _noSpinner: do the full roundtrip and process response, but skip loading overlay
-      // Used by listEdit to avoid flashing the spinner on row click
+      // _noFormValues: don't send form data (listEdit NavigateDetail — sending values exits edit mode)
       const noSpinner = params._noSpinner === 'true';
-      const serverParams = noSpinner ? (({ _noSpinner, ...rest }) => rest)(params) : params;
+      const noFormValues = params._noFormValues === 'true';
+      const serverParams = { ...params };
+      if (noSpinner) delete serverParams._noSpinner;
+      if (noFormValues) delete serverParams._noFormValues;
 
       if (!noSpinner) {
         updateTabState(tab.key, { loading: true, progressPct: undefined });
       }
       try {
-        const resp = await api.postAction(action, serverParams, formValuesRef.current[tab.key], tab.sid);
+        const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
+        const resp = await api.postAction(action, serverParams, fv, tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });

@@ -191,30 +191,47 @@ export const RemoteComboCellEditor = React.forwardRef(
 );
 RemoteComboCellEditor.displayName = 'RemoteComboCellEditor';
 
-/** Boolean cell renderer — clickable Checkbox (not an editor, toggles on click) */
-export const BooleanCellRenderer: React.FC<ICellRendererParams & { colMeta?: ColMeta }> = (props) => {
+/** Boolean cell renderer — clickable Checkbox (not an editor, toggles on click).
+ *  Checks editability from row data _editable_{colIdx} flag, not from colDef.editable
+ *  (since AG Grid's editable would intercept clicks and open a text editor).
+ *  Calls onBooleanChange directly instead of relying on AG Grid's onCellValueChanged
+ *  (which doesn't fire for columns with editable=false). */
+export const BooleanCellRenderer: React.FC<ICellRendererParams & {
+  onBooleanChange?: (fieldName: string, value: string) => void;
+}> = (props) => {
   const val = props.value;
-  const checked = val === 'true' || val === true || val === '1' || val === 'Y';
+  const isChecked = val === 'true' || val === true || val === '1' || val === 'Y' || val === 'S';
+  const [checked, setChecked] = useState(isChecked);
 
-  const handleChange = useCallback(() => {
-    const newVal = checked ? '' : 'true';
+  // Sync with external value changes (e.g. grid re-render)
+  useEffect(() => { setChecked(isChecked); }, [isChecked]);
+
+  // Derive column index from field name (e.g. "col_4" → 4)
+  const field = props.colDef?.field;
+  const colIdx = field ? parseInt(field.replace('col_', ''), 10) : NaN;
+  const isEditable = !isNaN(colIdx) && !!props.node?.data?.[`_editable_${colIdx}`];
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isEditable) return;
+    const newVal = checked ? 'false' : 'true';
+    setChecked(!checked);
+    // Update AG Grid data directly
     const node = props.node;
     const colId = props.column?.getColId();
     if (node && colId) {
       node.setDataValue(colId, newVal);
     }
-  }, [checked, props.node, props.column]);
-
-  // Only allow toggling if the cell is in an editable column
-  const editable = props.colDef?.editable;
-  const isEditable = typeof editable === 'function' ? editable(props as any) : editable;
+    // Notify parent directly (AG Grid won't fire onCellValueChanged for editable=false)
+    if (props.onBooleanChange && field) {
+      props.onBooleanChange(field, newVal);
+    }
+  }, [checked, isEditable, props.node, props.column, props.onBooleanChange, field]);
 
   return (
-    <Checkbox
-      checked={checked}
-      onChange={isEditable ? handleChange : undefined}
-      disabled={!isEditable}
-    />
+    <div onClick={handleClick} style={{ cursor: isEditable ? 'pointer' : 'default' }}>
+      <Checkbox checked={checked} disabled={!isEditable} />
+    </div>
   );
 };
 

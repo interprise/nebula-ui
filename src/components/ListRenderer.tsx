@@ -127,11 +127,12 @@ function isContinuationRow(row: UIRow): boolean {
 interface ListRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
+  onChange?: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
   embedded?: boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange, embedded }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, embedded }) => {
   const sid = useContext(SidContext);
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
@@ -156,6 +157,50 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
     }
     return map;
   }, [ui.columns, isMultiEdit, isListEdit]);
+
+  // Callback for boolean checkbox changes — called directly by BooleanCellRenderer
+  // since AG Grid doesn't fire onCellValueChanged for columns with editable=false
+  const handleBooleanChange = useCallback(
+    (field: string, newValue: string) => {
+      const colIdx = parseInt(field.replace('col_', ''), 10);
+      const colDef = ui.columns?.[colIdx];
+      const colMeta = colDef?.control as Record<string, unknown> | undefined;
+      if (!colMeta?.name) return;
+
+      if (isListEdit && onChange) {
+        const fieldName = `${colMeta.name}.${(() => {
+          if (!ui.columns) return '';
+          for (const col of ui.columns) {
+            if (col.selector?.basePath) return col.selector.basePath;
+          }
+          return '';
+        })()}`;
+        onChange(fieldName, newValue);
+      } else if (onGridChange) {
+        // multiEdit: push full column array
+        const api = gridApiRef.current;
+        if (api && colMeta.name) {
+          const fieldName = `${colMeta.name}.${ui.path || ''}`;
+          const values: string[] = [];
+          api.forEachNodeAfterFilterAndSort((node: { data?: Record<string, unknown> }) => {
+            if (node.data?._isBreakRow || node.data?._isContinuationRow) return;
+            const val = node.data?.[field];
+            values.push(val != null ? String(val) : '');
+          });
+          onGridChange(fieldName, values);
+        }
+      }
+    },
+    [ui.columns, ui.path, isListEdit, onChange, onGridChange]
+  );
+
+  const booleanChangeRef = useRef(handleBooleanChange);
+  booleanChangeRef.current = handleBooleanChange;
+  // Stable wrapper that delegates to the ref (won't change between renders)
+  const stableBooleanChange = useCallback(
+    (field: string, value: string) => booleanChangeRef.current(field, value),
+    []
+  );
 
   const { columnDefs, rowData } = useMemo(() => {
     if (!ui.rows || ui.rows.length === 0) return { columnDefs: [], rowData: [] };
@@ -223,15 +268,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
         if (colMeta) {
           const ctrlType = colMeta.type as string | undefined;
           if (isBooleanType(ctrlType)) {
-            // Boolean: use custom cell renderer that handles click toggle (not a popup editor)
+            // Boolean: never set editable on ColDef (AG Grid would intercept clicks
+            // and open a text editor). BooleanCellRenderer handles toggling itself
+            // and checks _editable_ flag from row data via cellRendererParams.colIdx.
             editCellRenderer = BooleanCellRenderer;
-            if (isMultiEdit) {
-              editable = true;
-            } else if (isListEdit) {
-              editable = (params: { data?: Record<string, unknown> }) => {
-                return !!params.data?.[`_editable_${idx}`];
-              };
-            }
+            cellEditorParams = { colMeta, colIdx: idx };
           } else if (isMultiEdit) {
             // MultiEdit: all rows editable
             editable = true;
@@ -270,7 +311,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
           flex: hdr.colspan || 1,
           minWidth: hdrMinWidth,
           cellRenderer: editCellRenderer || cellRenderer,
-          cellRendererParams: editCellRenderer ? { colMeta } : undefined,
+          cellRendererParams: editCellRenderer
+            ? { colMeta, colIdx: idx, onBooleanChange: isBooleanType(colMeta?.type as string) ? stableBooleanChange : undefined }
+            : undefined,
           autoHeight,
           wrapText: isHtml,
           editable,
@@ -496,6 +539,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
     });
   }, [isMultiEdit, onGridChange, ui.columns, pushColumnValues]);
 
+  // Extract selector basePath for building field names (e.g. "S1-0")
+  const selectorBasePath = useMemo(() => {
+    if (!ui.columns) return '';
+    for (const col of ui.columns) {
+      if (col.selector?.basePath) return col.selector.basePath;
+    }
+    return '';
+  }, [ui.columns]);
+
   // Handle cell value changes from AG Grid editing
   const handleCellValueChanged = useCallback(
     (event: CellValueChangedEvent) => {
@@ -510,8 +562,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
         event.node.data[`_raw_${colIdx}`] = event.newValue;
       }
 
-      // Push updated column values to formValues
-      pushColumnValues(colIdx, colMeta);
+      if (isListEdit && onChange && colMeta?.name) {
+        // ListEdit: scalar value with field name = controlName.basePath
+        const fieldName = `${colMeta.name}.${selectorBasePath}`;
+        onChange(fieldName, event.newValue ?? '');
+      } else {
+        // MultiEdit: array of all row values for the column
+        pushColumnValues(colIdx, colMeta);
+      }
 
       // Check if this column has a reload trigger
       if (colMeta?.reload && colMeta.reload !== 'false') {
@@ -524,7 +582,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
         onAction(command, params);
       }
     },
-    [ui.columns, ui.path, pushColumnValues, onAction]
+    [ui.columns, ui.path, isListEdit, selectorBasePath, onChange, pushColumnValues, onAction]
   );
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const lastHoverPath = useRef<string | null>(null);
@@ -568,8 +626,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onGridChange,
         editingRowPath.current = path;
         // Show wait cursor while server processes
         gridContainerRef.current?.classList.add('grid-waiting');
-        // Use _noSpinner to suppress the loading overlay — keeps the grid visible
-        onAction(command, { navpath: path, _noSpinner: 'true' });
+        // Use _noSpinner to suppress loading overlay, _noFormValues to avoid
+        // sending stale form data that would cause the server to exit edit mode
+        onAction(command, { navpath: path, _noSpinner: 'true', _noFormValues: 'true' });
       } else {
         onAction(command, { navpath: path });
       }
