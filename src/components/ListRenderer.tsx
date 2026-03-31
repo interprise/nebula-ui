@@ -226,15 +226,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (colMeta) {
           const ctrlType = colMeta.type as string | undefined;
           // Build editable callback based on column metadata:
-          // - true/false: static
-          // - "iN": dynamic, look up in row props
+          // - true: static, editable when row is in edit mode (_editable_ flag)
+          // - "iN": dynamic, also check the row's evaluated property
+          // - false/absent: never editable
           const colEditable = colMeta.editable as boolean | string | undefined;
           const dynPropKey = typeof colEditable === 'string' && colEditable.match(/^i\d+$/) ? colEditable : null;
 
-          // Editable callback: checks _editable_ flag (set by server per-cell or client-side for listEdit)
-          // For dynamic props, also checks the row's prop value
           const makeEditableCallback = () => (params: { data?: Record<string, unknown> }) => {
+            // Row must be in edit mode (flag set by activateRow or server per-cell data)
             if (!params.data?.[`_editable_${idx}`]) return false;
+            // For dynamic props, check the per-row evaluated expression
             if (dynPropKey) return !!params.data?.[`_prop_${dynPropKey}`];
             return true;
           };
