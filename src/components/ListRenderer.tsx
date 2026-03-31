@@ -677,12 +677,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const handleCellKeyDown = useCallback((event: { event?: Event; data?: Record<string, unknown> }) => {
     const keyEvent = event.event as KeyboardEvent | undefined;
     if (!keyEvent || !isListEdit) return;
-    const path = event.data?._selectorPath as string | undefined;
-    if (!path || path === editingRowPath.current) return;
 
     if (keyEvent.key === 'Enter') {
-      keyEvent.preventDefault();
-      activateRow(event.data);
+      const path = event.data?._selectorPath as string | undefined;
+      if (path && path !== editingRowPath.current) {
+        keyEvent.preventDefault();
+        activateRow(event.data);
+      }
     } else if (keyEvent.key === 'ArrowUp' || keyEvent.key === 'ArrowDown') {
       // Activate after AG Grid moves focus to the new row (next tick)
       setTimeout(() => {
