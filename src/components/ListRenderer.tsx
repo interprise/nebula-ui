@@ -660,16 +660,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             }
           });
         }
-        // After redrawRows, focus + start editing on the first editable text cell
+        // After redrawRows, focus the first editable cell (don't start editing —
+        // we can't reliably know which cells are truly editable at runtime vs just in metadata)
         if (editRowIdx !== undefined) {
           setTimeout(() => {
-            for (const [ci, colMeta] of editableColumns.entries()) {
-              const ctrlType = colMeta?.type as string | undefined;
-              if (isBooleanType(ctrlType)) continue;
-              const colEditable = colMeta?.editable as boolean | string | undefined;
-              if (colEditable === false) continue;
+            for (const ci of editableColumns.keys()) {
               api.setFocusedCell(editRowIdx!, `col_${ci}`);
-              api.startEditingCell({ rowIndex: editRowIdx!, colKey: `col_${ci}` });
               break;
             }
           }, 0);
