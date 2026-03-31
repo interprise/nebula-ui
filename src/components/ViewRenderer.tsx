@@ -34,6 +34,7 @@ interface ViewRendererProps {
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
+  onEditRow?: (navpath: string | null) => void;
   /** When true, this is a nested/embedded view — don't apply the split layout */
   embedded?: boolean;
 }
@@ -57,14 +58,14 @@ function isActionBarRow(row: UIRow): boolean {
   return row.cells.some((cell) => cell.control?.type === 'actionBar');
 }
 
-const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, embedded }) => {
+const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
   if (!ui || !ui.rows) return null;
 
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
     return (
       <PathContext.Provider value={ui.path}>
-        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} embedded={embedded} />
+        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} />
       </PathContext.Provider>
     );
   }

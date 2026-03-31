@@ -87,6 +87,7 @@ export interface ListRow {
   id: string;
   cells: UICell[];
   data?: Record<string, unknown>;
+  props?: Record<string, unknown>; // dynamic row properties (e.g. i0, i1 for editable expressions)
 }
 
 export interface ListHeader {

@@ -10,7 +10,6 @@ import { SidContext } from './ViewRenderer';
 import {
   getCellEditorForType,
   isBooleanType,
-  BooleanCellRenderer,
   cellEditorComponents,
 } from '../controls/cellEditors';
 
@@ -129,10 +128,11 @@ interface ListRendererProps {
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange?: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
+  onEditRow?: (navpath: string | null) => void;
   embedded?: boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, embedded }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
   const sid = useContext(SidContext);
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
@@ -158,49 +158,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return map;
   }, [ui.columns, isMultiEdit, isListEdit]);
 
-  // Callback for boolean checkbox changes — called directly by BooleanCellRenderer
-  // since AG Grid doesn't fire onCellValueChanged for columns with editable=false
-  const handleBooleanChange = useCallback(
-    (field: string, newValue: string) => {
-      const colIdx = parseInt(field.replace('col_', ''), 10);
-      const colDef = ui.columns?.[colIdx];
-      const colMeta = colDef?.control as Record<string, unknown> | undefined;
-      if (!colMeta?.name) return;
 
-      if (isListEdit && onChange) {
-        const fieldName = `${colMeta.name}.${(() => {
-          if (!ui.columns) return '';
-          for (const col of ui.columns) {
-            if (col.selector?.basePath) return col.selector.basePath;
-          }
-          return '';
-        })()}`;
-        onChange(fieldName, newValue);
-      } else if (onGridChange) {
-        // multiEdit: push full column array
-        const api = gridApiRef.current;
-        if (api && colMeta.name) {
-          const fieldName = `${colMeta.name}.${ui.path || ''}`;
-          const values: string[] = [];
-          api.forEachNodeAfterFilterAndSort((node: { data?: Record<string, unknown> }) => {
-            if (node.data?._isBreakRow || node.data?._isContinuationRow) return;
-            const val = node.data?.[field];
-            values.push(val != null ? String(val) : '');
-          });
-          onGridChange(fieldName, values);
-        }
-      }
-    },
-    [ui.columns, ui.path, isListEdit, onChange, onGridChange]
-  );
-
-  const booleanChangeRef = useRef(handleBooleanChange);
-  booleanChangeRef.current = handleBooleanChange;
-  // Stable wrapper that delegates to the ref (won't change between renders)
-  const stableBooleanChange = useCallback(
-    (field: string, value: string) => booleanChangeRef.current(field, value),
-    []
-  );
 
   const { columnDefs, rowData } = useMemo(() => {
     if (!ui.rows || ui.rows.length === 0) return { columnDefs: [], rowData: [] };
@@ -267,19 +225,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
         if (colMeta) {
           const ctrlType = colMeta.type as string | undefined;
+          // Build editable callback based on column metadata:
+          // - true/false: static
+          // - "iN": dynamic, look up in row props
+          const colEditable = colMeta.editable as boolean | string | undefined;
+          const dynPropKey = typeof colEditable === 'string' && colEditable.match(/^i\d+$/) ? colEditable : null;
+
+          // Editable callback: checks _editable_ flag (set by server per-cell or client-side for listEdit)
+          // For dynamic props, also checks the row's prop value
+          const makeEditableCallback = () => (params: { data?: Record<string, unknown> }) => {
+            if (!params.data?.[`_editable_${idx}`]) return false;
+            if (dynPropKey) return !!params.data?.[`_prop_${dynPropKey}`];
+            return true;
+          };
+
           if (isBooleanType(ctrlType)) {
-            // Boolean: BooleanCellRenderer handles click toggling (with stopPropagation
-            // so AG Grid doesn't enter edit mode on click). BooleanCellEditor handles
-            // Tab/Enter toggling when AG Grid enters edit mode via keyboard.
-            editCellRenderer = BooleanCellRenderer;
-            cellEditor = 'booleanCellEditor';
-            cellEditorParams = { colMeta, onBooleanChange: stableBooleanChange };
-            editable = (params: { data?: Record<string, unknown> }) => {
-              return !!params.data?.[`_editable_${idx}`];
-            };
+            // Use AG Grid's built-in checkbox cell renderer + editor
+            editable = makeEditableCallback();
+            cellEditor = 'agCheckboxCellEditor';
           } else if (isMultiEdit) {
-            // MultiEdit: all rows editable
-            editable = true;
+            editable = makeEditableCallback();
             const editorName = getCellEditorForType(ctrlType);
             if (colMeta.remote) {
               cellEditor = 'remoteComboCellEditor';
@@ -289,10 +254,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               cellEditorParams = { colMeta };
             }
           } else if (isListEdit) {
-            // ListEdit: only editable when the row has per-cell editable flag
-            editable = (params: { data?: Record<string, unknown> }) => {
-              return !!params.data?.[`_editable_${idx}`];
-            };
+            editable = makeEditableCallback();
             const editorName = getCellEditorForType(ctrlType);
             if (colMeta.remote) {
               cellEditor = 'remoteComboCellEditor';
@@ -304,6 +266,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
         }
 
+        // For boolean columns using AG Grid built-in: set cellDataType and value conversion
+        const isBool = colMeta && isBooleanType(colMeta.type as string);
+
         cols.push({
           field: `col_${idx}`,
           headerName: hdr.text || '',
@@ -314,10 +279,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           headerTooltip: hdr.hint,
           flex: hdr.colspan || 1,
           minWidth: hdrMinWidth,
+          ...(isBool ? { cellDataType: 'boolean' } : {}),
           cellRenderer: editCellRenderer || cellRenderer,
-          cellRendererParams: editCellRenderer
-            ? { colMeta, colIdx: idx, ...(isBooleanType(colMeta?.type as string) ? { onBooleanChange: stableBooleanChange } : {}) }
-            : undefined,
+          cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx } : undefined,
           autoHeight,
           wrapText: isHtml,
           editable,
@@ -457,6 +421,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (sel.command) rowObj._selectorCommand = sel.command;
       if (sel.path) rowObj._selectorPath = sel.path;
 
+      // Store dynamic row properties (e.g. evaluated isEditable expressions)
+      const rowProps = (row as unknown as { props?: Record<string, unknown> }).props;
+      if (rowProps) {
+        for (const [key, val] of Object.entries(rowProps)) {
+          rowObj[`_prop_${key}`] = val;
+        }
+      }
+
       row.cells.forEach((cell: UICell, idx: number) => {
         if (selectorIndices.has(idx) || cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.control) {
@@ -468,7 +440,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             if (meta) rowObj[`_meta_${idx}`] = meta;
           } else if (editableColumns.has(idx)) {
             // Editable columns: use raw value for cell editors, not displayValue
-            rowObj[`col_${idx}`] = cell.control.value ?? '';
+            const colType = editableColumns.get(idx)?.type as string | undefined;
+            if (isBooleanType(colType)) {
+              // AG Grid's boolean cellDataType needs actual booleans
+              const v = cell.control.value;
+              rowObj[`col_${idx}`] = v === true || v === 'true' || v === '1' || v === 'Y' || v === 'S';
+            } else {
+              rowObj[`col_${idx}`] = cell.control.value ?? '';
+            }
           } else {
             rowObj[`col_${idx}`] = cell.control.displayValue ?? cell.control.value ?? '';
           }
@@ -543,14 +522,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     });
   }, [isMultiEdit, onGridChange, ui.columns, pushColumnValues]);
 
-  // Extract selector basePath for building field names (e.g. "S1-0")
-  const selectorBasePath = useMemo(() => {
-    if (!ui.columns) return '';
+  // Extract selector info for building field names and determining click behavior
+  const selectorInfo = useMemo(() => {
+    if (!ui.columns) return { basePath: '', canEdit: false, command: 'NavigateDetail' };
     for (const col of ui.columns) {
-      if (col.selector?.basePath) return col.selector.basePath;
+      if (col.selector) return {
+        basePath: col.selector.basePath || '',
+        canEdit: !!col.selector.canEdit,
+        command: col.selector.command || 'NavigateDetail',
+      };
     }
-    return '';
+    return { basePath: '', canEdit: false, command: 'NavigateDetail' };
   }, [ui.columns]);
+  const selectorBasePath = selectorInfo.basePath;
 
   // Handle cell value changes from AG Grid editing
   const handleCellValueChanged = useCallback(
@@ -569,7 +553,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (isListEdit && onChange && colMeta?.name) {
         // ListEdit: scalar value with field name = controlName.basePath
         const fieldName = `${colMeta.name}.${selectorBasePath}`;
-        onChange(fieldName, event.newValue ?? '');
+        const val = event.newValue;
+        onChange(fieldName, val != null ? String(val) : '');
       } else {
         // MultiEdit: array of all row values for the column
         pushColumnValues(colIdx, colMeta);
@@ -625,17 +610,73 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
 
     const command = event.data?._selectorCommand;
-    if (command && path) {
-      if (isListEdit) {
-        editingRowPath.current = path;
-        // Show wait cursor while server processes
-        gridContainerRef.current?.classList.add('grid-waiting');
-        // Use _noSpinner to suppress loading overlay, _noFormValues to avoid
-        // sending stale form data that would cause the server to exit edit mode
-        onAction(command, { navpath: path, _noSpinner: 'true', _noFormValues: 'true' });
-      } else {
-        onAction(command, { navpath: path });
+    if (!command || !path) return;
+
+    // listEdit with canEdit: edit in place (no server roundtrip)
+    if (isListEdit && selectorInfo.canEdit && command === selectorInfo.command && command === 'NavigateDetail') {
+      const api = gridApiRef.current;
+      // Clear editable flags on previous editing row
+      if (api && editingRowPath.current && editingRowPath.current !== path) {
+        api.forEachNode((node: { data?: Record<string, unknown> }) => {
+          if (node.data?._selectorPath === editingRowPath.current) {
+            for (const ci of editableColumns.keys()) {
+              delete node.data[`_editable_${ci}`];
+            }
+          }
+        });
       }
+      const prevPath = editingRowPath.current;
+      editingRowPath.current = path;
+      onEditRow?.(path);
+      // Make the row editable using column metadata + row props
+      if (api) {
+        const affectedNodes: unknown[] = [];
+        // Collect and clear previous editing row
+        if (prevPath && prevPath !== path) {
+          api.forEachNode((node: { data?: Record<string, unknown> }) => {
+            if (node.data?._selectorPath === prevPath) {
+              affectedNodes.push(node);
+            }
+          });
+        }
+        // Set editable flags on the new row
+        api.forEachNode((node: { data?: Record<string, unknown> }) => {
+          if (node.data?._selectorPath === path) {
+            for (const [ci, colMeta] of editableColumns.entries()) {
+              const colEditable = colMeta?.editable as boolean | string | undefined;
+              if (colEditable === true || colEditable === 'true') {
+                node.data[`_editable_${ci}`] = true;
+              } else if (typeof colEditable === 'string' && colEditable.match(/^i\d+$/)) {
+                node.data[`_editable_${ci}`] = !!node.data[`_prop_${colEditable}`];
+              }
+            }
+            affectedNodes.push(node);
+          }
+        });
+        // redrawRows destroys and recreates the DOM with fresh data
+        api.redrawRows({ rowNodes: affectedNodes as any[] });
+        // Initialize formValues for the editing row
+        if (onChange) {
+          api.forEachNode((node: { data?: Record<string, unknown> }) => {
+            if (node.data?._selectorPath === path) {
+              for (const [ci, colMeta] of editableColumns.entries()) {
+                if (node.data[`_editable_${ci}`] && colMeta?.name) {
+                  const fieldName = `${colMeta.name}.${selectorBasePath}`;
+                  const val = node.data[`col_${ci}`];
+                  onChange(fieldName, val != null ? val : '');
+                }
+              }
+            }
+          });
+        }
+      }
+    } else {
+      // Custom command or navigate to detail: fire server action
+      if (isListEdit) {
+        editingRowPath.current = null;
+        onEditRow?.(null);
+      }
+      onAction(command, { navpath: path });
     }
   };
 
@@ -760,42 +801,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     });
   }, [ui.continuationHeaders]);
 
-  // For listEdit: after server re-renders the grid, restore cursor, selection, and auto-focus
+  // After grid data changes, restore editing state if needed
   useEffect(() => {
     gridContainerRef.current?.classList.remove('grid-waiting');
     if (!isListEdit || !editingRowPath.current) return;
-    const api = gridApiRef.current;
-    if (!api) return;
-    const editPath = editingRowPath.current;
-    // Re-apply row selection highlight (lost during grid re-render)
-    applyClassByPath(editPath, 'record-group-selected');
-    let editRowIdx: number | undefined;
-    api.forEachNode((node: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
-      if (node.data?._selectorPath === editPath && editRowIdx === undefined) {
-        // Check if this row actually has editable cells from the server
-        const hasEditable = Array.from(editableColumns.keys()).some(ci => node.data?.[`_editable_${ci}`]);
-        if (hasEditable) editRowIdx = node.rowIndex ?? undefined;
-      }
-    });
-    if (editRowIdx === undefined) return;
-    // Find the first editable non-boolean column
-    for (const [ci, colMeta] of editableColumns.entries()) {
-      const ctrlType = colMeta?.type as string | undefined;
-      if (isBooleanType(ctrlType)) continue;
-      // Check that this specific cell is editable (server confirmed)
-      let cellEditable = false;
-      api.forEachNode((node: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
-        if (node.rowIndex === editRowIdx && node.data?.[`_editable_${ci}`]) cellEditable = true;
-      });
-      if (!cellEditable) continue;
-      const colKey = `col_${ci}`;
-      setTimeout(() => {
-        api.setFocusedCell(editRowIdx!, colKey);
-        api.startEditingCell({ rowIndex: editRowIdx!, colKey });
-      }, 50);
-      break;
-    }
-  }, [rowData, isListEdit, editableColumns]);
+    // Re-apply selection highlight (may be lost during grid re-render from other actions)
+    applyClassByPath(editingRowPath.current, 'record-group-selected');
+  }, [rowData, isListEdit, applyClassByPath]);
 
   const footer = ui.footer;
 

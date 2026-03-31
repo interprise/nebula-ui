@@ -330,6 +330,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // Reset form values for the new screen
       tab.formValues = {};
       formValuesRef.current[tab.key] = tab.formValues;
+      editNavpathRef.current = null;
       updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues, loading: true, progressPct: undefined });
 
       try {
@@ -355,8 +356,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const noSpinner = params._noSpinner === 'true';
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
-      if (noSpinner) delete serverParams._noSpinner;
-      if (noFormValues) delete serverParams._noFormValues;
+      delete serverParams._noSpinner;
+      delete serverParams._noFormValues;
+
+      // For listEdit: include the editing row's navpath so the server positions correctly
+      if (editNavpathRef.current && !serverParams.navpath) {
+        serverParams.navpath = editNavpathRef.current;
+      }
 
       if (!noSpinner) {
         updateTabState(tab.key, { loading: true, progressPct: undefined });
@@ -382,6 +388,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       formValuesRef.current[tab.key] = tab.formValues;
     },
     [getActiveTabState]
+  );
+
+  // Track which row is being edited in listEdit mode (navpath sent with Save/Post)
+  // Use a ref to avoid triggering re-renders on every row switch
+  const editNavpathRef = useRef<string | null>(null);
+  const handleEditRow = useCallback(
+    (navpath: string | null) => {
+      editNavpathRef.current = navpath;
+    },
+    []
   );
 
   const handleTabChange = (key: string) => setActiveTab(key);
@@ -676,6 +692,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                       onAction={handleAction}
                       onChange={handleFieldChange}
                       onGridChange={handleGridChange}
+                      onEditRow={handleEditRow}
                     />
                   </>
                 ) : (
