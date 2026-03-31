@@ -383,9 +383,9 @@ tr.breakRow td {
   background-color: var(--ag-selected-row-background-color) !important;
 }
 
-/* Wait cursor on grid while listEdit row is loading */
-.grid-waiting,
-.grid-waiting * {
+/* Wait cursor during server requests (set on body via JS) */
+body[style*="cursor: wait"],
+body[style*="cursor: wait"] * {
   cursor: wait !important;
 }
 

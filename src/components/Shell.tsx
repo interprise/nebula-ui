@@ -346,12 +346,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       editNavpathRef.current = null;
       updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
 
+      document.body.style.cursor = 'wait';
       try {
         const resp = await api.executeMenuItem(menuId, tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
+      } finally {
+        document.body.style.cursor = '';
       }
     },
     [getActiveTabState, processResponse, updateTabState]
@@ -373,8 +376,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         serverParams.navpath = editNavpathRef.current;
       }
 
-      // No proactive spinner — the server signals trackAsynchJob/showProgress
-      // when a request takes too long, and pollProgress handles the spinner
+      document.body.style.cursor = 'wait';
       try {
         const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
         const resp = await api.postAction(action, serverParams, fv, tab.sid);
@@ -382,6 +384,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
+      } finally {
+        document.body.style.cursor = '';
       }
     },
     [getActiveTabState, processResponse, updateTabState, handleErrors]
