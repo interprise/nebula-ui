@@ -371,8 +371,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const serverParams = { ...params };
       delete serverParams._noFormValues;
 
-      // For listEdit: include the editing row's navpath so the server positions correctly
-      if (editNavpathRef.current && !serverParams.navpath) {
+      // For listEdit: include the editing row's navpath for data-modifying actions
+      // (Save, Post, etc.) so the server positions on the correct row.
+      // Don't inject for navigation actions that have their own positioning.
+      // For listEdit: include the editing row's navpath for data-modifying actions
+      // (Save, Post, etc.) so the server positions on the correct row.
+      // Navigation actions have their own positioning — clear edit state instead.
+      const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
+      if (navActions.includes(action)) {
+        editNavpathRef.current = null;
+      } else if (editNavpathRef.current && !serverParams.navpath) {
         serverParams.navpath = editNavpathRef.current;
       }
 
