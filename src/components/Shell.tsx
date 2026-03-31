@@ -322,14 +322,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
   const processResponse = useCallback(
     (tabKey: string, resp: ServerResponse, sid?: string) => {
-      // Server says "poll me for progress"
+      // Server says "poll me for progress" — show spinner and start polling
       if ((resp.uiData?.showProgress || resp.uiData?.trackAsynchJob || resp.trackAsynchJob) && !resp.ui) {
         const tabSid = sid || tabs.find((t) => t.key === tabKey)?.sid || 'S1';
+        updateTabState(tabKey, { loading: true, progressPct: undefined });
         pollProgress(tabKey, tabSid);
         return;
       }
-      // Request complete — clear loading
-      updateTabState(tabKey, { loading: false, progressPct: undefined });
       processResponseInner(tabKey, resp);
     },
     [processResponseInner, pollProgress, tabs, updateTabState]
@@ -345,7 +344,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       tab.formValues = {};
       formValuesRef.current[tab.key] = tab.formValues;
       editNavpathRef.current = null;
-      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues, loading: true, progressPct: undefined });
+      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
 
       try {
         const resp = await api.executeMenuItem(menuId, tab.sid);
@@ -365,13 +364,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
       if (tab.loading) return; // Block while a request is pending
 
-      // _noSpinner: do the full roundtrip and process response, but skip loading overlay
-      // _noFormValues: don't send form data (listEdit NavigateDetail — sending values exits edit mode)
-      // Suppress spinner automatically when in listEdit edit mode (incremental response expected)
-      const noSpinner = params._noSpinner === 'true' || !!editNavpathRef.current;
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
-      delete serverParams._noSpinner;
       delete serverParams._noFormValues;
 
       // For listEdit: include the editing row's navpath so the server positions correctly
@@ -379,9 +373,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         serverParams.navpath = editNavpathRef.current;
       }
 
-      if (!noSpinner) {
-        updateTabState(tab.key, { loading: true, progressPct: undefined });
-      }
+      // No proactive spinner — the server signals trackAsynchJob/showProgress
+      // when a request takes too long, and pollProgress handles the spinner
       try {
         const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
         const resp = await api.postAction(action, serverParams, fv, tab.sid);
