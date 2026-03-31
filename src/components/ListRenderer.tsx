@@ -598,24 +598,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // Track which row is currently in edit mode for listEdit views
   const editingRowPath = useRef<string | null>(null);
 
-  const handleRowClicked = (event: RowClickedEvent) => {
-    if (event.data?._isBreakRow) return;
-    const path = event.data?._selectorPath as string | undefined;
+  // Activate a row for editing or navigation — shared between click and Enter key
+  const activateRow = useCallback((data: Record<string, unknown> | undefined) => {
+    if (!data || data._isBreakRow) return;
+    const path = data._selectorPath as string | undefined;
     lastSelectedPath.current = path ?? null;
     applyClassByPath(path ?? null, 'record-group-selected');
+    if (isListEdit && path && path === editingRowPath.current) return;
 
-    // For listEdit: if clicking the already-editing row, let AG Grid handle cell editing
-    if (isListEdit && path && path === editingRowPath.current) {
-      return;
-    }
-
-    const command = event.data?._selectorCommand;
+    const command = data._selectorCommand as string | undefined;
     if (!command || !path) return;
 
-    // listEdit with canEdit: edit in place (no server roundtrip)
     if (isListEdit && selectorInfo.canEdit && command === selectorInfo.command && command === 'NavigateDetail') {
       const api = gridApiRef.current;
-      // Clear editable flags on previous editing row
       if (api && editingRowPath.current && editingRowPath.current !== path) {
         api.forEachNode((node: { data?: Record<string, unknown> }) => {
           if (node.data?._selectorPath === editingRowPath.current) {
@@ -628,18 +623,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const prevPath = editingRowPath.current;
       editingRowPath.current = path;
       onEditRow?.(path);
-      // Make the row editable using column metadata + row props
       if (api) {
         const affectedNodes: unknown[] = [];
-        // Collect and clear previous editing row
         if (prevPath && prevPath !== path) {
           api.forEachNode((node: { data?: Record<string, unknown> }) => {
-            if (node.data?._selectorPath === prevPath) {
-              affectedNodes.push(node);
-            }
+            if (node.data?._selectorPath === prevPath) affectedNodes.push(node);
           });
         }
-        // Set editable flags on the new row
         api.forEachNode((node: { data?: Record<string, unknown> }) => {
           if (node.data?._selectorPath === path) {
             for (const [ci, colMeta] of editableColumns.entries()) {
@@ -653,9 +643,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             affectedNodes.push(node);
           }
         });
-        // redrawRows destroys and recreates the DOM with fresh data
         api.redrawRows({ rowNodes: affectedNodes as any[] });
-        // Initialize formValues for the editing row
         if (onChange) {
           api.forEachNode((node: { data?: Record<string, unknown> }) => {
             if (node.data?._selectorPath === path) {
@@ -671,14 +659,30 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
       }
     } else {
-      // Custom command or navigate to detail: fire server action
       if (isListEdit) {
         editingRowPath.current = null;
         onEditRow?.(null);
       }
       onAction(command, { navpath: path });
     }
+  }, [isListEdit, selectorInfo, editableColumns, selectorBasePath, onChange, onEditRow, onAction, applyClassByPath]);
+
+  const handleRowClicked = (event: RowClickedEvent) => {
+    activateRow(event.data as Record<string, unknown> | undefined);
   };
+
+  // Enter key on a non-editing row makes it the editing row (same as click)
+  const handleCellKeyDown = useCallback((event: { event?: Event; data?: Record<string, unknown> }) => {
+    const keyEvent = event.event as KeyboardEvent | undefined;
+    if (!keyEvent || keyEvent.key !== 'Enter') return;
+    if (!isListEdit) return;
+    const path = event.data?._selectorPath as string | undefined;
+    // Only intercept if row is NOT already the editing row (AG Grid handles Enter on editable cells)
+    if (path && path !== editingRowPath.current) {
+      keyEvent.preventDefault();
+      activateRow(event.data);
+    }
+  }, [isListEdit, activateRow]);
 
   // Handle clicks on full-width rows (continuation rows) which may not trigger onRowClicked
   const handleGridClick = useCallback((e: React.MouseEvent) => {
@@ -846,6 +850,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); }}
           onRowClicked={handleRowClicked}
+          onCellKeyDown={handleCellKeyDown as any}
           onCellValueChanged={handleCellValueChanged}
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={fullWidthCellRenderer}
@@ -854,6 +859,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           suppressRowClickSelection
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
+          enterNavigatesVerticallyAfterEdit
           domLayout={embedded ? 'autoHeight' : undefined}
           overlayNoRowsTemplate="Nessun record da visualizzare"
         />
