@@ -643,13 +643,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             affectedNodes.push(node);
           }
         });
-        api.redrawRows({ rowNodes: affectedNodes as any[] });
-        // Initialize formValues and auto-focus the first editable cell
-        let editRowIdx: number | undefined;
+        // refreshCells updates cell content without destroying DOM (preserves focus/click state)
+        api.refreshCells({ rowNodes: affectedNodes as any[], force: true });
+        // Initialize formValues for the editing row
         if (onChange) {
-          api.forEachNode((node: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
+          api.forEachNode((node: { data?: Record<string, unknown> }) => {
             if (node.data?._selectorPath === path) {
-              if (editRowIdx === undefined) editRowIdx = node.rowIndex ?? undefined;
               for (const [ci, colMeta] of editableColumns.entries()) {
                 if (node.data[`_editable_${ci}`] && colMeta?.name) {
                   const fieldName = `${colMeta.name}.${selectorBasePath}`;
@@ -659,16 +658,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               }
             }
           });
-        }
-        // After redrawRows, focus the first editable cell (don't start editing —
-        // we can't reliably know which cells are truly editable at runtime vs just in metadata)
-        if (editRowIdx !== undefined) {
-          setTimeout(() => {
-            for (const ci of editableColumns.keys()) {
-              api.setFocusedCell(editRowIdx!, `col_${ci}`);
-              break;
-            }
-          }, 0);
         }
       }
     } else {
