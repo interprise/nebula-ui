@@ -252,7 +252,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       }
       const update: Partial<TabState> = {};
       if (resp.ui) {
-        if (resp.ui.pageOnly) {
+        if (resp.ui.rowUpdate) {
+          // Incremental row update: merge single row into existing grid data
+          const existingTab = tabs.find(t => t.key === tabKey);
+          if (existingTab?.ui) {
+            const pos = resp.ui.position;
+            const updatedRow = resp.ui.rows?.[0];
+            if (updatedRow != null && pos != null) {
+              const newRows = existingTab.ui.rows.map(row => {
+                const rowPos = (row.cells[0] as unknown as { pos?: number }).pos;
+                return rowPos === pos ? updatedRow : row;
+              });
+              update.ui = { ...existingTab.ui, rows: newRows };
+            }
+          }
+        } else if (resp.ui.pageOnly) {
           // Pagination-only response: merge rows into existing UI, keep columns/headers/toolbar
           const existingTab = tabs.find(t => t.key === tabKey);
           if (existingTab?.ui) {
@@ -353,7 +367,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
       // _noSpinner: do the full roundtrip and process response, but skip loading overlay
       // _noFormValues: don't send form data (listEdit NavigateDetail — sending values exits edit mode)
-      const noSpinner = params._noSpinner === 'true';
+      // Suppress spinner automatically when in listEdit edit mode (incremental response expected)
+      const noSpinner = params._noSpinner === 'true' || !!editNavpathRef.current;
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noSpinner;

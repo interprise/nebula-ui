@@ -145,6 +145,8 @@ export interface UITree {
   continuationHeaders?: ListHeader[][];
   listActions?: ListAction[];
   pageOnly?: boolean;
+  rowUpdate?: boolean; // incremental: single row update, merge into existing grid
+  position?: number; // row position for rowUpdate
   paging?: {
     currentPage: number;
     totalPages: number;
