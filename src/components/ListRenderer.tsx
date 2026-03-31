@@ -644,9 +644,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
         });
         api.redrawRows({ rowNodes: affectedNodes as any[] });
+        // Initialize formValues and auto-focus the first editable cell
+        let editRowIdx: number | undefined;
         if (onChange) {
-          api.forEachNode((node: { data?: Record<string, unknown> }) => {
+          api.forEachNode((node: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
             if (node.data?._selectorPath === path) {
+              if (editRowIdx === undefined) editRowIdx = node.rowIndex ?? undefined;
               for (const [ci, colMeta] of editableColumns.entries()) {
                 if (node.data[`_editable_${ci}`] && colMeta?.name) {
                   const fieldName = `${colMeta.name}.${selectorBasePath}`;
@@ -656,6 +659,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               }
             }
           });
+        }
+        // After redrawRows, focus + start editing on the first editable text cell
+        if (editRowIdx !== undefined) {
+          setTimeout(() => {
+            for (const [ci, colMeta] of editableColumns.entries()) {
+              const ctrlType = colMeta?.type as string | undefined;
+              if (isBooleanType(ctrlType)) continue;
+              const colEditable = colMeta?.editable as boolean | string | undefined;
+              if (colEditable === false) continue;
+              api.setFocusedCell(editRowIdx!, `col_${ci}`);
+              api.startEditingCell({ rowIndex: editRowIdx!, colKey: `col_${ci}` });
+              break;
+            }
+          }, 0);
         }
       }
     } else {
