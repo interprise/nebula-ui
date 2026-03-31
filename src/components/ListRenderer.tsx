@@ -673,16 +673,29 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     activateRow(event.data as Record<string, unknown> | undefined);
   };
 
-  // Enter key on a non-editing row makes it the editing row (same as click)
+  // Keyboard navigation: Enter and arrow keys activate the focused row
   const handleCellKeyDown = useCallback((event: { event?: Event; data?: Record<string, unknown> }) => {
     const keyEvent = event.event as KeyboardEvent | undefined;
-    if (!keyEvent || keyEvent.key !== 'Enter') return;
-    if (!isListEdit) return;
+    if (!keyEvent || !isListEdit) return;
     const path = event.data?._selectorPath as string | undefined;
-    // Only intercept if row is NOT already the editing row (AG Grid handles Enter on editable cells)
-    if (path && path !== editingRowPath.current) {
+    if (!path || path === editingRowPath.current) return;
+
+    if (keyEvent.key === 'Enter') {
       keyEvent.preventDefault();
       activateRow(event.data);
+    } else if (keyEvent.key === 'ArrowUp' || keyEvent.key === 'ArrowDown') {
+      // Activate after AG Grid moves focus to the new row (next tick)
+      setTimeout(() => {
+        const api = gridApiRef.current;
+        if (!api) return;
+        const focusedCell = api.getFocusedCell();
+        if (!focusedCell) return;
+        const node = api.getDisplayedRowAtIndex(focusedCell.rowIndex);
+        const newPath = (node as unknown as { data?: Record<string, unknown> })?.data?._selectorPath as string | undefined;
+        if (newPath && newPath !== editingRowPath.current) {
+          activateRow((node as unknown as { data?: Record<string, unknown> })?.data);
+        }
+      }, 0);
     }
   }, [isListEdit, activateRow]);
 
