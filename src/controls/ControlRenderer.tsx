@@ -470,8 +470,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
     case 'expBuilder':
       return (
         <Input.TextArea
+          key={control.id || fieldName}
           {...commonProps}
-          value={value as string}
+          defaultValue={value as string}
           autoSize={{ minRows: 3, maxRows: 10 }}
           style={{ width: '100%', maxWidth: textMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
