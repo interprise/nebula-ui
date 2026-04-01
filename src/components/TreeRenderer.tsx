@@ -114,6 +114,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       const resp = await api.postAction('LoadTreeChildren', {
         navpath: ui.path || '',
         option1: key,
+        option2: ui.viewName || '',
       }, undefined, sid);
       const children = (resp.ui as unknown as Record<string, unknown>)?.treeChildren as TreeNode[] | undefined;
       if (children) {
@@ -179,6 +180,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
         const resp = await api.postAction('FilterTree', {
           navpath: ui.path || '',
           option1: value.trim(),
+          option2: ui.viewName || '',
         }, undefined, sid);
         if (resp.ui?.treeNodes) {
           setFilteredData(resp.ui.treeNodes);
