@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect, useContext } from 'react';
 import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
+import { SidContext } from './ViewRenderer';
 import * as api from '../services/api';
 
 const { Text } = Typography;
@@ -9,75 +10,73 @@ const { Text } = Typography;
 interface TreeRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
-  sid?: string;
 }
 
-/** Convert server TreeNode[] to Ant Design DataNode[] */
-function toAntTreeData(nodes: TreeNode[]): React.ComponentProps<typeof Tree>['treeData'] {
-  return nodes.map((node) => ({
-    key: node.key,
-    title: node.hint ? (
-      <span title={node.hint}>{node.title}</span>
-    ) : node.title,
-    isLeaf: node.isLeaf,
-    children: node.children ? toAntTreeData(node.children) : undefined,
-  }));
+/** Convert server TreeNode[] to Ant Design DataNode[] with optional match highlighting */
+function toAntTreeData(nodes: TreeNode[], searchText?: string): React.ComponentProps<typeof Tree>['treeData'] {
+  return nodes.map((node) => {
+    const matched = node.matched;
+    let titleEl: React.ReactNode = node.title;
+    // Highlight matched nodes during search
+    if (searchText && matched) {
+      titleEl = <strong>{node.title}</strong>;
+    }
+    if (node.hint) {
+      titleEl = <span title={node.hint}>{titleEl}</span>;
+    }
+    return {
+      key: node.key,
+      title: titleEl,
+      isLeaf: node.isLeaf,
+      children: node.children ? toAntTreeData(node.children, searchText) : undefined,
+    };
+  });
 }
 
-/** Collect all keys from a tree (for expand-all after search) */
-function collectKeys(nodes: TreeNode[]): string[] {
+/** Collect all non-leaf keys from a tree (for expanding all after search) */
+function collectNonLeafKeys(nodes: TreeNode[]): string[] {
   const keys: string[] = [];
   for (const node of nodes) {
-    keys.push(node.key);
-    if (node.children) keys.push(...collectKeys(node.children));
+    if (!node.isLeaf) keys.push(node.key);
+    if (node.children) keys.push(...collectNonLeafKeys(node.children));
   }
   return keys;
 }
 
-/** Filter tree nodes by search text, keeping ancestor paths */
-function filterTree(nodes: TreeNode[], search: string): TreeNode[] {
-  const lower = search.toLowerCase();
-  const result: TreeNode[] = [];
-  for (const node of nodes) {
-    const titleMatch = node.title.toLowerCase().includes(lower);
-    const filteredChildren = node.children ? filterTree(node.children, search) : [];
-    if (titleMatch || filteredChildren.length > 0) {
-      result.push({
-        ...node,
-        children: filteredChildren.length > 0 ? filteredChildren : node.children,
-      });
-    }
-  }
-  return result;
-}
-
-const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, sid }) => {
+const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
+  const sid = useContext(SidContext);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loadedKeys, setLoadedKeys] = useState<string[]>([]);
   const [treeData, setTreeData] = useState<TreeNode[]>(ui.treeNodes || []);
+  const [filteredData, setFilteredData] = useState<TreeNode[] | null>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep the unfiltered tree data in sync with ui prop
+  const prevTreeNodesRef = useRef(ui.treeNodes);
+  useEffect(() => {
+    if (ui.treeNodes && ui.treeNodes !== prevTreeNodesRef.current) {
+      prevTreeNodesRef.current = ui.treeNodes;
+      setTreeData(ui.treeNodes);
+    }
+  }, [ui.treeNodes]);
 
   const navigateView = ui.navigateView;
 
-  // Handle node expand/collapse — toggle on server + load children if needed
   const onExpand = useCallback((keys: React.Key[]) => {
     setExpandedKeys(keys as string[]);
   }, []);
 
-  // Lazy load children when expanding a node that hasn't been loaded yet
+  // Lazy load children when expanding a node
   const onLoadData = useCallback(async (node: { key: React.Key; children?: unknown[] }) => {
-    if (node.children) return; // Already loaded
+    if (node.children) return;
     const key = String(node.key);
-    // Toggle the node on the server to load its children
     document.body.style.cursor = 'wait';
     try {
       const resp = await api.postAction('ToggleTreeNode', {
         navpath: ui.path || '',
         option1: key,
       }, undefined, sid);
-      // The server re-renders the tree with the node open — extract the children
       if (resp.ui?.treeNodes) {
-        // Find the node in the response and get its children
         const findNode = (nodes: TreeNode[], targetKey: string): TreeNode | undefined => {
           for (const n of nodes) {
             if (n.key === targetKey) return n;
@@ -90,7 +89,6 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, sid }) => {
         };
         const updatedNode = findNode(resp.ui.treeNodes, key);
         if (updatedNode?.children) {
-          // Merge children into the local tree
           const mergeChildren = (nodes: TreeNode[], targetKey: string, children: TreeNode[]): TreeNode[] => {
             return nodes.map(n => {
               if (n.key === targetKey) return { ...n, children };
@@ -114,19 +112,46 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, sid }) => {
     onAction('LocateAndNavigate', { navpath: key, option1: navigateView });
   }, [navigateView, onAction]);
 
-  // Filter tree data based on search text
-  const displayData = useMemo(() => {
-    if (!searchText) return treeData;
-    return filterTree(treeData, searchText);
-  }, [treeData, searchText]);
+  // Server-side search with debounce
+  const handleSearch = useCallback((value: string) => {
+    setSearchText(value);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
-  // When searching, expand all visible nodes
-  const displayExpandedKeys = useMemo(() => {
-    if (!searchText) return expandedKeys;
-    return collectKeys(displayData);
-  }, [searchText, expandedKeys, displayData]);
+    if (!value.trim()) {
+      // Clear filter — show original tree
+      setFilteredData(null);
+      return;
+    }
 
-  const antTreeData = useMemo(() => toAntTreeData(displayData), [displayData]);
+    searchTimerRef.current = setTimeout(async () => {
+      document.body.style.cursor = 'wait';
+      try {
+        const resp = await api.postAction('FilterTree', {
+          navpath: ui.path || '',
+          option1: value.trim(),
+        }, undefined, sid);
+        if (resp.ui?.treeNodes) {
+          setFilteredData(resp.ui.treeNodes);
+          // Expand all non-leaf nodes in the filtered result
+          setExpandedKeys(collectNonLeafKeys(resp.ui.treeNodes));
+        } else {
+          setFilteredData([]);
+        }
+      } catch {
+        // On error, clear filter
+        setFilteredData(null);
+      } finally {
+        document.body.style.cursor = '';
+      }
+    }, 400); // 400ms debounce
+  }, [ui.path, sid]);
+
+  const displayData = filteredData ?? treeData;
+  const isFiltered = filteredData !== null;
+  const antTreeData = useMemo(
+    () => toAntTreeData(displayData, isFiltered ? searchText : undefined),
+    [displayData, isFiltered, searchText]
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -137,7 +162,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, sid }) => {
           prefix={<SearchOutlined />}
           allowClear
           value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
+          onChange={(e) => handleSearch(e.target.value)}
           style={{ maxWidth: 400 }}
         />
       </div>
@@ -145,10 +170,10 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, sid }) => {
         {antTreeData && antTreeData.length > 0 ? (
           <Tree
             treeData={antTreeData}
-            expandedKeys={displayExpandedKeys}
+            expandedKeys={isFiltered ? expandedKeys : expandedKeys}
             onExpand={onExpand}
-            loadData={onLoadData}
-            loadedKeys={loadedKeys}
+            loadData={isFiltered ? undefined : onLoadData}
+            loadedKeys={isFiltered ? undefined : loadedKeys}
             onSelect={onSelect}
             showLine
             blockNode

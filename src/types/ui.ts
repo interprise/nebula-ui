@@ -265,6 +265,7 @@ export interface TreeNode {
   title: string;
   hint?: string;
   isLeaf?: boolean;
+  matched?: boolean; // true for nodes matching a search filter
   children?: TreeNode[];
 }
 
