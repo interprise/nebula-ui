@@ -72,34 +72,23 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
     const key = String(node.key);
     document.body.style.cursor = 'wait';
     try {
-      const resp = await api.postAction('ToggleTreeNode', {
+      // Server returns just the direct children of the requested node
+      const resp = await api.postAction('LoadTreeChildren', {
         navpath: ui.path || '',
         option1: key,
       }, undefined, sid);
-      if (resp.ui?.treeNodes) {
-        const findNode = (nodes: TreeNode[], targetKey: string): TreeNode | undefined => {
-          for (const n of nodes) {
-            if (n.key === targetKey) return n;
-            if (n.children) {
-              const found = findNode(n.children, targetKey);
-              if (found) return found;
-            }
-          }
-          return undefined;
+      const children = (resp.ui as unknown as Record<string, unknown>)?.treeChildren as TreeNode[] | undefined;
+      if (children) {
+        const mergeChildren = (nodes: TreeNode[], targetKey: string, newChildren: TreeNode[]): TreeNode[] => {
+          return nodes.map(n => {
+            if (n.key === targetKey) return { ...n, children: newChildren };
+            if (n.children) return { ...n, children: mergeChildren(n.children, targetKey, newChildren) };
+            return n;
+          });
         };
-        const updatedNode = findNode(resp.ui.treeNodes, key);
-        if (updatedNode?.children) {
-          const mergeChildren = (nodes: TreeNode[], targetKey: string, children: TreeNode[]): TreeNode[] => {
-            return nodes.map(n => {
-              if (n.key === targetKey) return { ...n, children };
-              if (n.children) return { ...n, children: mergeChildren(n.children, targetKey, children) };
-              return n;
-            });
-          };
-          setTreeData(prev => mergeChildren(prev, key, updatedNode.children!));
-        }
-        setLoadedKeys(prev => [...prev, key]);
+        setTreeData(prev => mergeChildren(prev, key, children));
       }
+      setLoadedKeys(prev => [...prev, key]);
     } finally {
       document.body.style.cursor = '';
     }
