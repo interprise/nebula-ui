@@ -3,6 +3,7 @@ import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
 import { SidContext } from './ViewRenderer';
+import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 
 const { Text } = Typography;
@@ -10,6 +11,7 @@ const { Text } = Typography;
 interface TreeRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
 }
 
 /** Convert server TreeNode[] to Ant Design DataNode[] with optional match highlighting */
@@ -17,7 +19,6 @@ function toAntTreeData(nodes: TreeNode[], searchText?: string): React.ComponentP
   return nodes.map((node) => {
     const matched = node.matched;
     let titleEl: React.ReactNode = node.title;
-    // Highlight matched nodes during search
     if (searchText && matched) {
       titleEl = <strong>{node.title}</strong>;
     }
@@ -43,15 +44,19 @@ function collectNonLeafKeys(nodes: TreeNode[]): string[] {
   return keys;
 }
 
-const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
+const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) => {
   const sid = useContext(SidContext);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loadedKeys, setLoadedKeys] = useState<string[]>([]);
   const [treeData, setTreeData] = useState<TreeNode[]>(ui.treeNodes || []);
   const [filteredData, setFilteredData] = useState<TreeNode[] | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Detail pane state
+  const [detailUi, setDetailUi] = useState<UITree | null>(null);
+  const detailFormValues = useRef<Record<string, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Keep the unfiltered tree data in sync with ui prop
+
   const prevTreeNodesRef = useRef(ui.treeNodes);
   useEffect(() => {
     if (ui.treeNodes && ui.treeNodes !== prevTreeNodesRef.current) {
@@ -66,13 +71,12 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
     setExpandedKeys(keys as string[]);
   }, []);
 
-  // Lazy load children when expanding a node
+  // Lazy load children for a node
   const onLoadData = useCallback(async (node: { key: React.Key; children?: unknown[] }) => {
     if (node.children) return;
     const key = String(node.key);
     document.body.style.cursor = 'wait';
     try {
-      // Server returns just the direct children of the requested node
       const resp = await api.postAction('LoadTreeChildren', {
         navpath: ui.path || '',
         option1: key,
@@ -94,12 +98,59 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
     }
   }, [ui.path, sid]);
 
-  // Handle node click — navigate to detail view
-  const onSelect = useCallback((keys: React.Key[]) => {
+  // Extract form values from a detail UI response
+  const extractDetailFormValues = useCallback((detailUi: UITree): Record<string, string> => {
+    const values: Record<string, string> = {};
+    const walkRows = (rows: UITree['rows']) => {
+      if (!rows) return;
+      for (const row of rows) {
+        for (const cell of row.cells) {
+          const ctrl = cell.control;
+          if (!ctrl) continue;
+          if (ctrl.editable && !ctrl.noPost && !ctrl.disabled) {
+            const name = ctrl.name || ctrl.id;
+            if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
+              values[name] = String(ctrl.value);
+            }
+          }
+          if (ctrl.contentRows) walkRows(ctrl.contentRows);
+        }
+      }
+    };
+    walkRows(detailUi.rows);
+    return values;
+  }, []);
+
+  // Handle node click — load detail in right pane
+  const onSelect = useCallback(async (keys: React.Key[]) => {
     if (keys.length === 0 || !navigateView) return;
     const key = String(keys[0]);
-    onAction('LocateAndNavigate', { navpath: key, option1: navigateView });
-  }, [navigateView, onAction]);
+    setSelectedKey(key);
+    document.body.style.cursor = 'wait';
+    try {
+      const resp = await api.postAction('LocateAndNavigate', {
+        navpath: key,
+        option1: navigateView,
+      }, undefined, sid);
+      if (resp.ui) {
+        setDetailUi(resp.ui);
+        detailFormValues.current = extractDetailFormValues(resp.ui);
+      }
+    } finally {
+      document.body.style.cursor = '';
+    }
+  }, [navigateView, sid, extractDetailFormValues]);
+
+  // Handle detail field changes
+  const handleDetailChange = useCallback((name: string, value: unknown) => {
+    const strValue = value == null ? '' : String(value);
+    detailFormValues.current[name] = strValue;
+    // Also propagate to Shell's formValues for Save
+    onChange(name, value);
+  }, [onChange]);
+
+  // Handle detail actions (Save etc.) — uses the existing toolbar via onAction
+  // The detail's viewstate is already current on the server after LocateAndNavigate
 
   // Server-side search with debounce
   const handleSearch = useCallback((value: string) => {
@@ -107,7 +158,6 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
     if (!value.trim()) {
-      // Clear filter — reset to initial root nodes, all closed
       setFilteredData(null);
       setExpandedKeys([]);
       setLoadedKeys([]);
@@ -124,18 +174,16 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
         }, undefined, sid);
         if (resp.ui?.treeNodes) {
           setFilteredData(resp.ui.treeNodes);
-          // Expand all non-leaf nodes in the filtered result
           setExpandedKeys(collectNonLeafKeys(resp.ui.treeNodes));
         } else {
           setFilteredData([]);
         }
       } catch {
-        // On error, clear filter
         setFilteredData(null);
       } finally {
         document.body.style.cursor = '';
       }
-    }, 400); // 400ms debounce
+    }, 400);
   }, [ui.path, sid]);
 
   const displayData = filteredData ?? treeData;
@@ -146,36 +194,51 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {ui.title && <div className="view-title">{ui.title}</div>}
-      <div style={{ padding: '8px 8px 4px' }}>
-        <Input
-          placeholder="Cerca nell'albero..."
-          prefix={<SearchOutlined />}
-          allowClear
-          value={searchText}
-          onChange={(e) => handleSearch(e.target.value)}
-          style={{ maxWidth: 400 }}
-        />
-      </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: '0 8px' }}>
-        {antTreeData && antTreeData.length > 0 ? (
-          <Tree
-            treeData={antTreeData}
-            expandedKeys={isFiltered ? expandedKeys : expandedKeys}
-            onExpand={onExpand}
-            loadData={isFiltered ? undefined : onLoadData}
-            loadedKeys={isFiltered ? undefined : loadedKeys}
-            onSelect={onSelect}
-            showLine
-            blockNode
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 0 }}>
+      {/* Left pane: tree */}
+      <div style={{ display: 'flex', flexDirection: 'column', width: detailUi ? 300 : '100%', minWidth: 250, borderRight: detailUi ? '1px solid #e8e8e8' : undefined, transition: 'width 0.2s' }}>
+        {ui.title && <div className="view-title">{ui.title}</div>}
+        <div style={{ padding: '8px 8px 4px' }}>
+          <Input
+            placeholder="Cerca nell'albero..."
+            prefix={<SearchOutlined />}
+            allowClear
+            value={searchText}
+            onChange={(e) => handleSearch(e.target.value)}
           />
-        ) : (
-          <Text type="secondary" style={{ padding: 16, display: 'block' }}>
-            {searchText ? 'Nessun risultato' : 'Nessun elemento'}
-          </Text>
-        )}
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 8px' }}>
+          {antTreeData && antTreeData.length > 0 ? (
+            <Tree
+              treeData={antTreeData}
+              expandedKeys={expandedKeys}
+              selectedKeys={selectedKey ? [selectedKey] : []}
+              onExpand={onExpand}
+              loadData={isFiltered ? undefined : onLoadData}
+              loadedKeys={isFiltered ? undefined : loadedKeys}
+              onSelect={onSelect}
+              showLine
+              blockNode
+            />
+          ) : (
+            <Text type="secondary" style={{ padding: 16, display: 'block' }}>
+              {searchText ? 'Nessun risultato' : 'Nessun elemento'}
+            </Text>
+          )}
+        </div>
       </div>
+
+      {/* Right pane: detail */}
+      {detailUi && (
+        <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+          <ViewRenderer
+            ui={detailUi}
+            onAction={onAction}
+            onChange={handleDetailChange}
+            embedded
+          />
+        </div>
+      )}
     </div>
   );
 };

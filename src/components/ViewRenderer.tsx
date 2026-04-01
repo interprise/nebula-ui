@@ -66,7 +66,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   if (ui.viewType === 'tree' && ui.treeNodes) {
     return (
       <PathContext.Provider value={ui.path}>
-        <TreeRenderer ui={ui} onAction={onAction} />
+        <TreeRenderer ui={ui} onAction={onAction} onChange={onChange} />
       </PathContext.Provider>
     );
   }
