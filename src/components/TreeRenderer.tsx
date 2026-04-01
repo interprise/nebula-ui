@@ -88,16 +88,37 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     }
   }, [ui.treeNodes]);
 
-  // Pick up detail responses routed through Shell (Save/Post on tree+detail)
+  // Pick up detail responses routed through Shell (Save/Post on tree+detail).
+  // After Save, re-enter editing mode by calling LocateAndNavigate again.
   const detailResponse = (ui as unknown as Record<string, unknown>)._detailResponse as UITree | undefined;
   const prevDetailResponseRef = useRef(detailResponse);
   useEffect(() => {
     if (detailResponse && detailResponse !== prevDetailResponseRef.current) {
       prevDetailResponseRef.current = detailResponse;
-      setDetailUi(detailResponse);
-      detailFormValues.current = extractDetailFormValues(detailResponse);
+      // Re-enter editing mode if a node is selected (Save exits editing mode on the server)
+      if (selectedKey && ui.navigateView) {
+        (async () => {
+          try {
+            const resp = await api.postAction('LocateAndNavigate', {
+              navpath: selectedKey,
+              option1: ui.navigateView!,
+            }, undefined, sid);
+            if (resp.ui) {
+              setDetailUi(resp.ui);
+              detailFormValues.current = extractDetailFormValues(resp.ui);
+            }
+          } catch {
+            // Fallback: show the read-only response
+            setDetailUi(detailResponse);
+            detailFormValues.current = extractDetailFormValues(detailResponse);
+          }
+        })();
+      } else {
+        setDetailUi(detailResponse);
+        detailFormValues.current = extractDetailFormValues(detailResponse);
+      }
     }
-  }, [detailResponse, extractDetailFormValues]);
+  }, [detailResponse, extractDetailFormValues, selectedKey, ui.navigateView, sid]);
 
   const navigateView = ui.navigateView;
 
