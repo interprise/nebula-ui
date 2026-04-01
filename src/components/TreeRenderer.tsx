@@ -118,8 +118,11 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction }) => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
     if (!value.trim()) {
-      // Clear filter — show original tree
+      // Clear filter — reset to initial root nodes, all closed
       setFilteredData(null);
+      setExpandedKeys([]);
+      setLoadedKeys([]);
+      setTreeData(ui.treeNodes || []);
       return;
     }
 
