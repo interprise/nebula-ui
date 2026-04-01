@@ -203,6 +203,20 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     [displayData, isFiltered, searchText]
   );
 
+  // Memoize the detail pane so tree state changes (expand, select) don't re-render it
+  // Only re-render when detailUi changes (new node selected or Save response)
+  const detailPane = useMemo(() => {
+    if (!detailUi) return null;
+    return (
+      <ViewRenderer
+        ui={detailUi}
+        onAction={onAction}
+        onChange={handleDetailChange}
+        embedded
+      />
+    );
+  }, [detailUi, onAction, handleDetailChange]);
+
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 0 }}>
       {/* Left pane: tree */}
@@ -241,12 +255,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       {/* Right pane: detail */}
       {detailUi && (
         <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-          <ViewRenderer
-            ui={detailUi}
-            onAction={onAction}
-            onChange={handleDetailChange}
-            embedded
-          />
+          {detailPane}
         </div>
       )}
     </div>
