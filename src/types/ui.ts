@@ -147,6 +147,9 @@ export interface UITree {
   pageOnly?: boolean;
   rowUpdate?: boolean; // incremental: single row update, merge into existing grid
   position?: number; // row position for rowUpdate
+  // Tree view
+  treeNodes?: TreeNode[];
+  navigateView?: string;
   paging?: {
     currentPage: number;
     totalPages: number;
@@ -255,6 +258,14 @@ export interface ServerResponse {
   trackAsynchJob?: boolean;
   progress?: number;
   context?: Record<string, unknown>;
+}
+
+export interface TreeNode {
+  key: string;
+  title: string;
+  hint?: string;
+  isLeaf?: boolean;
+  children?: TreeNode[];
 }
 
 // Element type constants matching LayoutElement Java constants

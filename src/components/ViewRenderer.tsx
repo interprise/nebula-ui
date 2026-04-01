@@ -11,6 +11,7 @@ import {
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ListRenderer from './ListRenderer';
+import TreeRenderer from './TreeRenderer';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -59,7 +60,18 @@ function isActionBarRow(row: UIRow): boolean {
 }
 
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
-  if (!ui || !ui.rows) return null;
+  if (!ui) return null;
+
+  // Tree views
+  if (ui.viewType === 'tree' && ui.treeNodes) {
+    return (
+      <PathContext.Provider value={ui.path}>
+        <TreeRenderer ui={ui} onAction={onAction} />
+      </PathContext.Provider>
+    );
+  }
+
+  if (!ui.rows) return null;
 
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
