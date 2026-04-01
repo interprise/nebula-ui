@@ -252,7 +252,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       }
       const update: Partial<TabState> = {};
       if (resp.ui) {
-        if (resp.ui.rowUpdate) {
+        // Tree+detail: when current view is a tree and response is the detail (Save/Post),
+        // store the detail in the tree UI instead of replacing the tree
+        const existingTab0 = tabs.find(t => t.key === tabKey);
+        if (existingTab0?.ui?.viewType === 'tree' && resp.ui.viewType !== 'tree' && !resp.ui.treeNodes) {
+          // Update the tree's embedded detail — TreeRenderer will pick it up
+          update.ui = { ...existingTab0.ui, _detailResponse: resp.ui } as UITree;
+          const newFormValues = extractFormValues(resp.ui);
+          formValuesRef.current[tabKey] = newFormValues;
+          update.formValues = newFormValues;
+        } else if (resp.ui.rowUpdate) {
           // Incremental row update: merge single row into existing grid data
           const existingTab = tabs.find(t => t.key === tabKey);
           if (existingTab?.ui) {

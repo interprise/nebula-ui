@@ -57,6 +57,29 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   const detailFormValues = useRef<Record<string, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Extract form values from a detail UI response
+  const extractDetailFormValues = useCallback((dui: UITree): Record<string, string> => {
+    const values: Record<string, string> = {};
+    const walkRows = (rows: UITree['rows']) => {
+      if (!rows) return;
+      for (const row of rows) {
+        for (const cell of row.cells) {
+          const ctrl = cell.control;
+          if (!ctrl) continue;
+          if (ctrl.editable && !ctrl.noPost && !ctrl.disabled) {
+            const name = ctrl.name || ctrl.id;
+            if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
+              values[name] = String(ctrl.value);
+            }
+          }
+          if (ctrl.contentRows) walkRows(ctrl.contentRows);
+        }
+      }
+    };
+    walkRows(dui.rows);
+    return values;
+  }, []);
+
   const prevTreeNodesRef = useRef(ui.treeNodes);
   useEffect(() => {
     if (ui.treeNodes && ui.treeNodes !== prevTreeNodesRef.current) {
@@ -64,6 +87,17 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       setTreeData(ui.treeNodes);
     }
   }, [ui.treeNodes]);
+
+  // Pick up detail responses routed through Shell (Save/Post on tree+detail)
+  const detailResponse = (ui as unknown as Record<string, unknown>)._detailResponse as UITree | undefined;
+  const prevDetailResponseRef = useRef(detailResponse);
+  useEffect(() => {
+    if (detailResponse && detailResponse !== prevDetailResponseRef.current) {
+      prevDetailResponseRef.current = detailResponse;
+      setDetailUi(detailResponse);
+      detailFormValues.current = extractDetailFormValues(detailResponse);
+    }
+  }, [detailResponse, extractDetailFormValues]);
 
   const navigateView = ui.navigateView;
 
@@ -98,29 +132,6 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     }
   }, [ui.path, sid]);
 
-  // Extract form values from a detail UI response
-  const extractDetailFormValues = useCallback((detailUi: UITree): Record<string, string> => {
-    const values: Record<string, string> = {};
-    const walkRows = (rows: UITree['rows']) => {
-      if (!rows) return;
-      for (const row of rows) {
-        for (const cell of row.cells) {
-          const ctrl = cell.control;
-          if (!ctrl) continue;
-          if (ctrl.editable && !ctrl.noPost && !ctrl.disabled) {
-            const name = ctrl.name || ctrl.id;
-            if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
-              values[name] = String(ctrl.value);
-            }
-          }
-          if (ctrl.contentRows) walkRows(ctrl.contentRows);
-        }
-      }
-    };
-    walkRows(detailUi.rows);
-    return values;
-  }, []);
-
   // Handle node click — load detail in right pane
   const onSelect = useCallback(async (keys: React.Key[]) => {
     if (keys.length === 0 || !navigateView) return;
@@ -141,16 +152,13 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     }
   }, [navigateView, sid, extractDetailFormValues]);
 
-  // Handle detail field changes
+  // Handle detail field changes — update local ref AND Shell's formValues
   const handleDetailChange = useCallback((name: string, value: unknown) => {
     const strValue = value == null ? '' : String(value);
     detailFormValues.current[name] = strValue;
-    // Also propagate to Shell's formValues for Save
     onChange(name, value);
   }, [onChange]);
 
-  // Handle detail actions (Save etc.) — uses the existing toolbar via onAction
-  // The detail's viewstate is already current on the server after LocateAndNavigate
 
   // Server-side search with debounce
   const handleSearch = useCallback((value: string) => {
