@@ -467,17 +467,20 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
 
     case 'textarea':
     case 'htmlarea':
-    case 'expBuilder':
+    case 'expBuilder': {
+      const taMaxWidth = control.size ? control.size * 8 + 16 : undefined;
+      const rows = control.rows || 3;
       return (
         <Input.TextArea
           key={control.id || fieldName}
           {...commonProps}
           defaultValue={value as string}
-          autoSize={{ minRows: 3, maxRows: 10 }}
-          style={{ width: '100%', maxWidth: textMaxWidth }}
+          rows={rows}
+          style={{ width: '100%', maxWidth: taMaxWidth }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );
+    }
 
     case 'password':
       return (
