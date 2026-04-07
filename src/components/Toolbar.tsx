@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Dropdown, Space, Tooltip } from 'antd';
+import { Button, Dropdown, Space, Tooltip, Modal } from 'antd';
 import {
   DownOutlined,
   ReloadOutlined,
@@ -77,7 +77,15 @@ const iconMap: Record<string, React.ReactNode> = {
  *   doAction2.createCallback('ACTION', 'PARAM')
  *   doAction3.createCallback('ACTION', 'PARAM1', 'PARAM2')
  */
-function parseHandler(handler: string): { action: string; params?: Record<string, string> } {
+function parseHandler(handler: string): { action: string; params?: Record<string, string>; showInWindow?: boolean } {
+  // EntrAsp.UI.Shell.showInWindow.createCallback('COMMAND', 'PARAM')
+  const winMatch = handler.match(/^EntrAsp\.UI\.Shell\.showInWindow\.createCallback\(([^)]+)\)$/);
+  if (winMatch) {
+    const args = winMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+    const params: Record<string, string> = {};
+    if (args[1]) params.viewName = args[1];
+    return { action: args[0], params, showInWindow: true };
+  }
   const m = handler.match(/^doAction[23]?\.createCallback\(([^)]+)\)$/);
   if (m) {
     const args = m[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
@@ -97,8 +105,41 @@ function parseHandler(handler: string): { action: string; params?: Record<string
   return { action: handler };
 }
 
-function invokeHandler(handler: string, onAction: (action: string, params?: Record<string, string>) => void) {
-  const { action, params } = parseHandler(handler);
+async function invokeHandler(handler: string, onAction: (action: string, params?: Record<string, string>) => void) {
+  const { action, params, showInWindow } = parseHandler(handler);
+  if (showInWindow) {
+    // Call via controller2 and show result in a modal
+    const { postAction2 } = await import('../services/api');
+    try {
+      document.body.style.cursor = 'wait';
+      const resp = await postAction2(action, params || {});
+      document.body.style.cursor = '';
+      const result = resp as unknown as Record<string, unknown>;
+      // GetViewHelp returns { items: [{ prompt, help }] }
+      const items = result.items as Array<{ prompt: string; help: string }> | undefined;
+      if (items && items.length > 0) {
+        Modal.info({
+          title: 'Aiuto',
+          width: 600,
+          content: (
+            <div style={{ maxHeight: 400, overflow: 'auto' }}>
+              {items.map((item, i) => (
+                <div key={i} style={{ marginBottom: 12 }}>
+                  <strong>{item.prompt}</strong>
+                  <div dangerouslySetInnerHTML={{ __html: item.help || '' }} />
+                </div>
+              ))}
+            </div>
+          ),
+        });
+      } else {
+        Modal.info({ title: 'Aiuto', content: 'Nessun contenuto di aiuto disponibile.' });
+      }
+    } catch {
+      document.body.style.cursor = '';
+    }
+    return;
+  }
   onAction(action, params);
 }
 
