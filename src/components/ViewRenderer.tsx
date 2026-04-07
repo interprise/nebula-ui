@@ -394,14 +394,16 @@ const CellRenderer: React.FC<{
         <td {...tdProps} className={cellClass}>
           {cell.control ? (
             <>
-              <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
-              {docIcon && (
-                <BookOutlined
-                  className={`doc-icon ${docIcon.hasHelp ? 'doc-on' : 'doc-off'}`}
-                  title={docIcon.hasHelp ? 'Modifica documentazione' : 'Aggiungi documentazione'}
-                  onClick={() => onAction('NavigateHelp', { navpath: `${docIcon.viewName}|${docIcon.itemId}` })}
-                />
-              )}
+              <span style={docIcon ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' } : undefined}>
+                <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
+                {docIcon && (
+                  <BookOutlined
+                    className={`doc-icon ${docIcon.hasHelp ? 'doc-on' : 'doc-off'}`}
+                    title={docIcon.hasHelp ? 'Modifica documentazione' : 'Aggiungi documentazione'}
+                    onClick={() => onAction('NavigateHelp', { navpath: `${docIcon.viewName}|${docIcon.itemId}` })}
+                  />
+                )}
+              </span>
             </>
           ) : null}
         </td>
