@@ -1,5 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { Tabs } from 'antd';
+import { BookOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
 import {
   ELTYPE_PROMPT,
@@ -388,10 +389,20 @@ const CellRenderer: React.FC<{
         tdProps.style = { ...tdProps.style, width: '1%' };
       }
       const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${cell.cls || ''}`;
+      const docIcon = cell.control?.docIcon;
       return (
         <td {...tdProps} className={cellClass}>
           {cell.control ? (
-            <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
+            <>
+              <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
+              {docIcon && (
+                <BookOutlined
+                  className={`doc-icon ${docIcon.hasHelp ? 'doc-on' : 'doc-off'}`}
+                  title={docIcon.hasHelp ? 'Modifica documentazione' : 'Aggiungi documentazione'}
+                  onClick={() => onAction('NavigateHelp', { navpath: `${docIcon.viewName}|${docIcon.itemId}` })}
+                />
+              )}
+            </>
           ) : null}
         </td>
       );

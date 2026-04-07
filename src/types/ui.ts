@@ -42,6 +42,8 @@ export interface UIControl {
   // post-decorations: navigation icons next to field
   navigateView?: { command: string; navpath: string; controlName: string };
   navigateAdd?: { command: string; navpath: string; controlName: string };
+  // documentation mode: icon to edit/view help text for this field
+  docIcon?: { hasHelp: boolean; viewName: string; itemId: string };
   // embedded / detail view
   contentViewName?: string;
   contentRows?: UIRow[];
@@ -130,6 +132,7 @@ export interface UITree {
   pageType?: number; // 0=QUERY, 1=LIST, 2=DETAIL
   multiEdit?: boolean;
   listEdit?: boolean;
+  documenting?: boolean;
   breadcrumbs?: string;
   viewName?: string;
   viewType?: string;

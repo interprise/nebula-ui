@@ -389,6 +389,17 @@ body[style*="cursor: wait"] * {
   cursor: wait !important;
 }
 
+/* Documentation mode: help icon next to fields */
+.doc-icon {
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.doc-icon.doc-on { color: #1677ff; }
+.doc-icon.doc-off { color: #ccc; }
+.doc-icon:hover { color: #4096ff; }
+
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
    don't stretch controls to fill the cell — let them sit at their natural width */
 .companion-cell .ant-input,
