@@ -186,6 +186,7 @@ function renderToolbarItem(
       key={item.id || idx}
       disabled={item.disabled}
       size="small"
+      type={item.pressed ? 'primary' : 'default'}
       onClick={() => item.handler && invokeHandler(item.handler, onAction)}
       icon={item.icon ? iconMap[item.icon] : undefined}
     >

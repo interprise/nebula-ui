@@ -166,6 +166,7 @@ export interface ToolbarItem {
   icon?: string;
   handler?: string;
   disabled?: boolean;
+  pressed?: boolean; // toggle button state
   menu?: ToolbarItem[] | { items: ToolbarItem[] };
   keys?: string;
   shift?: boolean;
