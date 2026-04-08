@@ -63,46 +63,34 @@ function flattenPrivileges(nodes: PrivilegeNode[]): FlatRow[] {
 }
 
 /** Flatten the entire tree (ignoring open/close) and filter by text.
- *  Matching nodes + all their ancestors are included. */
+ *  Only matching nodes are shown as a flat list with breadcrumb path for context. */
 function flattenAndFilter(nodes: PrivilegeNode[], filter: string): FlatRow[] {
   const lowerFilter = filter.toLowerCase();
-  const matchingNames = new Set<string>();
+  const rows: FlatRow[] = [];
 
-  // First pass: collect names of matching nodes and their ancestors
-  function collectMatches(nodeList: PrivilegeNode[], ancestors: string[]): void {
+  function collect(nodeList: PrivilegeNode[], ancestors: string[]): void {
     for (const node of nodeList) {
-      const path = [...ancestors, node.name];
       if (node.description?.toLowerCase().includes(lowerFilter) || node.name.toLowerCase().includes(lowerFilter)) {
-        for (const a of path) matchingNames.add(a);
+        const breadcrumb = ancestors.length > 0
+          ? ancestors.join(' > ') + ' > ' + node.description
+          : node.description;
+        rows.push({
+          name: node.name,
+          description: breadcrumb,
+          hasChildren: node.hasChildren,
+          open: false,
+          level: 0,
+          navTarget: node.navTarget,
+          grants: node.grants,
+        });
       }
       if (node.children) {
-        collectMatches(node.children, path);
+        collect(node.children, [...ancestors, node.description]);
       }
     }
   }
-  collectMatches(nodes, []);
-
-  // Second pass: flatten, including only matching nodes, all expanded
-  function flatten(nodeList: PrivilegeNode[]): FlatRow[] {
-    const rows: FlatRow[] = [];
-    for (const node of nodeList) {
-      if (!matchingNames.has(node.name)) continue;
-      rows.push({
-        name: node.name,
-        description: node.description,
-        hasChildren: node.hasChildren,
-        open: true,
-        level: node.level,
-        navTarget: node.navTarget,
-        grants: node.grants,
-      });
-      if (node.children) {
-        rows.push(...flatten(node.children));
-      }
-    }
-    return rows;
-  }
-  return flatten(nodes);
+  collect(nodes, []);
+  return rows;
 }
 
 const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onChange }) => {
@@ -117,9 +105,13 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
 
   const handleFilterChange = useCallback((value: string) => {
     if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
+    if (!value) {
+      // Clear immediately, no debounce
+      setDebouncedFilter('');
+      return;
+    }
     filterTimerRef.current = setTimeout(() => {
       document.body.style.cursor = 'wait';
-      // Let the cursor update before the heavy computation
       requestAnimationFrame(() => {
         setDebouncedFilter(value);
         document.body.style.cursor = '';
@@ -342,7 +334,6 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
           theme={themeAlpine}
           rowData={rows}
           columnDefs={columnDefs}
-          getRowId={params => params.data.name}
           headerHeight={32}
           rowHeight={28}
           suppressCellFocus
