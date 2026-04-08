@@ -10,8 +10,10 @@ import * as api from './services/api';
 import { registerControl } from './controls/customControls';
 import RuoliControl from './controls/custom/RuoliControl';
 import WorkflowStatusControl from './controls/custom/WorkflowStatusControl';
+import ProfileManager from './controls/custom/ProfileManager';
 registerControl('ruoli', RuoliControl);
 registerControl('workflowStatus', WorkflowStatusControl);
+registerControl('gestorePrivilegi', ProfileManager);
 
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(false);

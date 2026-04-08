@@ -54,6 +54,7 @@ export async function login(username: string, password: string): Promise<ServerR
     action: 'JSONMenu',
     username,
     password,
+    ui: 'react',
   });
 }
 
@@ -107,7 +108,7 @@ export async function uploadFile(
 }
 
 export async function reloadMenu(): Promise<ServerResponse> {
-  return post(CMD2_URL, { action: 'JSONMenu' });
+  return post(CMD2_URL, { action: 'JSONMenu', ui: 'react' });
 }
 
 export async function checkProgress(sid: string = 'S1'): Promise<ServerResponse> {
