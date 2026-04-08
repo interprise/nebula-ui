@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Select } from 'antd';
+import { Input, Select, Spin } from 'antd';
 import {
   PlusSquareOutlined,
   MinusSquareOutlined,
@@ -112,11 +112,24 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
   const editable = control.editable !== false;
 
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
-  const [filterText, setFilterText] = useState('');
+  const [debouncedFilter, setDebouncedFilter] = useState('');
+  const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleFilterChange = useCallback((value: string) => {
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
+    filterTimerRef.current = setTimeout(() => {
+      document.body.style.cursor = 'wait';
+      // Let the cursor update before the heavy computation
+      requestAnimationFrame(() => {
+        setDebouncedFilter(value);
+        document.body.style.cursor = '';
+      });
+    }, 300);
+  }, []);
 
   const rows = useMemo(
-    () => filterText ? flattenAndFilter(privileges, filterText) : flattenPrivileges(privileges),
-    [privileges, filterText]
+    () => debouncedFilter ? flattenAndFilter(privileges, debouncedFilter) : flattenPrivileges(privileges),
+    [privileges, debouncedFilter]
   );
 
   const visibleProfiles = useMemo(
@@ -304,8 +317,7 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexShrink: 0, flexWrap: 'wrap' }}>
         <Input
           placeholder="Filtra abilitazioni..."
-          value={filterText}
-          onChange={e => setFilterText(e.target.value)}
+          onChange={e => handleFilterChange(e.target.value)}
           allowClear
           size="small"
           style={{ width: 250 }}
