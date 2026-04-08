@@ -468,15 +468,18 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
     case 'textarea':
     case 'htmlarea':
     case 'expBuilder': {
-      const taMaxWidth = control.size ? control.size * 8 + 16 : undefined;
-      const rows = control.rows || 3;
+      const taSize = Number(control.size) || 0;
+      const taWidth = taSize > 0 ? taSize * 8 + 16 : undefined;
+      const minRows = control.rows || 3;
+      const contentLines = typeof value === 'string' ? value.split('\n').length : 0;
+      const rows = Math.max(minRows, Math.min(contentLines + 1, 30));
       return (
         <Input.TextArea
           key={control.id || fieldName}
           {...commonProps}
           defaultValue={value as string}
           rows={rows}
-          style={{ width: '100%', maxWidth: taMaxWidth }}
+          style={{ width: '100%', maxHeight: '50vh', resize: 'vertical' }}
           onChange={(e) => handleChange(e.target.value)}
         />
       );

@@ -394,7 +394,7 @@ const CellRenderer: React.FC<{
         <td {...tdProps} className={cellClass}>
           {cell.control ? (
             <>
-              <span style={docIcon ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : undefined}>
+              <span style={docIcon ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : { display: 'block', width: '100%' }}>
                 <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
                 {docIcon && (
                   <BookOutlined

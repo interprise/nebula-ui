@@ -403,9 +403,8 @@ body[style*="cursor: wait"] * {
 
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
    don't stretch controls to fill the cell — let them sit at their natural width */
-.companion-cell .ant-input,
-.companion-cell .ant-select,
-.companion-cell textarea.ant-input {
+.companion-cell .ant-input:not(textarea),
+.companion-cell .ant-select {
   width: auto !important;
 }
 
