@@ -29,6 +29,9 @@ import {
   CaretRightOutlined,
   CaretDownOutlined,
   LinkOutlined,
+  StarFilled,
+  OrderedListOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
 import { SidContext, PathContext } from '../components/ViewRenderer';
@@ -250,28 +253,61 @@ interface ControlRendererProps {
   onChange: (name: string, value: unknown) => void;
 }
 
-/** Wraps a control with NavigateView/NavigateAdd decoration icons */
+/** Wraps a control with post-decoration icons/widgets matching the Java addPostDecoration() output */
 const withPostDecorations = (
   element: React.ReactNode,
   control: UIControl,
+  pageType: number | undefined,
   onAction: (action: string, params?: Record<string, string>) => void,
+  onChange?: (name: string, value: unknown) => void,
 ): React.ReactNode => {
   const nav = control.navigateView as { command: string; navpath: string; controlName: string } | undefined;
   const add = control.navigateAdd as { command: string; navpath: string; controlName: string } | undefined;
-  if (!nav && !add) return element;
+  const hasLookup = control.editable && control.lookupViewName && control.navigateLookupCommand;
+  const isMandatoryIcon = control.mandatory && control.editable
+    && control.type !== 'boolean' && control.type !== 'checkbox';
+  const hasNegation = control.negation && pageType === 0; // QUERY page
+  const postPrompt = control.postPrompt;
+
+  const hasDecorations = nav || add || hasLookup || isMandatoryIcon || hasNegation || postPrompt;
+  if (!hasDecorations) return element;
+
+  const fieldName = control.name || control.id || '';
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, width: '100%' }}>
+    <span className="post-decorations">
+      {hasNegation && (
+        <span className="negation-box">
+          <span className="negation-label">not</span>
+          <Checkbox
+            checked={!!control.negationValue}
+            onChange={(e) => onChange?.(fieldName + '$not', e.target.checked ? '1' : '')}
+          />
+        </span>
+      )}
       {element}
+      {postPrompt && <span className="post-prompt">{postPrompt}</span>}
+      {isMandatoryIcon && (
+        control.mandatoryIcon === 'sequence'
+          ? <OrderedListOutlined className="mandatory-icon" title="Obbligatorio (sequenza)" />
+          : <StarFilled className="mandatory-icon" title="Obbligatorio" />
+      )}
       {nav && (
         <LinkOutlined
-          style={{ fontSize: 14, color: '#1677ff', cursor: 'pointer', flexShrink: 0 }}
+          className="nav-icon"
           title="Apri dettaglio"
           onClick={() => onAction(nav.command, { navpath: nav.navpath, option1: nav.controlName })}
         />
       )}
+      {hasLookup && (
+        <FileSearchOutlined
+          className="lookup-icon"
+          title="Ricerca"
+          onClick={() => onAction(control.navigateLookupCommand!, { option1: fieldName })}
+        />
+      )}
       {add && (
         <PlusOutlined
-          style={{ fontSize: 14, color: '#52c41a', cursor: 'pointer', flexShrink: 0 }}
+          className="add-icon"
           title="Nuovo"
           onClick={() => onAction(add.command, { navpath: add.navpath, option1: add.controlName })}
         />
@@ -339,7 +375,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           onChange={(e) => handleChange(isUppercase ? e.target.value.toUpperCase() : e.target.value)}
         />,
         control,
+        pageType,
         doAction,
+        onChange,
       );
     }
 
@@ -446,7 +484,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           }))}
         />,
         control,
+        pageType,
         doAction,
+        onChange,
       );
     }
 
@@ -854,7 +894,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
           onChange={(e) => handleChange(e.target.value)}
         />,
         control,
+        pageType,
         doAction,
+        onChange,
       );
   }
 };

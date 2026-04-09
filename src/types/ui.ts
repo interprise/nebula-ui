@@ -42,8 +42,15 @@ export interface UIControl {
   // post-decorations: navigation icons next to field
   navigateView?: { command: string; navpath: string; controlName: string };
   navigateAdd?: { command: string; navpath: string; controlName: string };
+  navigateLookupCommand?: string; // lookup search action (e.g. "NavigateLookup")
+  lookupViewName?: string;
   // documentation mode: icon to edit/view help text for this field
   docIcon?: { hasHelp: boolean; viewName: string; itemId: string };
+  // post-decoration extras
+  postPrompt?: string; // text displayed after the field
+  negation?: boolean; // field supports NOT checkbox on query pages
+  negationValue?: boolean; // current NOT checkbox state
+  mandatoryIcon?: 'sequence'; // sequence fields get numbered-list icon instead of star
   // embedded / detail view
   contentViewName?: string;
   contentRows?: UIRow[];

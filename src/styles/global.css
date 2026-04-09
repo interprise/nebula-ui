@@ -390,6 +390,58 @@ body[style*="cursor: wait"] * {
   cursor: wait !important;
 }
 
+/* Post-decorations wrapper */
+.post-decorations {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+.post-prompt {
+  white-space: nowrap;
+  color: #666;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.mandatory-icon {
+  color: #faad14;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.nav-icon {
+  font-size: 14px;
+  color: #1677ff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.nav-icon:hover { color: #4096ff; }
+.lookup-icon {
+  font-size: 14px;
+  color: #1677ff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.lookup-icon:hover { color: #4096ff; }
+.add-icon {
+  font-size: 14px;
+  color: #52c41a;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.add-icon:hover { color: #73d13d; }
+.negation-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.negation-label {
+  font-size: 11px;
+  color: #666;
+  white-space: nowrap;
+}
+
 /* Documentation mode: help icon next to fields */
 .doc-icon {
   cursor: pointer;

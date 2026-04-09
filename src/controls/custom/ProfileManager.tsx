@@ -101,7 +101,9 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
 
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [debouncedFilter, setDebouncedFilter] = useState('');
+  const [columnFilter, setColumnFilter] = useState('');
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const columnFilterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleFilterChange = useCallback((value: string) => {
     if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
@@ -124,10 +126,25 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
     [privileges, debouncedFilter]
   );
 
-  const visibleProfiles = useMemo(
-    () => profiles.filter(p => !hiddenColumns.includes(p.name)),
-    [profiles, hiddenColumns]
-  );
+  const handleColumnFilterChange = useCallback((value: string) => {
+    if (columnFilterTimerRef.current) clearTimeout(columnFilterTimerRef.current);
+    if (!value) {
+      setColumnFilter('');
+      return;
+    }
+    columnFilterTimerRef.current = setTimeout(() => {
+      setColumnFilter(value);
+    }, 300);
+  }, []);
+
+  const visibleProfiles = useMemo(() => {
+    let filtered = profiles.filter(p => !hiddenColumns.includes(p.name));
+    if (columnFilter) {
+      const lower = columnFilter.toLowerCase();
+      filtered = filtered.filter(p => p.name.toLowerCase().includes(lower));
+    }
+    return filtered;
+  }, [profiles, hiddenColumns, columnFilter]);
 
   const handleToggle = useCallback((privilegeName: string) => {
     onAction('ProfileManagerToggle', { navpath: privilegeName });
@@ -313,6 +330,13 @@ const ProfileManager: React.FC<CustomControlProps> = ({ control, onAction, onCha
           allowClear
           size="small"
           style={{ width: 250 }}
+        />
+        <Input
+          placeholder="Filtra profili..."
+          onChange={e => handleColumnFilterChange(e.target.value)}
+          allowClear
+          size="small"
+          style={{ width: 200 }}
         />
         <span style={{ fontSize: 13 }}>Aggiungi profilo:</span>
         <Select
