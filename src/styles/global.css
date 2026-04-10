@@ -453,6 +453,18 @@ body[style*="cursor: wait"] * {
 .doc-icon.doc-off { color: #ccc; }
 .doc-icon:hover { color: #4096ff; }
 
+/* Configuration mode: per-item visibility toggle icon */
+.configure-icon {
+  cursor: pointer;
+  font-size: 13px;
+  margin-left: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.configure-icon.configure-on { color: #52c41a; }
+.configure-icon.configure-off { color: #ff4d4f; }
+.configure-icon:hover { opacity: 0.8; }
+
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
    don't stretch controls to fill the cell — let them sit at their natural width */
 .companion-cell .ant-input:not(textarea),

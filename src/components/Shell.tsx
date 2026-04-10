@@ -26,6 +26,7 @@ import type {
   LoginInfo,
   UITree,
   UIRow,
+  UIControl,
   ToolbarItem,
   UIData,
   ErrorItem,
@@ -56,6 +57,80 @@ interface ShellProps {
   loginInfo: LoginInfo;
   onLogout: () => void;
   onReloadMenu: () => void;
+}
+
+/**
+ * Walk the UI tree and flip the configureIcon.included for a single item.
+ * Used for ToggleItem responses so we don't re-render the whole view.
+ * Returns a new UITree with shallow copies along the touched path.
+ */
+function applyToggleItem(ui: UITree, itemId: string, included: boolean): UITree {
+  let changed = false;
+  const visitControl = (ctl: UIControl): UIControl => {
+    let next: UIControl = ctl;
+    if (ctl.configureIcon && ctl.configureIcon.itemId === itemId) {
+      next = { ...next, configureIcon: { ...ctl.configureIcon, included } };
+      changed = true;
+    }
+    if (ctl.tabs && ctl.tabs.length > 0) {
+      let tabsChanged = false;
+      const newTabs = ctl.tabs.map((t) => {
+        if (t.configureIcon && t.configureIcon.itemId === itemId) {
+          tabsChanged = true;
+          changed = true;
+          return { ...t, configureIcon: { ...t.configureIcon, included } };
+        }
+        return t;
+      });
+      if (tabsChanged) next = { ...next, tabs: newTabs };
+    }
+    if (ctl.contentRows) {
+      const newRows = ctl.contentRows.map(visitRow);
+      if (newRows !== ctl.contentRows) next = { ...next, contentRows: newRows };
+    }
+    // ButtonBar buttons are inner controls with their own configureIcon
+    const buttons = (ctl as unknown as { buttons?: UIControl[] }).buttons;
+    if (buttons && buttons.length > 0) {
+      let btnsChanged = false;
+      const newButtons = buttons.map((b) => {
+        const nb = visitControl(b);
+        if (nb !== b) btnsChanged = true;
+        return nb;
+      });
+      if (btnsChanged) next = { ...next, buttons: newButtons } as UIControl;
+    }
+    return next;
+  };
+  const visitRow = (row: UIRow): UIRow => {
+    let rowChanged = false;
+    const newCells = row.cells.map((cell) => {
+      if (!cell.control) return cell;
+      const newCtl = visitControl(cell.control);
+      if (newCtl !== cell.control) {
+        rowChanged = true;
+        return { ...cell, control: newCtl };
+      }
+      return cell;
+    });
+    return rowChanged ? { ...row, cells: newCells } : row;
+  };
+  const newRows = ui.rows.map(visitRow);
+  // List headers (column headers) can also carry a configureIcon
+  let newHeaders = ui.headers;
+  if (ui.headers) {
+    let headersChanged = false;
+    newHeaders = ui.headers.map((h) => {
+      if (h.configureIcon && h.configureIcon.itemId === itemId) {
+        headersChanged = true;
+        changed = true;
+        return { ...h, configureIcon: { ...h.configureIcon, included } };
+      }
+      return h;
+    });
+    if (!headersChanged) newHeaders = ui.headers;
+  }
+  if (!changed) return ui;
+  return { ...ui, rows: newRows, headers: newHeaders };
 }
 
 function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
@@ -376,6 +451,23 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
       if (tab.loading) return; // Block while a request is pending
 
+      // ToggleItem is a lightweight JSONCommand on controller2 that only flips
+      // server-side state and returns a minimal { toggleItem: { itemId, included } }.
+      // No need to go through the full render/processResponse pipeline.
+      if (action === 'ToggleItem') {
+        try {
+          const resp = await api.postAction2('ToggleItem', params);
+          const toggle = (resp as ServerResponse).toggleItem;
+          if (toggle && tab.ui) {
+            const newUi = applyToggleItem(tab.ui, toggle.itemId, toggle.included);
+            if (newUi !== tab.ui) updateTabState(tab.key, { ui: newUi });
+          }
+        } catch (e) {
+          message.error(`Error: ${e}`);
+        }
+        return;
+      }
+
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noFormValues;
@@ -516,7 +608,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => api.postAction2('ShowAvvisi'), visible: !!loginInfo.avvisi },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => api.postAction2('ShowNotifiche'), visible: !!loginInfo.notifications, badge: true },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner', onClick: () => api.postAction2('Ping'), visible: true },
-    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => api.postAction2('ShowProfileManager'), visible: true },
+    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => handleAction('ProfileManager', { navpath: 'menu' }), visible: true },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => api.postAction2('CommStats'), visible: true },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => api.postAction2('JdbcStats'), visible: true },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => api.postAction2('ExpBuilder'), visible: true },

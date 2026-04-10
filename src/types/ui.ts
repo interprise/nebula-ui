@@ -31,7 +31,14 @@ export interface UIControl {
   rows?: number;
   cols?: number;
   // tab
-  tabs?: { name: string; prompt: string; selected?: boolean }[];
+  tabs?: {
+    name: string;
+    prompt: string;
+    selected?: boolean;
+    badge?: string;
+    contentViewName?: string;
+    configureIcon?: { included: boolean; itemId: string };
+  }[];
   // button / action
   action?: string;
   icon?: string;
@@ -46,6 +53,8 @@ export interface UIControl {
   lookupViewName?: string;
   // documentation mode: icon to edit/view help text for this field
   docIcon?: { hasHelp: boolean; viewName: string; itemId: string };
+  // configuration mode: green/red dot to include/exclude item per customer
+  configureIcon?: { included: boolean; itemId: string };
   // post-decoration extras
   postPrompt?: string; // text displayed after the field
   negation?: boolean; // field supports NOT checkbox on query pages
@@ -108,6 +117,7 @@ export interface ListHeader {
   cls?: string;
   type?: string; // 'selector' for row selector column
   colspan?: number;
+  configureIcon?: { included: boolean; itemId: string };
 }
 
 export interface ListMeta {
@@ -269,6 +279,7 @@ export interface ServerResponse {
   trackAsynchJob?: boolean;
   progress?: number;
   context?: Record<string, unknown>;
+  toggleItem?: { itemId: string; included: boolean };
 }
 
 export interface TreeNode {

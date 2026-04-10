@@ -1,6 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { Tabs } from 'antd';
-import { BookOutlined } from '@ant-design/icons';
+import { BookOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
 import {
   ELTYPE_PROMPT,
@@ -58,6 +58,29 @@ function isBottomPanelRow(row: UIRow): boolean {
 /** Check if a row contains an actionBar control */
 function isActionBarRow(row: UIRow): boolean {
   return row.cells.some((cell) => cell.control?.type === 'actionBar');
+}
+
+/** Build a tab label node, adding a configure icon when configuring mode is active */
+function renderTabLabel(
+  tab: { prompt: string; configureIcon?: { included: boolean; itemId: string } },
+  onAction: (action: string, params?: Record<string, string>) => void,
+): React.ReactNode {
+  if (!tab.configureIcon) return tab.prompt;
+  const ci = tab.configureIcon;
+  const Icon = ci.included ? CheckCircleFilled : CloseCircleFilled;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {tab.prompt}
+      <Icon
+        className={`configure-icon ${ci.included ? 'configure-on' : 'configure-off'}`}
+        title={ci.included ? 'Tab incluso - clicca per escludere' : 'Tab escluso - clicca per includere'}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAction('ToggleItem', { navpath: ci.itemId });
+        }}
+      />
+    </span>
+  );
 }
 
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
@@ -225,7 +248,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                       onChange={(key) => onAction('ChangeTab', { navpath: tabControl.navpath as string, option1: tabControl.controlName as string, option2: key })}
                       items={(tabControl.tabs || []).map((tab) => ({
                         key: tab.name,
-                        label: tab.prompt,
+                        label: renderTabLabel(tab, onAction),
                       }))}
                     />
                   </div>
@@ -390,11 +413,13 @@ const CellRenderer: React.FC<{
       }
       const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${cell.cls || ''}`;
       const docIcon = cell.control?.docIcon;
+      const configureIcon = cell.control?.configureIcon;
+      const hasSideIcons = !!(docIcon || configureIcon);
       return (
         <td {...tdProps} className={cellClass}>
           {cell.control ? (
             <>
-              <span style={docIcon ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : { display: 'block', width: '100%' }}>
+              <span style={hasSideIcons ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : { display: 'block', width: '100%' }}>
                 <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
                 {docIcon && (
                   <BookOutlined
@@ -402,6 +427,19 @@ const CellRenderer: React.FC<{
                     title={docIcon.hasHelp ? 'Modifica documentazione' : 'Aggiungi documentazione'}
                     onClick={() => onAction('NavigateHelp', { navpath: `${docIcon.viewName}|${docIcon.itemId}` })}
                   />
+                )}
+                {configureIcon && (
+                  configureIcon.included
+                    ? <CheckCircleFilled
+                        className="configure-icon configure-on"
+                        title="Elemento incluso - clicca per escludere"
+                        onClick={() => onAction('ToggleItem', { navpath: configureIcon.itemId })}
+                      />
+                    : <CloseCircleFilled
+                        className="configure-icon configure-off"
+                        title="Elemento escluso - clicca per includere"
+                        onClick={() => onAction('ToggleItem', { navpath: configureIcon.itemId })}
+                      />
                 )}
               </span>
             </>
@@ -465,7 +503,7 @@ function renderContainerControl(
               onChange={(key) => onAction('ChangeTab', { navpath: control.navpath as string, option1: control.controlName as string, option2: key })}
               items={(control.tabs || []).map((tab) => ({
                 key: tab.name,
-                label: tab.prompt,
+                label: renderTabLabel(tab, onAction),
               }))}
             />
           </div>

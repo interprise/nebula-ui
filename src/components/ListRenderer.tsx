@@ -18,11 +18,38 @@ const { Text } = Typography;
 /** Ref-based sort dispatch — shared between custom headers and ListRenderer */
 type SortDispatch = (sortExpression: string) => void;
 const sortDispatchRef = { current: null as SortDispatch | null };
+const toggleItemDispatchRef = { current: null as ((itemId: string) => void) | null };
 
-/** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort */
-const ServerSortHeader = (props: { displayName: string; sortExpression?: string; sortDir?: string }) => {
-  const { displayName, sortExpression, sortDir } = props;
-  if (!sortExpression) return <span>{displayName}</span>;
+/** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort.
+ *  Also renders a configureIcon (green/red dot) when in configuring mode. */
+const ServerSortHeader = (props: {
+  displayName: string;
+  sortExpression?: string;
+  sortDir?: string;
+  configureIcon?: { included: boolean; itemId: string };
+}) => {
+  const { displayName, sortExpression, sortDir, configureIcon } = props;
+  const icon = configureIcon && (
+    <span
+      className={`configure-icon ${configureIcon.included ? 'configure-on' : 'configure-off'}`}
+      title={configureIcon.included ? 'Colonna inclusa - clicca per escludere' : 'Colonna esclusa - clicca per includere'}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleItemDispatchRef.current?.(configureIcon.itemId);
+      }}
+      style={{ cursor: 'pointer', fontSize: 13, marginLeft: 4 }}
+    >
+      {configureIcon.included ? '●' : '✕'}
+    </span>
+  );
+  if (!sortExpression) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <span>{displayName}</span>
+        {icon}
+      </span>
+    );
+  }
   return (
     <div
       style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, width: '100%', userSelect: 'none' }}
@@ -31,6 +58,7 @@ const ServerSortHeader = (props: { displayName: string; sortExpression?: string;
       <span>{displayName}</span>
       {sortDir === 'asc' && <span style={{ fontSize: 10 }}>&#9650;</span>}
       {sortDir === 'desc' && <span style={{ fontSize: 10 }}>&#9660;</span>}
+      {icon}
     </div>
   );
 };
@@ -288,10 +316,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           editable,
           cellEditor,
           cellEditorParams,
-          // Server-sorted lists: custom header handles sort dispatch; client-sorted: AG Grid native
-          ...(!allDataLocal && hdr.sortExpression ? {
+          // Server-sorted lists: custom header handles sort dispatch; client-sorted: AG Grid native.
+          // Also use the custom header when the column has a configureIcon so the dot renders.
+          ...((!allDataLocal && hdr.sortExpression) || hdr.configureIcon ? {
             headerComponent: ServerSortHeader,
-            headerComponentParams: { sortExpression: hdr.sortExpression, sortDir: hdr.sortDir },
+            headerComponentParams: {
+              sortExpression: !allDataLocal ? hdr.sortExpression : undefined,
+              sortDir: hdr.sortDir,
+              configureIcon: hdr.configureIcon,
+            },
           } : {}),
         });
       });
@@ -794,6 +827,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (ui.path) params.navpath = ui.path;
     onAction('SortColumn', params);
   }, [onAction, ui.path]);
+
+  // ToggleItem dispatch for configure-mode column header icons
+  toggleItemDispatchRef.current = useCallback((itemId: string) => {
+    onAction('ToggleItem', { navpath: itemId });
+  }, [onAction]);
 
   // Inject continuation header rows into the AG Grid DOM after the ag-header
   const injectContinuationHeaders = useCallback(() => {

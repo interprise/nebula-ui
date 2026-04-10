@@ -32,6 +32,8 @@ import {
   StarFilled,
   OrderedListOutlined,
   FileSearchOutlined,
+  CheckCircleFilled,
+  CloseCircleFilled,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
 import { SidContext, PathContext } from '../components/ViewRenderer';
@@ -738,15 +740,30 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
       if (!buttons?.length) return null;
       return (
         <div className="button-bar" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {buttons.map((btn, i) => (
-            <ControlRenderer
-              key={i}
-              control={btn as unknown as UIControl}
-              pageType={pageType}
-              onAction={onAction}
-              onChange={onChange}
-            />
-          ))}
+          {buttons.map((btn, i) => {
+            const btnControl = btn as unknown as UIControl;
+            const ci = btnControl.configureIcon;
+            const btnEl = (
+              <ControlRenderer
+                control={btnControl}
+                pageType={pageType}
+                onAction={onAction}
+                onChange={onChange}
+              />
+            );
+            if (!ci) return <React.Fragment key={i}>{btnEl}</React.Fragment>;
+            const Icon = ci.included ? CheckCircleFilled : CloseCircleFilled;
+            return (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                {btnEl}
+                <Icon
+                  className={`configure-icon ${ci.included ? 'configure-on' : 'configure-off'}`}
+                  title={ci.included ? 'Bottone incluso - clicca per escludere' : 'Bottone escluso - clicca per includere'}
+                  onClick={() => doAction('ToggleItem', { navpath: ci.itemId })}
+                />
+              </span>
+            );
+          })}
         </div>
       );
     }
