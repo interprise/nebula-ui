@@ -86,6 +86,12 @@ function parseHandler(handler: string): { action: string; params?: Record<string
     if (args[1]) params.viewName = args[1];
     return { action: args[0], params, showInWindow: true };
   }
+  // doActionAndMenu.createCallback('ACTION') — calls controller2 then reloads menu
+  const menuMatch = handler.match(/^doActionAndMenu\.createCallback\(([^)]+)\)$/);
+  if (menuMatch) {
+    const args = menuMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+    return { action: args[0], params: { _reloadMenu: 'true' } };
+  }
   const m = handler.match(/^doAction[23]?\.createCallback\(([^)]+)\)$/);
   if (m) {
     const args = m[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));

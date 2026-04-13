@@ -468,6 +468,80 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         return;
       }
 
+      // After identity change, reload menu and refresh current tab view
+      const refreshAfterIdentityChange = async () => {
+        onReloadMenu();
+        try {
+          const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
+          processResponse(tab.key, resp);
+        } catch {
+          // View not accessible — clear the tab
+          updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
+        }
+      };
+
+      // Impersonate dialog: modal asking for username → controller2 → refresh
+      if (action === 'impersonateDialog') {
+        let usernameValue = '';
+        Modal.confirm({
+          title: 'Impersona un utente',
+          content: (
+            <Input
+              placeholder="Username"
+              autoFocus
+              style={{ marginTop: 8 }}
+              onChange={(e) => { usernameValue = e.target.value; }}
+              onPressEnter={() => {
+                Modal.destroyAll();
+                if (usernameValue.trim()) {
+                  api.postAction2('Impersonate', { username: usernameValue.trim() }).then((resp) => {
+                    const r = resp as Record<string, unknown>;
+                    if (r.errors && (r.errors as unknown[]).length > 0) {
+                      message.error('Utente non trovato');
+                    } else {
+                      refreshAfterIdentityChange();
+                    }
+                  });
+                }
+              }}
+            />
+          ),
+          okText: 'Impersona',
+          cancelText: 'Annulla',
+          onOk: () => {
+            if (!usernameValue.trim()) return;
+            return api.postAction2('Impersonate', { username: usernameValue.trim() }).then((resp) => {
+              const r = resp as Record<string, unknown>;
+              if (r.errors && (r.errors as unknown[]).length > 0) {
+                message.error('Utente non trovato');
+              } else {
+                refreshAfterIdentityChange();
+              }
+            });
+          },
+        });
+        return;
+      }
+
+      // doActionAndMenu pattern: call via controller (Command class), process
+      // the re-rendered view, then reload the menu.
+      // (used by BackToAdmin and similar identity-change commands)
+      if (params._reloadMenu === 'true') {
+        const serverParams = { ...params };
+        delete serverParams._reloadMenu;
+        document.body.style.cursor = 'wait';
+        try {
+          const resp = await api.postAction(action, serverParams, undefined, tab.sid);
+          processResponse(tab.key, resp);
+          onReloadMenu();
+        } catch (e) {
+          message.error(`Error: ${e}`);
+        } finally {
+          document.body.style.cursor = '';
+        }
+        return;
+      }
+
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noFormValues;
@@ -497,7 +571,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, handleErrors]
+    [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu]
   );
 
   const handleFieldChange = useCallback(
