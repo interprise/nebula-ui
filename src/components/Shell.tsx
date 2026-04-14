@@ -662,6 +662,48 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const APPBAR_WIDTH = 48;
   const siderWidth = collapsed ? 80 : 260;
 
+  const showChangePasswordDialog = useCallback(() => {
+    const values = { oldpwd: '', newpwd: '', newpwd2: '' };
+    Modal.confirm({
+      title: 'Cambio Password',
+      icon: null,
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+          <Input.Password
+            placeholder="Password attuale"
+            onChange={(e) => { values.oldpwd = e.target.value; }}
+          />
+          <Input.Password
+            placeholder="Nuova password"
+            onChange={(e) => { values.newpwd = e.target.value; }}
+          />
+          <Input.Password
+            placeholder="Ripeti nuova password"
+            onChange={(e) => { values.newpwd2 = e.target.value; }}
+          />
+        </div>
+      ),
+      okText: 'Cambia Password',
+      cancelText: 'Annulla',
+      onOk: async () => {
+        if (!values.newpwd) {
+          message.error('Inserire la nuova password');
+          throw ''; // keep modal open
+        }
+        if (values.newpwd !== values.newpwd2) {
+          message.error('Le password non coincidono');
+          throw ''; // keep modal open
+        }
+        const resp = await api.postAction2('ChangePassword2', values);
+        if (resp.errors && resp.errors.length > 0) {
+          handleErrors(resp.errors);
+          const hasError = resp.errors.some(e => e.type === 'ERROR');
+          if (hasError) throw ''; // keep modal open
+        }
+      },
+    });
+  }, [handleErrors]);
+
   const appBarButtons: {
     key: string;
     icon: React.ReactNode;
@@ -672,7 +714,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     danger?: boolean;
   }[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Logout', onClick: onLogout, visible: true, danger: true },
-    { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => api.postAction2('ChangePassword2'), visible: true },
+    { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: true },
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => api.postAction2('ShowEmail'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
     { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => api.postAction2('ShowDocArea'), visible: !!loginInfo.areaDocumenti },
