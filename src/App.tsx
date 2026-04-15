@@ -111,6 +111,40 @@ const App: React.FC = () => {
     setMenuItems([]);
   }, []);
 
+  // Freshworks Widget: load only when assistenza is enabled, after login
+  useEffect(() => {
+    if (!loginInfo?.assistenza) return;
+    // Init stub (queues calls until script loads)
+    const win = window as unknown as Record<string, unknown>;
+    if (typeof win.FreshworksWidget !== 'function') {
+      win.fwSettings = { widget_id: 77000003077 };
+      const n = function(...args: unknown[]) { (n as unknown as { q: unknown[][] }).q.push(args); };
+      (n as unknown as { q: unknown[][] }).q = [];
+      win.FreshworksWidget = n;
+    }
+    // Load script
+    if (!document.getElementById('freshworks-script')) {
+      const s = document.createElement('script');
+      s.id = 'freshworks-script';
+      s.src = 'https://euc-widget.freshworks.com/widgets/77000003077.js';
+      s.async = true;
+      document.body.appendChild(s);
+    }
+    const fw = win.FreshworksWidget as (...args: unknown[]) => void;
+    // Hide default launcher — we use our own app bar button
+    fw('hide', 'launcher');
+    // Pre-fill ticket form with user info
+    const info = loginInfo as Record<string, unknown>;
+    fw('identify', 'ticketForm', {
+      name: loginInfo.login,
+      email: info.email || '',
+      custom_fields: {
+        cf_categoria: info.brand || '',
+        cf_sottocategoria: '',
+      },
+    });
+  }, [loginInfo]);
+
   if (!configLoaded) {
     return null; // Wait for GetConfig before rendering anything
   }
