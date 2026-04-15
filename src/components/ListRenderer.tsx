@@ -232,9 +232,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const customType = customColumns.get(idx);
         let cellRenderer: ColDef['cellRenderer'] = undefined;
         let autoHeight = false;
-        if (isHtml) {
-          cellRenderer = HtmlCellRenderer;
+        let wrapText = false;
+        // Server-driven auto-height: UIControl.isColumnAutoHeight() emits autoHeight in column metadata
+        const colAutoHeight = !!ui.columns?.[idx]?.control?.autoHeight;
+        if (isHtml || colAutoHeight) {
+          if (isHtml) cellRenderer = HtmlCellRenderer;
           autoHeight = true;
+          wrapText = true;
         } else if (customType) {
           cellRenderer = CustomCellRenderer;
           autoHeight = true;
@@ -312,7 +316,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           cellRenderer: editCellRenderer || cellRenderer,
           cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx } : undefined,
           autoHeight,
-          wrapText: isHtml,
+          wrapText,
           editable,
           cellEditor,
           cellEditorParams,
