@@ -715,18 +715,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   }[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Logout', onClick: onLogout, visible: true, danger: true },
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: true },
-    { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => api.postAction2('ShowEmail'), visible: !!loginInfo.emailSent },
+    { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
-    { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => api.postAction2('ShowDocArea'), visible: !!loginInfo.areaDocumenti },
+    { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => handleMenuClick('menu.cdmsRisorseDocAreaList', 'Area Documenti'), visible: !!loginInfo.areaDocumenti },
     // newSession moved to tab bar add button
     { key: 'help', icon: <QuestionCircleOutlined />, tooltip: 'Aiuto', onClick: () => {}, visible: !!loginInfo.assistenza },
     { key: 'cdms', icon: <PictureOutlined />, tooltip: 'Documentale', onClick: () => api.postAction2('CdmsEdit'), visible: !!loginInfo.cdms },
-    { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => api.postAction2('ShowAvvisi'), visible: !!loginInfo.avvisi },
-    { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => api.postAction2('ShowNotifiche'), visible: !!loginInfo.notifications, badge: true },
+    { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi },
+    { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner', onClick: () => api.postAction2('Ping'), visible: true },
     { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => handleAction('ProfileManager', { navpath: 'menu' }), visible: true },
-    { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => api.postAction2('CommStats'), visible: true },
-    { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => api.postAction2('JdbcStats'), visible: true },
+    { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleAction('CommStats'), visible: true },
+    { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleAction('JDBCStats'), visible: true },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => api.postAction2('ExpBuilder'), visible: true },
   ];
 
