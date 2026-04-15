@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, Suspense } from 'react';
 import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, message, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
@@ -13,6 +13,7 @@ import {
   PrinterOutlined,
   QuestionCircleOutlined,
   PictureOutlined,
+  AppstoreOutlined,
   BellOutlined,
   BulbOutlined,
   NotificationOutlined,
@@ -178,11 +179,15 @@ const defaultTab: TabState = {
   formValues: {},
 };
 
+// Lazy-load CDMS tree component (separate chunk, downloaded on demand)
+const CdmsTree = React.lazy(() => import('./CdmsTree'));
+
 const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadMenu }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [tabs, setTabs] = useState<TabState[]>([defaultTab]);
   const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
+  const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
 
   const handleAziendaChange = useCallback(async (value: string) => {
@@ -574,6 +579,35 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu]
   );
 
+  // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
+  const handleCdmsFolderClick = useCallback(
+    async (cdmsId: string, folderName: string) => {
+      const tab = getActiveTabState();
+      if (!tab || tab.loading) return;
+      // Extract UUID from cdmsId (part after last |)
+      const uuid = cdmsId.substring(cdmsId.lastIndexOf('|') + 1);
+      const filter = `exists(nodi[idNodoClass = '${uuid}'])`;
+      tab.formValues = {};
+      formValuesRef.current[tab.key] = tab.formValues;
+      editNavpathRef.current = null;
+      updateTabState(tab.key, { label: folderName, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
+      document.body.style.cursor = 'wait';
+      try {
+        const resp = await api.postAction('ListPage', {
+          viewName: 'cdmsRisorseList',
+          filter,
+          title: folderName,
+        }, undefined, tab.sid);
+        processResponse(tab.key, resp);
+      } catch (e) {
+        message.error(`Error: ${e}`);
+      } finally {
+        document.body.style.cursor = '';
+      }
+    },
+    [getActiveTabState, updateTabState, processResponse],
+  );
+
   const handleFieldChange = useCallback(
     (name: string, value: unknown) => {
       const tab = getActiveTabState();
@@ -714,6 +748,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     danger?: boolean;
   }[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Logout', onClick: onLogout, visible: true, danger: true },
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <PictureOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => setSidebarMode((m) => m === 'cdms' ? 'menu' : 'cdms'), visible: !!loginInfo.cdms },
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: true },
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
@@ -723,7 +758,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const fw = (window as unknown as Record<string, unknown>).FreshworksWidget as ((...args: unknown[]) => void) | undefined;
       if (fw) fw('open');
     }, visible: !!loginInfo.assistenza },
-    { key: 'cdms', icon: <PictureOutlined />, tooltip: 'Documentale', onClick: () => api.postAction2('CdmsEdit'), visible: !!loginInfo.cdms },
+    // cdms moved to top of list
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner', onClick: () => api.postAction2('Ping'), visible: true },
@@ -775,29 +810,40 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         <div style={{ padding: '12px', textAlign: 'center' }}>
           <img src="/entrasp/images/logos/LogoSixtema.jpg" alt="Sixtema" style={{ maxWidth: '100%', maxHeight: 40, objectFit: 'contain' }} />
         </div>
-        {!collapsed && (
-          <div style={{ padding: '0 12px 8px' }}>
-            <Input
-              placeholder="Cerca nel menu..."
-              prefix={<SearchOutlined />}
-              allowClear
-              value={menuFilter}
-              onChange={(e) => setMenuFilter(e.target.value)}
+        {sidebarMode === 'menu' ? (
+          <>
+            {!collapsed && (
+              <div style={{ padding: '0 12px 8px' }}>
+                <Input
+                  placeholder="Cerca nel menu..."
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  value={menuFilter}
+                  onChange={(e) => setMenuFilter(e.target.value)}
+                />
+              </div>
+            )}
+            <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#fff', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
+              <Menu
+                mode="inline"
+                inlineCollapsed={collapsed}
+                items={buildMenuItems(filteredMenu)}
+                {...(menuOpenKeys !== undefined ? { openKeys: menuOpenKeys } : {})}
+                onClick={({ key }) => {
+                  const label = findMenuLabel(menuItems, key) || key;
+                  handleMenuClick(key, label);
+                }}
+              />
+            </ConfigProvider>
+          </>
+        ) : (
+          <Suspense fallback={<div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>}>
+            <CdmsTree
+              collapsed={collapsed}
+              onFolderClick={handleCdmsFolderClick}
             />
-          </div>
+          </Suspense>
         )}
-        <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#fff', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
-          <Menu
-            mode="inline"
-            inlineCollapsed={collapsed}
-            items={buildMenuItems(filteredMenu)}
-            {...(menuOpenKeys !== undefined ? { openKeys: menuOpenKeys } : {})}
-            onClick={({ key }) => {
-              const label = findMenuLabel(menuItems, key) || key;
-              handleMenuClick(key, label);
-            }}
-          />
-        </ConfigProvider>
         <div style={{ textAlign: 'center', padding: 8 }}>
           <Button
             type="text"

@@ -132,3 +132,32 @@ export async function fetchComboOptions(
   // Server returns { rows: [{ value, text }], resultSize }
   return (resp as unknown as { rows: { value: string; text: string }[] }).rows || [];
 }
+
+// --- CDMS (Document Management) ---
+
+export interface CdmsNode {
+  cdmsId: string;
+  path: string;
+  text: string;
+  editable?: boolean;
+  draggable?: boolean;
+  leaf?: boolean;
+}
+
+export async function cdmsGetRoots(): Promise<{ nodes: CdmsNode[]; admin: boolean }> {
+  const resp = await post(CMD2_URL, { action: 'CdmsRoots' });
+  return resp as unknown as { nodes: CdmsNode[]; admin: boolean };
+}
+
+export async function cdmsGetChildren(path: string): Promise<CdmsNode[]> {
+  const resp = await post(CMD2_URL, { action: 'CdmsGet', path });
+  return resp as unknown as CdmsNode[];
+}
+
+export async function cdmsExec(
+  cmd: string,
+  params: Record<string, string>
+): Promise<{ success?: boolean; error?: string }> {
+  const resp = await post(CMD2_URL, { action: 'CdmsExec', cmd, ...params });
+  return resp as unknown as { success?: boolean; error?: string };
+}

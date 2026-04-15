@@ -472,6 +472,31 @@ body[style*="cursor: wait"] * {
   width: auto !important;
 }
 
+/* CDMS Documentale tree */
+.cdms-tree-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 100px);
+}
+.cdms-tree-content {
+  flex: 1;
+  overflow: auto;
+  padding: 0 4px;
+}
+.cdms-tree-content .ant-tree {
+  font-size: 13px;
+}
+.cdms-tree-content .ant-tree-node-content-wrapper {
+  padding: 1px 4px;
+}
+.cdms-tree-content .ant-tree-switcher {
+  width: 20px;
+}
+.cdms-tree-content .ant-tree-iconEle {
+  width: 18px;
+  color: #faad14;
+}
+
 /* Loading overlay — blocks interaction and shows spinner */
 .loading-overlay {
   position: absolute;
