@@ -14,11 +14,11 @@ This is a **server-driven UI** architecture. The Java server owns all state and 
 ## Architecture
 
 ### Three Repositories
-| Repo | Path | Branch | Purpose |
-|------|------|--------|---------|
-| CORE (NebulaFW) | `/home/luca/eclipse-nw/CORE` | `react-ui` | Java framework — rendering engine, controllers, session management |
-| entrasp | `/home/luca/eclipse-nw/entrasp` | `react-ui` | Java ERP application — domain code, views, custom controls |
-| entrasp-ui | `/home/luca/eclipse-nw/entrasp-ui` | (needs git init) | React client (this project) |
+| Repo | Path | Branch | Remote | Purpose |
+|------|------|--------|--------|---------|
+| CORE (NebulaFW) | `/home/luca/ui-new/CORE` | `react-ui` | `interprise/nebulafw` | Java framework — rendering engine, controllers, session management |
+| entrasp | `/home/luca/ui-new/entrasp` | `react-ui` | `interprise/nebulaerp` | Java ERP application — domain code, views, custom controls |
+| entrasp-ui | `/home/luca/ui-new/entrasp-ui` | `master` | `interprise/nebula-ui` | React client (this project) |
 
 ### Server-Side (CORE framework, already implemented)
 The CORE `react-ui` branch replaces the HTML rendering pipeline with JSON:
@@ -97,7 +97,6 @@ npm run build    # Output to ../entrasp/WebContent/app/
 Build produces code-split chunks: app (~23KB), antd vendor, AG Grid vendor.
 
 ## What's Left To Do
-- [ ] Initialize git for entrasp-ui, first commit
 - [ ] Handle entrasp custom UIControls (`entrasp/src/.../view/*UIControl.java`) — add getJsonType()/renderJSON()
 - [ ] End-to-end testing with running server
 - [ ] Keyboard navigation and shortcut handling (toolbar keys/shift hints)
