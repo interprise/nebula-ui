@@ -1,19 +1,18 @@
-import React, { useState, useCallback, useRef, useMemo, Suspense } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect, Suspense } from 'react';
 import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, message, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   LogoutOutlined,
   UserOutlined,
-  HomeOutlined,
   SearchOutlined,
   LockOutlined,
   MailOutlined,
   CalendarOutlined,
   PrinterOutlined,
   QuestionCircleOutlined,
-  PictureOutlined,
   AppstoreOutlined,
+  FileTextOutlined,
   BellOutlined,
   BulbOutlined,
   NotificationOutlined,
@@ -35,6 +34,9 @@ import type {
 } from '../types/ui';
 import Toolbar from './Toolbar';
 import ViewRenderer, { SidContext } from './ViewRenderer';
+import HomePanel from './HomePanel';
+import BannerCard from './BannerCard';
+import { ensureNotificationPermission, notify } from '../services/notifications';
 import * as api from '../services/api';
 
 const { Header, Content } = Layout;
@@ -188,6 +190,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
+  const [bannersModalOpen, setBannersModalOpen] = useState(false);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
 
   const handleAziendaChange = useCallback(async (value: string) => {
@@ -619,6 +622,43 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     [getActiveTabState]
   );
 
+  // Banner click: treat navigateTo as a menu item ID if it matches, else as an action
+  const handleBannerClick = useCallback(
+    (navigateTo: string) => {
+      const label = findMenuLabel(menuItems, navigateTo);
+      if (label) {
+        handleMenuClick(navigateTo, label);
+      } else {
+        // Fall back to generic action (server decides what to do)
+        handleAction(navigateTo);
+      }
+    },
+    [menuItems, handleMenuClick, handleAction],
+  );
+
+  // Request notification permission once on mount
+  useEffect(() => {
+    ensureNotificationPermission();
+  }, []);
+
+  // Fire native browser notifications for new banNotification banners.
+  // Tracks "already notified" locally so refreshes don't re-notify.
+  const notifiedBannerKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const banners = loginInfo.banners || [];
+    for (const b of banners) {
+      if (b.banNotification === false) continue;
+      const key = (b.text || '') + '|' + (b.banDate || '');
+      if (b.notified || notifiedBannerKeysRef.current.has(key)) continue;
+      notifiedBannerKeysRef.current.add(key);
+      notify({
+        title: 'Avviso',
+        body: b.text || '',
+        onClick: b.navigateTo ? () => handleBannerClick(b.navigateTo!) : undefined,
+      });
+    }
+  }, [loginInfo.banners, handleBannerClick]);
+
   // Track which row is being edited in listEdit mode (navpath sent with Save/Post)
   // Use a ref to avoid triggering re-renders on every row switch
   const editNavpathRef = useRef<string | null>(null);
@@ -745,10 +785,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     onClick: () => void;
     visible: boolean;
     badge?: boolean;
+    badgeCount?: number;
     danger?: boolean;
   }[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Logout', onClick: onLogout, visible: true, danger: true },
-    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <PictureOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => setSidebarMode((m) => m === 'cdms' ? 'menu' : 'cdms'), visible: !!loginInfo.cdms },
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => setSidebarMode((m) => m === 'cdms' ? 'menu' : 'cdms'), visible: !!loginInfo.cdms },
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: true },
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent },
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
@@ -761,11 +802,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     // cdms moved to top of list
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true },
-    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner', onClick: () => api.postAction2('Ping'), visible: true },
+    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Avvisi e notifiche', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
     { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => handleAction('ProfileManager', { navpath: 'menu' }), visible: true },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleAction('CommStats'), visible: true },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleAction('JDBCStats'), visible: true },
-    { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => api.postAction2('ExpBuilder'), visible: true },
+    { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true },
   ];
 
   return (
@@ -776,7 +817,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           .filter((b) => b.visible)
           .map((b) => (
             <Tooltip key={b.key} title={b.tooltip} placement="right">
-              <Badge dot={b.badge} size="small" offset={[-4, 4]}>
+              <Badge
+                count={b.badgeCount || 0}
+                dot={b.badge && !b.badgeCount}
+                size="small"
+                offset={b.badgeCount ? [-2, 6] : [-4, 4]}
+                overflowCount={99}
+              >
                 <Button
                   type="text"
                   danger={b.danger}
@@ -841,6 +888,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             <CdmsTree
               collapsed={collapsed}
               onFolderClick={handleCdmsFolderClick}
+              onAction={handleAction}
             />
           </Suspense>
         )}
@@ -982,20 +1030,42 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     />
                   </>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: 80, color: '#999' }}>
-                    {currentTab.loading ? null : (
-                      <>
-                        <HomeOutlined style={{ fontSize: 48 }} />
-                        <div style={{ marginTop: 16 }}>Seleziona una voce dal menu</div>
-                      </>
-                    )}
-                  </div>
+                  currentTab.loading ? null : (
+                    <HomePanel loginInfo={loginInfo} onBannerClick={handleBannerClick} />
+                  )
                 )}
               </div>
             </SidContext.Provider>
           )}
         </Content>
       </Layout>
+
+      {/* Banners modal: shows all active banners regardless of banHomePage */}
+      <Modal
+        title={<><NotificationOutlined style={{ color: '#1677ff', marginRight: 8 }} />Avvisi e notifiche</>}
+        open={bannersModalOpen}
+        onCancel={() => setBannersModalOpen(false)}
+        footer={null}
+        width={680}
+      >
+        {(loginInfo.banners || []).length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Nessun avviso</div>
+        ) : (
+          <div style={{ maxHeight: '60vh', overflow: 'auto', paddingRight: 4 }}>
+            {(loginInfo.banners || []).map((b, i) => (
+              <BannerCard
+                key={i}
+                banner={b}
+                onNavigate={(to) => {
+                  setBannersModalOpen(false);
+                  handleBannerClick(to);
+                }}
+                compact
+              />
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

@@ -133,6 +133,58 @@ export async function fetchComboOptions(
   return (resp as unknown as { rows: { value: string; text: string }[] }).rows || [];
 }
 
+export interface MultiSelectRow {
+  value: string;
+  text: string;       // chip text (compact, lookup expression)
+  listText?: string;  // richer display text for the drawer list
+}
+
+export interface MultiSelectListResponse {
+  rows: MultiSelectRow[];
+  viewType: string; // 'LIST' | 'QUERY' | etc.
+}
+
+export async function fetchMultiSelectOptions(
+  navpath: string,
+  controlName: string,
+  query: string,
+  sid: string = 'S1'
+): Promise<MultiSelectListResponse> {
+  const resp = await post(CMD2_URL, {
+    action: 'MultiSelectList',
+    sid,
+    navpath,
+    option1: controlName,
+    query,
+  });
+  const r = resp as unknown as MultiSelectListResponse;
+  return { rows: r.rows || [], viewType: r.viewType || 'LIST' };
+}
+
+// --- Expression Builder metadata ---
+
+export interface MetadataRow {
+  name: string;
+  type: 'A' | 'R'; // Attribute or Relationship
+  target?: string; // target BO name for relationships
+  method?: boolean;
+  javaType?: string;
+}
+
+export async function fetchMetadata(
+  boName: string,
+  allowMethods: boolean,
+  query: string,
+): Promise<MetadataRow[]> {
+  const resp = await post(CMD2_URL, {
+    action: 'Metadata',
+    boName,
+    allowMethods: allowMethods ? 'true' : 'false',
+    query: query || '',
+  });
+  return (resp as unknown as { rows: MetadataRow[] }).rows || [];
+}
+
 // --- CDMS (Document Management) ---
 
 export interface CdmsNode {

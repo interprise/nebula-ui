@@ -1,5 +1,7 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { getCustomControl } from './customControls';
+import MultiSelectControl from './MultiSelectControl';
+import ExpBuilderControl from './ExpBuilderControl';
 import {
   Input,
   InputNumber,
@@ -104,7 +106,11 @@ const BooleanControl: React.FC<{
   const boolVal = toBool(localVal);
   const isNull = toNull(localVal);
 
-  if (isQuery) {
+  // Mandatory boolean fields have only two states (checked/unchecked),
+  // even on query pages — the "any" (indeterminate) state makes no sense
+  // for fields that always carry a value.
+  const isMandatory = !!control.mandatory;
+  if (isQuery && !isMandatory) {
     // Tri-state: null (indeterminate) → true → false → null
     const handleTriState = () => {
       let next: unknown;
@@ -467,7 +473,9 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
             onChange={handleChange}
           />,
           control,
-          onAction,
+          pageType,
+          doAction,
+          onChange,
         );
       }
       return withPostDecorations(
@@ -493,25 +501,25 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
     }
 
     case 'multiselect':
-      return (
-        <Select
-          {...commonProps}
-          mode="multiple"
-          value={value as string[]}
-          style={{ width: '100%', maxWidth: textMaxWidth }}
+      return withPostDecorations(
+        <MultiSelectControl
+          control={control}
+          pageType={pageType}
+          editable={!isDisabled}
+          hint={hint}
+          value={value}
           onChange={handleChange}
-          options={(control.options || []).map((o) => ({
-            value: o.value,
-            label: o.text,
-          }))}
-        />
+          onAction={doAction}
+          maxWidth={textMaxWidth}
+        />,
+        control,
+        pageType,
+        doAction,
+        onChange,
       );
 
     case 'textarea':
-    case 'htmlarea':
-    case 'expBuilder': {
-      const taSize = Number(control.size) || 0;
-      const taWidth = taSize > 0 ? taSize * 8 + 16 : undefined;
+    case 'htmlarea': {
       const minRows = control.rows || 3;
       const contentLines = typeof value === 'string' ? value.split('\n').length : 0;
       const rows = Math.max(minRows, Math.min(contentLines + 1, 30));
@@ -526,6 +534,16 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
         />
       );
     }
+
+    case 'expbuilder':
+      return (
+        <ExpBuilderControl
+          key={control.id || fieldName}
+          control={control}
+          disabled={isDisabled}
+          onChange={handleChange}
+        />
+      );
 
     case 'password':
       return (
