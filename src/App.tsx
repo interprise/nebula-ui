@@ -111,6 +111,23 @@ const App: React.FC = () => {
     setMenuItems([]);
   }, []);
 
+  // Poll the server every 150s for banner updates via the Ping command
+  useEffect(() => {
+    if (!loggedIn) return;
+    const interval = setInterval(async () => {
+      try {
+        const resp = await api.postAction2('Ping');
+        const banners = (resp as unknown as { banners?: unknown[] }).banners;
+        if (banners !== undefined) {
+          setLoginInfo((prev) => prev ? { ...prev, banners: banners as LoginInfo['banners'] } : prev);
+        }
+      } catch {
+        // ignore — next tick will retry
+      }
+    }, 150000);
+    return () => clearInterval(interval);
+  }, [loggedIn]);
+
   // Freshworks Widget: load only when assistenza is enabled, after login
   useEffect(() => {
     if (!loginInfo?.assistenza) return;
@@ -134,7 +151,7 @@ const App: React.FC = () => {
     // Hide default launcher — we use our own app bar button
     fw('hide', 'launcher');
     // Pre-fill ticket form with user info
-    const info = loginInfo as Record<string, unknown>;
+    const info = loginInfo as unknown as Record<string, unknown>;
     fw('identify', 'ticketForm', {
       name: loginInfo.login,
       email: info.email || '',

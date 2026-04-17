@@ -247,13 +247,20 @@ export interface LoginInfo {
   areaDocumenti?: boolean;
   notifications?: boolean;
   assistenza?: boolean;
-  banners?: {
-    text: string;
-    banNotification?: boolean;
-    banHomePage?: boolean;
-    navigateTo?: string;
-    notified?: boolean;
-  }[];
+  banners?: Banner[];
+}
+
+export interface Banner {
+  text: string;            // short text for browser notification
+  hpText?: string;         // longer text for home page (may contain HTML)
+  banDate?: string;        // creation date (ISO / formatted string)
+  banNotification?: boolean;
+  banHomePage?: boolean;
+  navigateTo?: string;     // command / menuId to navigate to on click
+  notified?: boolean;      // client-side: already shown as notification
+  linkEsterno1?: string; linkEsternoDescr1?: string;
+  linkEsterno2?: string; linkEsternoDescr2?: string;
+  linkEsterno3?: string; linkEsternoDescr3?: string;
 }
 
 export interface MenuItem {
