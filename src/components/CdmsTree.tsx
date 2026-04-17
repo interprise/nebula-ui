@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Tree, Input, Dropdown, Modal, message } from 'antd';
+import { Tree, Input, Dropdown, Modal, Button, Tooltip, message } from 'antd';
 import {
   FolderOutlined,
   FolderOpenOutlined,
@@ -15,6 +15,7 @@ import type { CdmsNode } from '../services/api';
 interface CdmsTreeProps {
   collapsed: boolean;
   onFolderClick: (cdmsId: string, folderName: string) => void;
+  onAction: (action: string, params?: Record<string, string>) => void;
 }
 
 /** Convert server CdmsNode to Ant Design DataNode */
@@ -68,12 +69,12 @@ function filterTree(nodes: DataNode[], lowerFilter: string): DataNode[] | null {
   return anyMatch ? filtered : null;
 }
 
-const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
+const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction }) => {
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [contextMenu, setContextMenu] = useState<{
     node: DataNode;
@@ -307,7 +308,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
 
   return (
     <div className="cdms-tree-container">
-      <div style={{ padding: '0 12px 8px' }}>
+      <div style={{ padding: '0 12px 8px', display: 'flex', gap: 4 }}>
         <Input
           placeholder="Cerca cartelle..."
           prefix={<SearchOutlined />}
@@ -315,7 +316,17 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
           value={filter}
           onChange={(e) => handleFilterChange(e.target.value)}
           size="small"
+          style={{ flex: 1 }}
         />
+        {isAdmin && (
+          <Tooltip title="Nuovo albero">
+            <Button
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => onAction('AddPage', { viewName: 'cdmsNodiClassificazioneDetail' })}
+            />
+          </Tooltip>
+        )}
       </div>
       <div className="cdms-tree-content">
         <Tree
