@@ -30,6 +30,10 @@ export default defineConfig({
         target: 'http://localhost:9080',
         changeOrigin: true,
       },
+      '/entrasp/app-plugins': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
     },
   },
 })

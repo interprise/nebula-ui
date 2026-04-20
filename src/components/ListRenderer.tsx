@@ -5,7 +5,7 @@ import { Button, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, ListHeader, ListAction, ListColumn } from '../types/ui';
 import { ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
-import { getCustomControl } from '../controls/customControls';
+import { getControl, isCellRenderable } from '../controls/registry';
 import { SidContext } from './ViewRenderer';
 import {
   getCellEditorForType,
@@ -98,7 +98,7 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
   const idx = field.replace('col_', '');
   const controlType = params.data?.[`_type_${idx}`] as string | undefined;
   if (!controlType) return null;
-  const CustomComponent = getCustomControl(controlType);
+  const CustomComponent = isCellRenderable(controlType) ? getControl(controlType) : undefined;
   if (!CustomComponent) return null;
   const colMeta = params.data?.[`_meta_${idx}`] as Record<string, unknown> | undefined;
   const control = { type: controlType, value: params.value, editable: false, ...colMeta };
@@ -203,7 +203,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const ctrlType = col.control?.type;
         if (ctrlType === 'html') {
           htmlColumns.add(idx);
-        } else if (ctrlType && getCustomControl(ctrlType)) {
+        } else if (ctrlType && isCellRenderable(ctrlType)) {
           customColumns.set(idx, ctrlType);
           customColumnMeta.set(idx, col.control as Record<string, unknown>);
         }

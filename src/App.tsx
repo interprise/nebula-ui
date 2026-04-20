@@ -1,19 +1,36 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import * as React from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ConfigProvider, App as AntApp } from 'antd';
+import * as Antd from 'antd';
+import * as AntdIcons from '@ant-design/icons';
+import * as AgGrid from 'ag-grid-community';
+import * as AgGridReact from 'ag-grid-react';
 import itIT from 'antd/locale/it_IT';
 import LoginForm from './components/LoginForm';
 import Shell from './components/Shell';
 import type { LoginInfo, MenuItem } from './types/ui';
 import * as api from './services/api';
 
-// Register application-specific custom controls
-import { registerControl } from './controls/customControls';
-import RuoliControl from './controls/custom/RuoliControl';
-import WorkflowStatusControl from './controls/custom/WorkflowStatusControl';
-import ProfileManager from './controls/custom/ProfileManager';
-registerControl('ruoli', RuoliControl);
-registerControl('workflowStatus', WorkflowStatusControl);
-registerControl('gestorePrivilegi', ProfileManager);
+// Register CORE framework controls synchronously. The application-specific
+// plugin is loaded dynamically after GetConfig from the URL the server
+// provides, so another app on the framework can ship its own plugin bundle
+// without touching entrasp-ui source.
+import { registerBuiltinControls } from './controls/builtins';
+import { registerControl, registerControls, registerCellRenderable } from './controls/registry';
+import { loadControlPlugin } from './controls/loadPlugin';
+import type { HostAPI } from './controls/hostApi';
+registerBuiltinControls();
+
+const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
+
+const hostApi: HostAPI = {
+  React,
+  antd: Antd,
+  icons: AntdIcons,
+  agGrid: AgGrid,
+  agGridReact: AgGridReact,
+  registry: { registerControl, registerControls, registerCellRenderable },
+};
 
 const App: React.FC = () => {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -42,9 +59,11 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    api.getConfig().then((resp) => {
+    api.getConfig().then(async (resp) => {
       const raw = resp as Record<string, unknown>;
       if (raw.loginTitle) setLoginTitle(raw.loginTitle as string);
+      const pluginUrl = (raw.controlsPluginUrl as string | undefined) || DEFAULT_CONTROLS_PLUGIN_URL;
+      await loadControlPlugin(pluginUrl, hostApi);
       if (raw.loggedIn === true || raw.authenticatorName) {
         // Skip login form — already authenticated or SSO authenticator
         setShowLogin(false);
