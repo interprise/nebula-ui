@@ -38,6 +38,8 @@ import HomePanel from './HomePanel';
 import BannerCard from './BannerCard';
 import { ensureNotificationPermission, notify } from '../services/notifications';
 import * as api from '../services/api';
+import { putTemplate, getTemplate } from '../services/templateCache';
+import { hydrate } from '../services/hydrate';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -53,6 +55,11 @@ interface TabState {
   formValues: Record<string, string | string[]>;
   loading?: boolean;
   progressPct?: number; // 0-100 during async job polling
+  // Two-phase pipeline: the templateKey ("viewName:pageType") of the
+  // template currently driving this tab's render. Echoed back to the
+  // server on subsequent requests so it can serve DATA-only when the
+  // resolved view matches.
+  templateKey?: string;
 }
 
 interface ShellProps {
@@ -334,7 +341,36 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         return;
       }
       const update: Partial<TabState> = {};
-      if (resp.ui) {
+      // Two-phase pipeline — METADATA+DATA: cache the stable template and
+      // render the initial hydrated tree. Subsequent posts on this tab echo
+      // the templateKey back so the server returns DATA-only.
+      if (resp.template && resp.templateKey) {
+        putTemplate(resp.templateKey, resp.template);
+        const hydrated = hydrate(resp.template, resp.values, resp.dynProps);
+        update.ui = hydrated;
+        update.templateKey = resp.templateKey;
+        const newFormValues = extractFormValues(hydrated);
+        formValuesRef.current[tabKey] = newFormValues;
+        update.formValues = newFormValues;
+      }
+      // Two-phase pipeline — DATA-only: look up the cached template for the
+      // announced templateKey and hydrate with the fresh values + dynProps.
+      // If the cache is cold (tab-state drift, first-render), we degrade to
+      // legacy and request a full render on the next action.
+      else if (resp.ui?.dataOnly && resp.ui.templateKey) {
+        const tpl = getTemplate(resp.ui.templateKey);
+        if (tpl) {
+          const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps);
+          update.ui = hydrated;
+          update.templateKey = resp.ui.templateKey;
+          const newFormValues = extractFormValues(hydrated);
+          formValuesRef.current[tabKey] = newFormValues;
+          update.formValues = newFormValues;
+        } else {
+          console.warn('[template-cache] missed key', resp.ui.templateKey, '— server emitted DATA-only but client has no template');
+        }
+      }
+      else if (resp.ui) {
         // Tree+detail: when current view is a tree and response is the detail (Save/Post),
         // store the detail in the tree UI instead of replacing the tree
         const existingTab0 = tabs.find(t => t.key === tabKey);
@@ -553,6 +589,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noFormValues;
+
+      // Two-phase pipeline: opt into the template/data protocol. If this tab
+      // already holds a template, advertise its key so the server can decide
+      // DATA-only vs METADATA+DATA based on whether the resolved view matches.
+      serverParams.hasTemplate = '1';
+      if (tab.templateKey) serverParams.templateKey = tab.templateKey;
 
       // For listEdit: include the editing row's navpath for data-modifying actions
       // (Save, Post, etc.) so the server positions on the correct row.

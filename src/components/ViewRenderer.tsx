@@ -380,6 +380,11 @@ const CellRenderer: React.FC<{
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
 }> = ({ cell, companion, pageType, formCols, onAction, onChange, onGridChange }) => {
+  // Two-phase pipeline: the template carries a `visible` slot for every
+  // conditionally-shown cell. When `hydrate()` resolves it to false, we skip
+  // the cell entirely — matching the legacy FULL-mode behavior where
+  // hidden cells were simply omitted from the wire.
+  if (cell.visible === false) return null;
   // For container/section-header/filler cells, clamp colspan to formCols so
   // sub-view colspans don't inflate the auto-layout table width
   const isFullWidthCell = cell.elementType === ELTYPE_CONTAINER

@@ -82,6 +82,11 @@ export interface UICell {
   promptCls?: string;
   control?: UIControl;
   text?: string; // section header
+  rows?: UIRow[]; // nested rows for ELTYPE_CONTAINER cells with an embedded layout
+  // Two-phase pipeline: "visible" may be a literal boolean or a "?iN"
+  // placeholder resolved from dynProps at render time. The ViewRenderer
+  // omits a cell when this resolves to false.
+  visible?: boolean | string;
 }
 
 export interface UIRow {
@@ -167,6 +172,13 @@ export interface UITree {
   pageOnly?: boolean;
   rowUpdate?: boolean; // incremental: single row update, merge into existing grid
   position?: number; // row position for rowUpdate
+  // Two-phase pipeline (form/detail views):
+  // dataOnly=true marks a slim response body carrying only `values` + `dynProps`
+  // that the client applies to its cached template keyed by `templateKey`.
+  dataOnly?: boolean;
+  templateKey?: string;
+  values?: Record<string, unknown>;
+  dynProps?: Record<string, unknown>;
   // Tree view
   treeNodes?: TreeNode[];
   navigateView?: string;
@@ -273,6 +285,16 @@ export interface MenuItem {
 
 export interface ServerResponse {
   ui?: UITree;
+  // Two-phase pipeline: on a fresh navigation that opts in, the server
+  // returns a stable `template` alongside flat `values` + `dynProps`. The
+  // client caches the template by `templateKey` and, on subsequent requests,
+  // asserts it to get DATA-only responses (where the data arrives as
+  // ui.dataOnly + ui.values + ui.dynProps).
+  template?: UITree;
+  templateKey?: string;
+  values?: Record<string, unknown>;
+  dynProps?: Record<string, unknown>;
+  path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;
   uiData?: UIData;
