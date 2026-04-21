@@ -59,9 +59,9 @@ function hydrateControl(
     }
   }
 
-  // Inject navpath into nav/add descriptors from the per-tab scopePaths
-  // manifest. The server emits these descriptors structurally (no
-  // navpath baked in) so templates stay cross-tab cacheable.
+  // Inject navpath into nav/add descriptors + reload-on-change info from
+  // the per-tab scopePaths manifest. The server emits these structurally
+  // (navpath-free) so templates stay cross-tab cacheable.
   const navpath = scopePaths[scope];
   if (navpath) {
     const srcNav = src.navigateView as Record<string, unknown> | undefined;
@@ -73,6 +73,12 @@ function hydrateControl(
     if (srcAdd && !srcAdd.navpath) {
       if (out === null) out = { ...src };
       out.navigateAdd = { ...srcAdd, navpath };
+    }
+    // Reload info lives as flat fields on the control; fill in navpath
+    // for controls that advertise a reload trigger.
+    if (src.reload && !src.navpath) {
+      if (out === null) out = { ...src };
+      out.navpath = navpath;
     }
   }
 
