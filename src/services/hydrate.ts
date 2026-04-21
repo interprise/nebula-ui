@@ -48,12 +48,23 @@ function hydrateControl(
   }
 
   const bareName = (out ?? src).name as string | undefined;
+  const type = (out ?? src).type as string | undefined;
   if (bareName) {
     // Value lookup uses the structural path (scope + bare name).
     const valueKey = scope ? scope + '.' + bareName : bareName;
     if (valueKey in values) {
-      if (out === null) out = { ...src };
-      out.value = values[valueKey];
+      const v = values[valueKey];
+      // Container controls (detailView, tab) emit their entire refreshable
+      // descriptor as a structured value — merge it into the template's
+      // descriptor so static stubs (type, name) coexist with per-render
+      // content (tabs, rows, contentRows, badges, selected, etc.).
+      if ((type === 'detailView' || type === 'tab') && v && typeof v === 'object' && !Array.isArray(v)) {
+        if (out === null) out = { ...src };
+        Object.assign(out, v as Record<string, unknown>);
+      } else {
+        if (out === null) out = { ...src };
+        out.value = v;
+      }
     }
     // Compose wire-form name for form posts. Falls back to the bare name
     // when no binding is known — preserves legacy behavior on cache miss.
