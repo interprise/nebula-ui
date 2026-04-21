@@ -40,6 +40,7 @@ import { ensureNotificationPermission, notify } from '../services/notifications'
 import * as api from '../services/api';
 import { putTemplate, getTemplate } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
+import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -458,6 +459,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
+      // Restore focus after React re-renders. The target id was
+      // captured by useControlChange right before the reload fired.
+      restoreFocus(consumePendingFocus());
     },
     [handleErrors, updateTabState, extractFormValues]
   );

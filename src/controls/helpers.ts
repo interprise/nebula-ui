@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { UIControl } from '../types/ui';
+import { captureFocusBeforeReload } from '../services/focusRestore';
 
 export function javaToDayjsFormat(fmt: string | undefined): string | undefined {
   if (!fmt) return undefined;
@@ -54,6 +55,13 @@ export function useControlChange(
     (val: unknown) => {
       onChange(fieldName, val);
       if (reload) {
+        // Snapshot focus before the reload fires. For Tab-out reloads
+        // the browser has already moved focus to the next tabIndex
+        // field, so document.activeElement IS the target we want after
+        // re-render. For checkbox toggles the activeElement is the
+        // checkbox itself, so focus stays put. Either way, restoring
+        // from the snapshot matches user intent.
+        captureFocusBeforeReload();
         // Field-triggered reloads don't need a fresh toolbar — state
         // that actually affects toolbar buttons (Save dirty, etc.)
         // updates on the next explicit action. Save bandwidth by asking
