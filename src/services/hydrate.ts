@@ -16,6 +16,16 @@ import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
  */
 const PLACEHOLDER = /^\?i(\d+)$/;
 
+// Control types whose full descriptor is re-emitted in DATA mode and
+// merged (not overwritten as `value`) into the cached template stub.
+const STRUCTURED_VALUE_TYPES = new Set([
+  'detailView', 'tab', 'warning', 'workflowStatus', 'actionBar', 'buttonBar',
+]);
+
+function isStructuredValueType(type: string | undefined): boolean {
+  return type !== undefined && STRUCTURED_VALUE_TYPES.has(type);
+}
+
 type DynProps = Record<string, unknown>;
 type Values = Record<string, unknown>;
 type Bindings = Record<string, string>;
@@ -54,11 +64,11 @@ function hydrateControl(
     const valueKey = scope ? scope + '.' + bareName : bareName;
     if (valueKey in values) {
       const v = values[valueKey];
-      // Container controls (detailView, tab) emit their entire refreshable
-      // descriptor as a structured value — merge it into the template's
-      // descriptor so static stubs (type, name) coexist with per-render
-      // content (tabs, rows, contentRows, badges, selected, etc.).
-      if ((type === 'detailView' || type === 'tab') && v && typeof v === 'object' && !Array.isArray(v)) {
+      // Container/dynamic controls emit their entire refreshable descriptor
+      // as a structured value — merge it into the template's descriptor so
+      // static stubs (type, name) coexist with per-render content
+      // (tabs, rows, actions, buttons, html, state, ...).
+      if (isStructuredValueType(type) && v && typeof v === 'object' && !Array.isArray(v)) {
         if (out === null) out = { ...src };
         Object.assign(out, v as Record<string, unknown>);
       } else {
