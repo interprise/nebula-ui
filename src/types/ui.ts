@@ -303,6 +303,9 @@ export interface ServerResponse {
   // alongside METADATA responses. Per-tab state used to compose wire-form
   // control names for form posts.
   bindings?: Record<string, string>;
+  // Parallel manifest: scope path -> navpath. Used to populate the
+  // navpath field on nav/add icon descriptors during hydration.
+  scopePaths?: Record<string, string>;
   path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;

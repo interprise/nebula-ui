@@ -17,8 +17,16 @@ export const withPostDecorations = (
   onAction: (action: string, params?: Record<string, string>) => void,
   onChange?: (name: string, value: unknown) => void,
 ): React.ReactNode => {
-  const nav = control.navigateView as { command: string; navpath: string; controlName: string } | undefined;
-  const add = control.navigateAdd as { command: string; navpath: string; controlName: string } | undefined;
+  const navDesc = control.navigateView as { command: string; navpath: string; controlName: string } | undefined;
+  const addDesc = control.navigateAdd as { command: string; navpath: string; controlName: string } | undefined;
+  // Server emits nav/add descriptors structurally (when the field's type
+  // supports them); the client decides visibility based on whether the
+  // field has a value. Show nav only when there's something to navigate
+  // to; show add only when the slot is empty (user would create a new
+  // target).
+  const hasValue = control.value != null && control.value !== '';
+  const nav = navDesc && hasValue ? navDesc : undefined;
+  const add = addDesc && !hasValue ? addDesc : undefined;
   const hasLookup = control.editable && control.lookupViewName && control.navigateLookupCommand;
   const isMandatoryIcon = control.mandatory && control.editable
     && control.type !== 'boolean' && control.type !== 'checkbox';

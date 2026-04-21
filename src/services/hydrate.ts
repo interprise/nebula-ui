@@ -29,6 +29,7 @@ function isStructuredValueType(type: string | undefined): boolean {
 type DynProps = Record<string, unknown>;
 type Values = Record<string, unknown>;
 type Bindings = Record<string, string>;
+type ScopePaths = Record<string, string>;
 
 function resolvePlaceholder(v: unknown, dynProps: DynProps): unknown {
   if (typeof v !== 'string') return v;
@@ -43,6 +44,7 @@ function hydrateControl(
   values: Values,
   dynProps: DynProps,
   bindings: Bindings,
+  scopePaths: ScopePaths,
   scope: string,
 ): UIControl {
   const src = control as unknown as Record<string, unknown>;
@@ -54,6 +56,23 @@ function hydrateControl(
     if (resolved !== orig) {
       if (out === null) out = { ...src };
       out[k] = resolved;
+    }
+  }
+
+  // Inject navpath into nav/add descriptors from the per-tab scopePaths
+  // manifest. The server emits these descriptors structurally (no
+  // navpath baked in) so templates stay cross-tab cacheable.
+  const navpath = scopePaths[scope];
+  if (navpath) {
+    const srcNav = src.navigateView as Record<string, unknown> | undefined;
+    if (srcNav && !srcNav.navpath) {
+      if (out === null) out = { ...src };
+      out.navigateView = { ...srcNav, navpath };
+    }
+    const srcAdd = src.navigateAdd as Record<string, unknown> | undefined;
+    if (srcAdd && !srcAdd.navpath) {
+      if (out === null) out = { ...src };
+      out.navigateAdd = { ...srcAdd, navpath };
     }
   }
 
@@ -93,6 +112,7 @@ function hydrateCell(
   values: Values,
   dynProps: DynProps,
   bindings: Bindings,
+  scopePaths: ScopePaths,
   scope: string,
 ): UICell {
   let out: UICell | null = null;
@@ -105,7 +125,7 @@ function hydrateCell(
   }
 
   if (cell.control) {
-    const hc = hydrateControl(cell.control, values, dynProps, bindings, scope);
+    const hc = hydrateControl(cell.control, values, dynProps, bindings, scopePaths, scope);
     if (hc !== cell.control) {
       out = out ?? { ...cell };
       out.control = hc;
@@ -113,12 +133,8 @@ function hydrateCell(
   }
 
   if (cell.rows) {
-    // Embedded-view cells carry a `scope` marker; descending into cell.rows
-    // under that marker pushes the scope path so inner controls resolve
-    // values/bindings correctly. Plain CONTAINER cells without a scope
-    // marker inherit the current scope.
     const innerScope = cell.scope != null ? cell.scope : scope;
-    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps, bindings, innerScope));
+    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps, bindings, scopePaths, innerScope));
     if (nested.some((r, i) => r !== cell.rows![i])) {
       out = out ?? { ...cell };
       out.rows = nested;
@@ -133,34 +149,40 @@ function hydrateRow(
   values: Values,
   dynProps: DynProps,
   bindings: Bindings,
+  scopePaths: ScopePaths,
   scope: string,
 ): UIRow {
-  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps, bindings, scope));
+  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps, bindings, scopePaths, scope));
   if (cells.some((c, i) => c !== row.cells[i])) return { ...row, cells };
   return row;
 }
 
 /**
  * Produce a hydrated tree from a cached template.
- * @param template   sid-free UI tree (cacheable across tabs/sessions).
- * @param values     field values keyed by structural path (scope.name).
- * @param dynProps   evaluated dynamic expression slots (iN).
- * @param bindings   per-tab scope → viewstate-id map for wire-form name
- *                   composition. Empty map leaves names bare (cache miss).
+ * @param template    sid-free UI tree (cacheable across tabs/sessions).
+ * @param values      field values keyed by structural path (scope.name).
+ * @param dynProps    evaluated dynamic expression slots (iN).
+ * @param bindings    per-tab scope → viewstate-id map for wire-form name
+ *                    composition. Empty map leaves names bare (cache miss).
+ * @param scopePaths  per-tab scope → navpath map. Injects navpath into
+ *                    navigateView/navigateAdd descriptors at render time.
  */
 export function hydrate(
   template: UITree,
   values: Values | undefined,
   dynProps: DynProps | undefined,
   bindings: Bindings | undefined,
+  scopePaths: ScopePaths | undefined,
 ): UITree {
   const v = values ?? {};
   const d = dynProps ?? {};
   const b = bindings ?? {};
-  if (Object.keys(v).length === 0 && Object.keys(d).length === 0 && Object.keys(b).length === 0) {
+  const sp = scopePaths ?? {};
+  if (Object.keys(v).length === 0 && Object.keys(d).length === 0
+      && Object.keys(b).length === 0 && Object.keys(sp).length === 0) {
     return template;
   }
-  const rows = template.rows.map((r) => hydrateRow(r, v, d, b, ''));
+  const rows = template.rows.map((r) => hydrateRow(r, v, d, b, sp, ''));
   if (rows.some((r, i) => r !== template.rows[i])) {
     return { ...template, rows };
   }

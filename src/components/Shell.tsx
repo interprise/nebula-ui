@@ -64,6 +64,9 @@ interface TabState {
   // Populated from the METADATA response and used by hydrate() to
   // compose wire-form control names for form posts.
   bindings?: Record<string, string>;
+  // Per-tab scope-path manifest: structural scope path -> navpath.
+  // Used by hydrate() to populate navigateView/navigateAdd.navpath.
+  scopePaths?: Record<string, string>;
 }
 
 interface ShellProps {
@@ -353,10 +356,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (resp.template && resp.templateKey) {
         putTemplate(resp.templateKey, resp.template);
         const bindings = resp.bindings ?? {};
-        const hydrated = hydrate(resp.template, resp.values, resp.dynProps, bindings);
+        const scopePaths = resp.scopePaths ?? {};
+        const hydrated = hydrate(resp.template, resp.values, resp.dynProps, bindings, scopePaths);
         update.ui = hydrated;
         update.templateKey = resp.templateKey;
         update.bindings = bindings;
+        update.scopePaths = scopePaths;
         const newFormValues = extractFormValues(hydrated);
         formValuesRef.current[tabKey] = newFormValues;
         update.formValues = newFormValues;
@@ -369,8 +374,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         const tpl = getTemplate(resp.ui.templateKey);
         const existingTab = tabs.find(t => t.key === tabKey);
         const bindings = existingTab?.bindings ?? {};
+        const scopePaths = existingTab?.scopePaths ?? {};
         if (tpl) {
-          const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps, bindings);
+          const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps, bindings, scopePaths);
           update.ui = hydrated;
           update.templateKey = resp.ui.templateKey;
           const newFormValues = extractFormValues(hydrated);
