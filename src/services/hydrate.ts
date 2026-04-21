@@ -1,19 +1,24 @@
 import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
 
 /**
- * Two-phase rendering support: the server now emits a stable `template`
- * alongside per-render `values` (keyed by control name) and `dynProps`
- * (keyed by iN slot index). This helper walks the cached template and
- * produces a tree where:
- *   - every `"?iN"` placeholder is replaced with `dynProps[iN]`
- *   - every control's `value` is overlaid from `values[control.name]`
- * The resulting tree has the same shape as a legacy FULL-mode `ui` tree,
- * so the existing ViewRenderer / ControlRenderer consume it unchanged.
+ * Two-phase rendering: the server emits a sid-free template alongside a
+ * values map (keyed by structural path `scope.controlName`), a dynProps
+ * map (keyed by iN slots), and a per-tab `bindings` manifest that maps
+ * each structural scope to its viewstate id. This helper walks the
+ * cached template and returns a tree where every control has:
+ *   - placeholders like `"?iN"` replaced with `dynProps[iN]`
+ *   - `value` overlaid from `values[scope.controlName]`
+ *   - `name` composed to the wire form `controlName.viewstateId` using
+ *     the current scope's binding, so downstream form-post code keys
+ *     form data exactly as the server's PostItemVisitor expects.
+ * The output tree has the same shape as a legacy FULL-mode `ui` tree, so
+ * ViewRenderer / ControlRenderer consume it unchanged.
  */
 const PLACEHOLDER = /^\?i(\d+)$/;
 
 type DynProps = Record<string, unknown>;
 type Values = Record<string, unknown>;
+type Bindings = Record<string, string>;
 
 function resolvePlaceholder(v: unknown, dynProps: DynProps): unknown {
   if (typeof v !== 'string') return v;
@@ -23,9 +28,16 @@ function resolvePlaceholder(v: unknown, dynProps: DynProps): unknown {
   return key in dynProps ? dynProps[key] : v;
 }
 
-function hydrateControl(control: UIControl, values: Values, dynProps: DynProps): UIControl {
+function hydrateControl(
+  control: UIControl,
+  values: Values,
+  dynProps: DynProps,
+  bindings: Bindings,
+  scope: string,
+): UIControl {
   const src = control as unknown as Record<string, unknown>;
   let out: Record<string, unknown> | null = null;
+
   for (const k in src) {
     const orig = src[k];
     const resolved = resolvePlaceholder(orig, dynProps);
@@ -34,15 +46,34 @@ function hydrateControl(control: UIControl, values: Values, dynProps: DynProps):
       out[k] = resolved;
     }
   }
-  const name = (out ?? src).name as string | undefined;
-  if (name && name in values) {
-    if (out === null) out = { ...src };
-    out.value = values[name];
+
+  const bareName = (out ?? src).name as string | undefined;
+  if (bareName) {
+    // Value lookup uses the structural path (scope + bare name).
+    const valueKey = scope ? scope + '.' + bareName : bareName;
+    if (valueKey in values) {
+      if (out === null) out = { ...src };
+      out.value = values[valueKey];
+    }
+    // Compose wire-form name for form posts. Falls back to the bare name
+    // when no binding is known — preserves legacy behavior on cache miss.
+    const vsId = bindings[scope];
+    if (vsId) {
+      if (out === null) out = { ...src };
+      out.name = bareName + '.' + vsId;
+    }
   }
+
   return (out ?? src) as unknown as UIControl;
 }
 
-function hydrateCell(cell: UICell, values: Values, dynProps: DynProps): UICell {
+function hydrateCell(
+  cell: UICell,
+  values: Values,
+  dynProps: DynProps,
+  bindings: Bindings,
+  scope: string,
+): UICell {
   let out: UICell | null = null;
 
   const visibleRaw = cell.visible;
@@ -53,7 +84,7 @@ function hydrateCell(cell: UICell, values: Values, dynProps: DynProps): UICell {
   }
 
   if (cell.control) {
-    const hc = hydrateControl(cell.control, values, dynProps);
+    const hc = hydrateControl(cell.control, values, dynProps, bindings, scope);
     if (hc !== cell.control) {
       out = out ?? { ...cell };
       out.control = hc;
@@ -61,7 +92,12 @@ function hydrateCell(cell: UICell, values: Values, dynProps: DynProps): UICell {
   }
 
   if (cell.rows) {
-    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps));
+    // Embedded-view cells carry a `scope` marker; descending into cell.rows
+    // under that marker pushes the scope path so inner controls resolve
+    // values/bindings correctly. Plain CONTAINER cells without a scope
+    // marker inherit the current scope.
+    const innerScope = cell.scope != null ? cell.scope : scope;
+    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps, bindings, innerScope));
     if (nested.some((r, i) => r !== cell.rows![i])) {
       out = out ?? { ...cell };
       out.rows = nested;
@@ -71,29 +107,39 @@ function hydrateCell(cell: UICell, values: Values, dynProps: DynProps): UICell {
   return out ?? cell;
 }
 
-function hydrateRow(row: UIRow, values: Values, dynProps: DynProps): UIRow {
-  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps));
+function hydrateRow(
+  row: UIRow,
+  values: Values,
+  dynProps: DynProps,
+  bindings: Bindings,
+  scope: string,
+): UIRow {
+  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps, bindings, scope));
   if (cells.some((c, i) => c !== row.cells[i])) return { ...row, cells };
   return row;
 }
 
 /**
- * Produce a hydrated tree from a cached template, applying the given
- * per-render `values` and `dynProps`. Returns the template unchanged if
- * both maps are empty (no data to apply).
+ * Produce a hydrated tree from a cached template.
+ * @param template   sid-free UI tree (cacheable across tabs/sessions).
+ * @param values     field values keyed by structural path (scope.name).
+ * @param dynProps   evaluated dynamic expression slots (iN).
+ * @param bindings   per-tab scope → viewstate-id map for wire-form name
+ *                   composition. Empty map leaves names bare (cache miss).
  */
 export function hydrate(
   template: UITree,
   values: Values | undefined,
   dynProps: DynProps | undefined,
+  bindings: Bindings | undefined,
 ): UITree {
-  if ((!values || Object.keys(values).length === 0)
-      && (!dynProps || Object.keys(dynProps).length === 0)) {
-    return template;
-  }
   const v = values ?? {};
   const d = dynProps ?? {};
-  const rows = template.rows.map((r) => hydrateRow(r, v, d));
+  const b = bindings ?? {};
+  if (Object.keys(v).length === 0 && Object.keys(d).length === 0 && Object.keys(b).length === 0) {
+    return template;
+  }
+  const rows = template.rows.map((r) => hydrateRow(r, v, d, b, ''));
   if (rows.some((r, i) => r !== template.rows[i])) {
     return { ...template, rows };
   }

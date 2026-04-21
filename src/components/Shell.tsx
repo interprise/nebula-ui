@@ -60,6 +60,10 @@ interface TabState {
   // server on subsequent requests so it can serve DATA-only when the
   // resolved view matches.
   templateKey?: string;
+  // Per-tab binding manifest: structural scope path -> viewstate id.
+  // Populated from the METADATA response and used by hydrate() to
+  // compose wire-form control names for form posts.
+  bindings?: Record<string, string>;
 }
 
 interface ShellProps {
@@ -342,25 +346,31 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       }
       const update: Partial<TabState> = {};
       // Two-phase pipeline — METADATA+DATA: cache the stable template and
-      // render the initial hydrated tree. Subsequent posts on this tab echo
-      // the templateKey back so the server returns DATA-only.
+      // render the initial hydrated tree. The binding manifest is per-tab
+      // (not cached with the template) — it maps each structural scope to
+      // the viewstate id the server allocated for this tab, so form posts
+      // can compose wire-form keys.
       if (resp.template && resp.templateKey) {
         putTemplate(resp.templateKey, resp.template);
-        const hydrated = hydrate(resp.template, resp.values, resp.dynProps);
+        const bindings = resp.bindings ?? {};
+        const hydrated = hydrate(resp.template, resp.values, resp.dynProps, bindings);
         update.ui = hydrated;
         update.templateKey = resp.templateKey;
+        update.bindings = bindings;
         const newFormValues = extractFormValues(hydrated);
         formValuesRef.current[tabKey] = newFormValues;
         update.formValues = newFormValues;
       }
-      // Two-phase pipeline — DATA-only: look up the cached template for the
-      // announced templateKey and hydrate with the fresh values + dynProps.
-      // If the cache is cold (tab-state drift, first-render), we degrade to
-      // legacy and request a full render on the next action.
+      // Two-phase pipeline — DATA-only: reuse the cached template and the
+      // tab's existing bindings. Cache miss (tab drift, first render after
+      // a reload) falls through to a warning — the next action will force
+      // the server back to METADATA mode.
       else if (resp.ui?.dataOnly && resp.ui.templateKey) {
         const tpl = getTemplate(resp.ui.templateKey);
+        const existingTab = tabs.find(t => t.key === tabKey);
+        const bindings = existingTab?.bindings ?? {};
         if (tpl) {
-          const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps);
+          const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps, bindings);
           update.ui = hydrated;
           update.templateKey = resp.ui.templateKey;
           const newFormValues = extractFormValues(hydrated);

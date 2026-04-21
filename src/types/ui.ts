@@ -87,6 +87,11 @@ export interface UICell {
   // placeholder resolved from dynProps at render time. The ViewRenderer
   // omits a cell when this resolves to false.
   visible?: boolean | string;
+  // Scope marker emitted by embedded views. The hydrate walker pushes this
+  // structural scope path when descending into cell.rows so field value
+  // lookups use the scope-prefixed key and control.name is composed from
+  // the per-tab binding manifest.
+  scope?: string;
 }
 
 export interface UIRow {
@@ -294,6 +299,10 @@ export interface ServerResponse {
   templateKey?: string;
   values?: Record<string, unknown>;
   dynProps?: Record<string, unknown>;
+  // Binding manifest: structural scope path -> viewstate id, emitted
+  // alongside METADATA responses. Per-tab state used to compose wire-form
+  // control names for form posts.
+  bindings?: Record<string, string>;
   path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;
