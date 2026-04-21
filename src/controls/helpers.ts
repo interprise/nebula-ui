@@ -54,7 +54,11 @@ export function useControlChange(
     (val: unknown) => {
       onChange(fieldName, val);
       if (reload) {
-        onAction(command, { navpath, option1 });
+        // Field-triggered reloads don't need a fresh toolbar — state
+        // that actually affects toolbar buttons (Save dirty, etc.)
+        // updates on the next explicit action. Save bandwidth by asking
+        // the server to skip toolbar emission.
+        onAction(command, { navpath, option1, skipToolbar: '1' });
       }
     },
     [fieldName, reload, command, navpath, option1, onChange, onAction],
