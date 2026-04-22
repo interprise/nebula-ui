@@ -47,6 +47,9 @@ export const SidContext = React.createContext<string>('S1');
 // View path context — used by controls to send navpath with commands
 export const PathContext = React.createContext<string | undefined>(undefined);
 
+// View name context — used only for diagnostics (e.g. unknown-control-type warnings)
+export const ViewNameContext = React.createContext<string | undefined>(undefined);
+
 /** Check if a row contains a tab, embeddedView, or detailView control */
 function isBottomPanelRow(row: UIRow): boolean {
   return row.cells.some((cell) => {
@@ -89,9 +92,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // Tree views
   if (ui.viewType === 'tree' && ui.treeNodes) {
     return (
+      <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
         <TreeRenderer ui={ui} onAction={onAction} onChange={onChange} />
       </PathContext.Provider>
+      </ViewNameContext.Provider>
     );
   }
 
@@ -100,9 +105,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
     return (
+      <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
         <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} />
       </PathContext.Provider>
+      </ViewNameContext.Provider>
     );
   }
 
@@ -204,6 +211,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
     return (
+      <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container">
         {ui.title && <div className="view-title">{ui.title}</div>}
@@ -275,11 +283,13 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
         </div>
       </div>
       </PathContext.Provider>
+      </ViewNameContext.Provider>
     );
   }
 
   // No split: single scrollable view (query pages, simple detail pages, embedded views)
   return (
+    <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
       {ui.title && <div className="view-title">{ui.title}</div>}
@@ -304,6 +314,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       </div>
     </div>
     </PathContext.Provider>
+    </ViewNameContext.Provider>
   );
 };
 

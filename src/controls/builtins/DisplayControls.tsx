@@ -16,11 +16,17 @@ export const BarcodeControl: ControlComponent = ({ control, onAction, onChange }
   );
 };
 
-export const UrlControl: ControlComponent = ({ control }) => (
-  <a href={control.value as string} target="_blank" rel="noopener noreferrer">
-    {control.displayValue || (control.value as string)}
-  </a>
-);
+export const UrlControl: ControlComponent = ({ control }) => {
+  if (control.visible === false) return null;
+  const href = (control.href ?? control.value) as string | undefined;
+  const label = (control.prompt ?? control.displayValue ?? control.value) as string | undefined;
+  if (!href) return null;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {label}
+    </a>
+  );
+};
 
 export const HtmlControl: ControlComponent = ({ control }) => (
   <span dangerouslySetInnerHTML={{ __html: (control.value as string) || '' }} />

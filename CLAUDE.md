@@ -97,13 +97,19 @@ npm run build    # Output to ../entrasp/WebContent/app/
 Build produces code-split chunks: app (~23KB), antd vendor, AG Grid vendor.
 
 ## What's Left To Do
-- [ ] Handle entrasp custom UIControls (`entrasp/src/.../view/*UIControl.java`) — add getJsonType()/renderJSON()
+- [ ] Pick and integrate a rich-text editor for `htmlarea` (CKEditor / TipTap / react-quill) — currently a monospace textarea stub
+- [ ] Interactive weekly calendar grid for `consuntivazione` (currently a flat bookings list)
+- [ ] Deferred controls (not currently used in production views): Gantt, Maps (GMap/Google/LgtcMap), Tree, OlapCube
 - [ ] End-to-end testing with running server
 - [ ] Keyboard navigation and shortcut handling (toolbar keys/shift hints)
-- [ ] Remote combo filtering (ListFilter action integration)
-- [ ] File upload integration
-- [ ] Progress tracking for long operations (polling JSONProgress)
-- [ ] CKEditor integration for htmlarea controls
 - [ ] Responsive behavior when sidebar collapses
 - [ ] Agenda sidebar panel
 - [ ] Print/export functionality
+
+### Done in the Apr 2026 coverage pass
+- All CORE UIControl subclasses have a `renderJSON` override (or inherit a working one); the 5 "half-ported" and 6 text-like unported controls were completed
+- All entrasp custom controls (17 types) have server renderJSON + matching React renderer
+- Phase 0 instrumentation: client logs unknown control types to `window.__unknownControls`; CORE log4j logger `it.interprise.core.UIControl.jsonPort` warns when a subclass hits the default renderJSON
+- Registry audit: `src/controls/expectedTypes.ts` + `auditRegistry()` on startup surfaces drift
+- File download wired via blob streaming (`api.triggerDownload`); file upload wired via `api.uploadFile` + `Upload.beforeUpload`
+- JSONProgress polling and remote combo filtering were already in place and verified

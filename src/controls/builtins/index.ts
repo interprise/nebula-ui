@@ -1,4 +1,5 @@
-import { registerControls, registerCellRenderable } from '../registry';
+import { registerControls, registerCellRenderable, listControlTypes } from '../registry';
+import { EXPECTED_CONTROL_TYPES } from '../expectedTypes';
 import TextControl from './TextControl';
 import { NumberControl, MoneyControl } from './NumberControl';
 import { DateControl, TimeControl, TimestampControl, DurataControl } from './DateControl';
@@ -6,6 +7,7 @@ import BooleanControl from './BooleanControl';
 import ComboControl from './ComboControl';
 import MultiSelectBuiltin from './MultiSelectBuiltin';
 import TextAreaControl from './TextAreaControl';
+import HtmlAreaControl from './HtmlAreaControl';
 import ExpBuilderBuiltin from './ExpBuilderBuiltin';
 import PasswordControl from './PasswordControl';
 import {
@@ -29,6 +31,33 @@ import {
 } from './DisplayControls';
 import { ActionBarControl, ButtonBarControl } from './BarControls';
 import WorkflowStatusControl from './WorkflowStatusControl';
+import {
+  AttachmentsControl,
+  BpmStatusControl,
+  ImageFormatControl,
+  NavigateViewButtonControl,
+  PathControl,
+  PopupUrlControl,
+  UploadButtonControl,
+} from './MiscControls';
+import {
+  AllegatiControl,
+  ArrayControl,
+  ContattiControl,
+  RuoliControl,
+  VariantiControl,
+  ReportBarControl,
+  GestorePrivilegiControl,
+  PromptBuilderControl,
+  CdmsClassControl,
+  LgtcCalendarioControl,
+  SottocontiControl,
+  AssegnazioniControl,
+  DisponibilitaControl,
+  ConsuntivazioneControl,
+  PartitarioControl,
+  RichOffAttControl,
+} from './EntraspControls';
 
 /** Register all CORE (framework) control types. Call once at app startup. */
 export function registerBuiltinControls(): void {
@@ -46,7 +75,7 @@ export function registerBuiltinControls(): void {
     combo: ComboControl,
     multiselect: MultiSelectBuiltin,
     textarea: TextAreaControl,
-    htmlarea: TextAreaControl,
+    htmlarea: HtmlAreaControl,
     expbuilder: ExpBuilderBuiltin,
     button: ButtonControl,
     action: ActionControl,
@@ -66,6 +95,57 @@ export function registerBuiltinControls(): void {
     actionBar: ActionBarControl,
     buttonBar: ButtonBarControl,
     workflowStatus: WorkflowStatusControl,
+    // Phase 1b new types
+    attachments: AttachmentsControl,
+    bpmStatus: BpmStatusControl,
+    imageFormat: ImageFormatControl,
+    navigateViewButton: NavigateViewButtonControl,
+    path: PathControl,
+    popupUrl: PopupUrlControl,
+    uploadButton: UploadButtonControl,
+    // Phase 1b inheritors: reuse existing text/boolean renderers
+    alternateKey: TextControl,
+    colorPalette: TextControl,
+    toggleVisibilityFilter: BooleanControl,
+    visibilityFilter: BooleanControl,
+    // entrasp custom controls (tier 1: tabular)
+    allegati: AllegatiControl,
+    array: ArrayControl,
+    contatti: ContattiControl,
+    ruoli: RuoliControl,
+    varianti: VariantiControl,
+    // entrasp tier 1 (ported)
+    assegnazioni: AssegnazioniControl,
+    consuntivazione: ConsuntivazioneControl,
+    disponibilita: DisponibilitaControl,
+    partitario: PartitarioControl,
+    richOffAtt: RichOffAttControl,
+    sottoconti: SottocontiControl,
+    // entrasp tier 2 (specialized)
+    reportBar: ReportBarControl,
+    gestorePrivilegi: GestorePrivilegiControl,
+    // entrasp tier 2 (specialized, full render)
+    cdmsClass: CdmsClassControl,
+    lgtcCalendario: LgtcCalendarioControl,
+    // entrasp prompt-builder (extends TextUIControl, specialized render)
+    promptBuilder: PromptBuilderControl,
   });
   registerCellRenderable('workflowStatus');
+  auditRegistry();
+}
+
+/** Compare registered control types against the canonical expected list.
+ *  Logs to console when drift is detected so missing renderers or orphaned
+ *  registrations are surfaced at app startup rather than on first hit. */
+function auditRegistry(): void {
+  const registered = new Set(listControlTypes());
+  const expected = new Set<string>(EXPECTED_CONTROL_TYPES);
+  const missing = [...expected].filter((t) => !registered.has(t));
+  const extra = [...registered].filter((t) => !expected.has(t));
+  if (missing.length > 0) {
+    console.error('[controls] EXPECTED types with no renderer:', missing);
+  }
+  if (extra.length > 0) {
+    console.warn('[controls] Registered types not in expected list (add to expectedTypes.ts):', extra);
+  }
 }

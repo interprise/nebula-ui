@@ -89,16 +89,53 @@ export async function postAction2(
   return post(CMD2_URL, { action, ...params });
 }
 
+/** POST to the controller and stream the response body as a file download.
+ *  Used by Download/Attachments/Report commands that return binary payloads
+ *  rather than JSON. Extracts the filename from Content-Disposition when set,
+ *  otherwise falls back to `fallbackName`. */
+export async function triggerDownload(
+  action: string,
+  params: Record<string, string> = {},
+  sid: string = 'S1',
+  fallbackName: string = 'download'
+): Promise<void> {
+  const body = buildFormData({ action, sid, ...params });
+  const resp = await fetch(CMD_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+    credentials: 'same-origin',
+  });
+  if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
+  const blob = await resp.blob();
+  let filename = fallbackName;
+  const cd = resp.headers.get('content-disposition');
+  if (cd) {
+    const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
+    if (m) filename = decodeURIComponent(m[1].replace(/"/g, ''));
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function uploadFile(
-  fileInput: HTMLInputElement,
-  sid: string = 'S1'
+  file: File,
+  sid: string = 'S1',
+  extraParams: Record<string, string> = {}
 ): Promise<ServerResponse> {
   const formData = new FormData();
   formData.append('action', 'FileUpload');
   formData.append('sid', sid);
-  if (fileInput.files?.[0]) {
-    formData.append('file', fileInput.files[0]);
+  for (const [k, v] of Object.entries(extraParams)) {
+    formData.append(k, v);
   }
+  formData.append('file', file);
   const resp = await fetch(CMD_URL, {
     method: 'POST',
     body: formData,
