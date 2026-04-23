@@ -40,24 +40,12 @@ import {
   PopupUrlControl,
   UploadButtonControl,
 } from './MiscControls';
-import {
-  AllegatiControl,
-  ArrayControl,
-  ContattiControl,
-  RuoliControl,
-  VariantiControl,
-  ReportBarControl,
-  GestorePrivilegiControl,
-  PromptBuilderControl,
-  CdmsClassControl,
-  LgtcCalendarioControl,
-  SottocontiControl,
-  AssegnazioniControl,
-  DisponibilitaControl,
-  ConsuntivazioneControl,
-  PartitarioControl,
-  RichOffAttControl,
-} from './EntraspControls';
+// NOTE: entrasp custom controls (allegati, array, assegnazioni, cdmsClass,
+// consuntivazione, contatti, disponibilita, gestorePrivilegi, lgtcCalendario,
+// partitario, promptBuilder, reportBar, richOffAtt, ruoli, sottoconti,
+// varianti) live in the entrasp-controls plugin (entrasp/react-plugins/
+// entrasp-controls) which loads after this registry and would override any
+// entries here. Register them there, not here.
 
 /** Register all CORE (framework) control types. Call once at app startup. */
 export function registerBuiltinControls(): void {
@@ -108,27 +96,7 @@ export function registerBuiltinControls(): void {
     colorPalette: TextControl,
     toggleVisibilityFilter: BooleanControl,
     visibilityFilter: BooleanControl,
-    // entrasp custom controls (tier 1: tabular)
-    allegati: AllegatiControl,
-    array: ArrayControl,
-    contatti: ContattiControl,
-    ruoli: RuoliControl,
-    varianti: VariantiControl,
-    // entrasp tier 1 (ported)
-    assegnazioni: AssegnazioniControl,
-    consuntivazione: ConsuntivazioneControl,
-    disponibilita: DisponibilitaControl,
-    partitario: PartitarioControl,
-    richOffAtt: RichOffAttControl,
-    sottoconti: SottocontiControl,
-    // entrasp tier 2 (specialized)
-    reportBar: ReportBarControl,
-    gestorePrivilegi: GestorePrivilegiControl,
-    // entrasp tier 2 (specialized, full render)
-    cdmsClass: CdmsClassControl,
-    lgtcCalendario: LgtcCalendarioControl,
-    // entrasp prompt-builder (extends TextUIControl, specialized render)
-    promptBuilder: PromptBuilderControl,
+    // entrasp-specific types register from the plugin (see note above).
   });
   registerCellRenderable('workflowStatus');
   auditRegistry();

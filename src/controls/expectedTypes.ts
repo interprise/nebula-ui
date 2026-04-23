@@ -1,11 +1,12 @@
-/** Canonical list of control `type` strings the server is expected to emit.
- *  Sourced from:
- *    - CORE UIControl subclasses with getJsonType() (it.interprise.core.*UIControl)
- *    - entrasp custom UIControls (it.interprise.entrasp.view.*UIControl)
+/** Canonical list of CORE `type` strings that must be registered by the
+ *  builtins bundle. App-specific types (e.g. entrasp/* custom controls) are
+ *  owned by their own plugin bundles and audited there — the plugin loader
+ *  runs after builtins and may override any builtin registration.
  *
- *  If you add a new UIControl on the server with a new getJsonType(), add it
- *  here and register a renderer in `builtins/index.ts`. The runtime check in
- *  `registerBuiltinControls()` asserts every expected type has a renderer.
+ *  If you add a new CORE UIControl on the server with a new getJsonType(),
+ *  add it here and register a renderer in `builtins/index.ts`. The runtime
+ *  check in `registerBuiltinControls()` asserts every expected type has a
+ *  renderer.
  *
  *  Composite types (tab, embeddedView, detailView) are intentionally omitted —
  *  they're handled at the row level by ViewRenderer, not the leaf registry. */
@@ -55,23 +56,6 @@ export const EXPECTED_CONTROL_TYPES = [
   'warning',
   'windowButton',
   'workflowStatus',
-  // entrasp custom controls (ported or placeholder)
-  'allegati',
-  'array',
-  'assegnazioni',
-  'cdmsClass',
-  'consuntivazione',
-  'contatti',
-  'disponibilita',
-  'gestorePrivilegi',
-  'lgtcCalendario',
-  'partitario',
-  'promptBuilder',
-  'reportBar',
-  'richOffAtt',
-  'ruoli',
-  'sottoconti',
-  'varianti',
 ] as const;
 
 export type ExpectedControlType = typeof EXPECTED_CONTROL_TYPES[number];
