@@ -6,6 +6,64 @@ html, body {
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Legacy ERP classes — several custom controls (assegnazioni, richOffAtt,
+ * highlight, partitario headers, …) still ship server-generated HTML
+ * using these class names. Keep the core styling rules so the HTML renders
+ * with the palette users expect. Sourced from WebContent/images/GRIGIO/style.css. */
+.listPrompt {
+  background-color: #AFC1D2;
+  color: black;
+  font-weight: bold;
+  padding: 2px 4px;
+  border: 1px solid whitesmoke;
+}
+.listPromptEvidenziato {
+  background-color: #AFC1D2;
+  color: #a40000;
+  font-weight: bold;
+  padding: 2px 4px;
+  border: 1px solid whitesmoke;
+}
+.contentEvidenziato {
+  background-color: #658DB6;
+  color: white;
+  font-weight: bold;
+  padding: 2px 4px;
+}
+.content,
+.content_l {
+  background-color: transparent;
+  color: black;
+  padding: 2px 4px;
+}
+.contentR {
+  background-color: transparent;
+  color: black;
+  padding: 2px 4px;
+  text-align: right;
+}
+.master_header {
+  background-color: #D9E1EA;
+  color: black;
+  font-weight: bold;
+  padding: 4px 8px;
+}
+.section_header,
+.section_header2 {
+  background-color: #D9E1EA;
+  color: black;
+  font-weight: bold;
+  padding: 4px 8px;
+}
+/* Clickable decorative spans generated server-side */
+.navigateView {
+  cursor: pointer;
+  color: #1677ff;
+}
+.navigateView:hover {
+  text-decoration: underline;
+}
+
 /* Layout table for detail/query views */
 .layout-table {
   border-collapse: collapse;
