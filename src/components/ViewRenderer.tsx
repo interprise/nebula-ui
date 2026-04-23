@@ -50,6 +50,118 @@ export const PathContext = React.createContext<string | undefined>(undefined);
 // View name context — used only for diagnostics (e.g. unknown-control-type warnings)
 export const ViewNameContext = React.createContext<string | undefined>(undefined);
 
+/** Input-like widgets that always render a visible UI (input/select/
+ *  checkbox/textarea) even when disabled or empty — if the server keeps
+ *  them editable the cell is kept alive; if read-only they need a value. */
+const INPUT_TYPES = new Set<string>([
+  'text', 'number', 'money', 'date', 'time', 'timestamp', 'durata',
+  'password', 'textarea', 'htmlarea', 'htmlFormat',
+  'combo', 'multiselect', 'checkbox', 'boolean',
+  'barcode', 'expbuilder',
+  'alternateKey', 'colorPalette',
+  'toggleVisibilityFilter', 'visibilityFilter',
+]);
+
+/** Button-like widgets that render their prompt/icon regardless of value. */
+const BUTTON_TYPES = new Set<string>([
+  'button', 'action', 'windowButton',
+  'navigateView', 'navigateViewButton',
+  'add', 'lookup', 'download', 'upload', 'uploadButton',
+]);
+
+/** Structural composites that always render their scaffolding. */
+const STRUCTURAL_TYPES = new Set<string>([
+  'actionBar', 'buttonBar', 'tab', 'embeddedView', 'detailView',
+  'warning', 'workflowStatus',
+]);
+
+/** Array/object fields whose non-empty presence means the control has
+ *  real content to show (custom entrasp + CORE list-ish controls). */
+const STRUCTURED_FIELDS = [
+  'items', 'files', 'segments', 'options', 'rows', 'contentRows', 'tabs',
+  'groups', 'scadenze', 'demands', 'resources', 'cells',
+  'contacts', 'variants', 'privileges', 'profiles',
+  'vehicles', 'days', 'activities', 'sections', 'assignments',
+  'columns', 'listRows', 'forGroup',
+] as const;
+
+function hasScalarContent(ctl: UIControl): boolean {
+  const v = ctl.value;
+  if (v !== undefined && v !== null && v !== '') return true;
+  if (ctl.displayValue) return true;
+  const bag = ctl as unknown as Record<string, unknown>;
+  if (bag.href || bag.src) return true;
+  return false;
+}
+
+function hasStructuredContent(ctl: UIControl): boolean {
+  const bag = ctl as unknown as Record<string, unknown>;
+  for (const k of STRUCTURED_FIELDS) {
+    const x = bag[k];
+    if (Array.isArray(x) ? x.length > 0 : !!x) return true;
+  }
+  return false;
+}
+
+/** Will this control actually produce visible output, or is it an empty
+ *  shell (span with no text, etc.)? Different control families have
+ *  different rules. */
+function controlProducesOutput(ctl: UIControl): boolean {
+  if (ctl.visible === false) return false;
+  const type = ctl.type ?? '';
+  if (INPUT_TYPES.has(type)) {
+    // Editable inputs always render a widget; read-only ones only when
+    // they carry a value (an empty disabled span is a wasted row).
+    return ctl.editable !== false || hasScalarContent(ctl);
+  }
+  if (BUTTON_TYPES.has(type)) {
+    // A button is visible output only if it carries a prompt or an icon.
+    // `action`/`command` alone make the click target wired but invisible
+    // (e.g. antd Button with no children renders an empty capsule) —
+    // those rows must still collapse.
+    return !!(ctl.prompt || ctl.icon);
+  }
+  if (STRUCTURAL_TYPES.has(type)) {
+    return true;
+  }
+  // Display-only (url/html/highlight/hint/path/attachments/imageFormat/
+  // popupUrl/...) or app-specific custom: need real content to be worth
+  // a row.
+  return hasScalarContent(ctl) || !!ctl.prompt || hasStructuredContent(ctl);
+}
+
+/** Is there anything in this row worth rendering? The server now emits the
+ *  full template on every response (two-phase pipeline) and marks
+ *  conditionally-hidden fields with `visible: false` on the cell and/or
+ *  `visible: false` on the control. If every content-bearing cell resolves
+ *  to hidden OR to empty content (non-editable fields with no value), the
+ *  `<tr>` is suppressed so there's no blank gap in the layout — matching
+ *  the legacy HTML behavior where invisible/empty cells weren't emitted.
+ *
+ *  PROMPT cells alone don't justify keeping a row alive — they're labels
+ *  for CONTENT cells, so if all CONTENT is hidden the prompts go too. */
+function isRowVisible(row: UIRow): boolean {
+  return row.cells.some((cell) => {
+    if (cell.visible === false) return false;
+    switch (cell.elementType) {
+      case ELTYPE_PROMPT:
+        return false;
+      case ELTYPE_CONTENT:
+      case ELTYPE_SELECTOR:
+      case ELTYPE_CONTAINER:
+      case ELTYPE_FILLER: {
+        const ctl = cell.control;
+        if (!ctl) return false;
+        return controlProducesOutput(ctl);
+      }
+      case ELTYPE_SECTION_HEADER:
+        return !!(cell.text || cell.prompt);
+      default:
+        return true;
+    }
+  });
+}
+
 /** Check if a row contains a tab, embeddedView, or detailView control */
 function isBottomPanelRow(row: UIRow): boolean {
   return row.cells.some((cell) => {
@@ -349,6 +461,7 @@ const RowRenderer: React.FC<{
   onGridChange?: (name: string, values: string[]) => void;
   asDiv?: boolean;
 }> = ({ row, pageType, formCols, onAction, onChange, onGridChange, asDiv }) => {
+  if (!isRowVisible(row)) return null;
   if (asDiv) {
     // Render outside table context (e.g. sticky action bar)
     return (

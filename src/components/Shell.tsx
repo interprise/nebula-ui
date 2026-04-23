@@ -359,7 +359,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         const bindings = resp.bindings ?? {};
         const scopePaths = resp.scopePaths ?? {};
         const hydrated = hydrate(resp.template, resp.values, resp.dynProps, bindings, scopePaths);
-        update.ui = hydrated;
+        // Breadcrumbs vary per navigation and are NOT cached in the template
+        // -- merge them in from the response root.
+        update.ui = resp.breadcrumbs !== undefined ? { ...hydrated, breadcrumbs: resp.breadcrumbs } : hydrated;
         update.templateKey = resp.templateKey;
         update.bindings = bindings;
         update.scopePaths = scopePaths;
@@ -378,7 +380,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         const scopePaths = existingTab?.scopePaths ?? {};
         if (tpl) {
           const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps, bindings, scopePaths);
-          update.ui = hydrated;
+          // DATA-only is a reload on the same view: carry the breadcrumbs
+          // forward from the existing tab state (the template doesn't cache
+          // them and the server doesn't re-emit them on reloads).
+          const carried = existingTab?.ui?.breadcrumbs;
+          update.ui = carried !== undefined ? { ...hydrated, breadcrumbs: carried } : hydrated;
           update.templateKey = resp.ui.templateKey;
           const newFormValues = extractFormValues(hydrated);
           formValuesRef.current[tabKey] = newFormValues;

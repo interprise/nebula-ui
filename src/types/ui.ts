@@ -306,6 +306,10 @@ export interface ServerResponse {
   // Parallel manifest: scope path -> navpath. Used to populate the
   // navpath field on nav/add icon descriptors during hydration.
   scopePaths?: Record<string, string>;
+  // Breadcrumbs vary per-navigation, so the server emits them on the
+  // response root (not inside the cached template) and the client
+  // merges them into the hydrated UI.
+  breadcrumbs?: string;
   path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;
