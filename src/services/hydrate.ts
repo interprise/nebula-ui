@@ -20,6 +20,11 @@ const PLACEHOLDER = /^\?i(\d+)$/;
 // merged (not overwritten as `value`) into the cached template stub.
 const STRUCTURED_VALUE_TYPES = new Set([
   'detailView', 'tab', 'warning', 'workflowStatus', 'actionBar', 'buttonBar',
+  // entrasp custom controls with fully-dynamic descriptors
+  'assegnazioni', 'partitario', 'disponibilita', 'richOffAtt',
+  'consuntivazione', 'cdmsClass', 'lgtcCalendario', 'sottoconti',
+  'reportBar', 'gestorePrivilegi', 'ruoli', 'contatti', 'varianti',
+  'array', 'allegati',
 ]);
 
 function isStructuredValueType(type: string | undefined): boolean {

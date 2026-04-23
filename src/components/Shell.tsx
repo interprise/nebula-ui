@@ -683,8 +683,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     (name: string, value: unknown) => {
       const tab = getActiveTabState();
       if (!tab) return;
-      const strValue = value == null ? '' : String(value);
-      tab.formValues[name] = strValue;
+      // Preserve arrays (multi-valued form fields like `assegnaInput`
+      // where the server reads parameterValues() — legacy behavior).
+      const stored = Array.isArray(value)
+        ? value.map((v) => (v == null ? '' : String(v)))
+        : value == null ? '' : String(value);
+      tab.formValues[name] = stored;
       formValuesRef.current[tab.key] = tab.formValues;
     },
     [getActiveTabState]
