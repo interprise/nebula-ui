@@ -396,6 +396,27 @@ html, body {
   padding: 2px 0;
 }
 
+/* Default buttons: differentiate from input fields by adding a light
+   gradient, stronger border, and a small pop on hover so they visually
+   read as pressable rather than as disabled text fields. */
+.ant-btn-default {
+  background: linear-gradient(#ffffff, #eef1f6);
+  border-color: #b9c1cb;
+  color: #30363d;
+  font-weight: 500;
+  box-shadow: 0 1px 0 rgba(27, 31, 36, 0.04);
+}
+.ant-btn-default:not(:disabled):hover {
+  background: linear-gradient(#f6f8fa, #e4e7ed) !important;
+  border-color: #8b95a1 !important;
+  color: #1f2428 !important;
+}
+.ant-btn-default:not(:disabled):active {
+  background: #e4e7ed !important;
+  border-color: #6e7681 !important;
+  box-shadow: inset 0 1px 2px rgba(27, 31, 36, 0.1);
+}
+
 /* Break row (section separator) */
 tr.breakRow td {
   padding-top: 6px;

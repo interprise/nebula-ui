@@ -301,7 +301,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // available and scroll internally. We derive the width from formCols
   // (form rows only) rather than ui.totalWidth (which the server computes
   // including grid contributions and is therefore inflated).
-  const formWidth = formCols ? formCols * 12 : (ui.totalWidth || 0);
+  //
+  // Each formCol is one server grid column (~charWidth * gridSize px on
+  // the legacy HTML layout — typically 24–30px). Using a multiplier in
+  // that range keeps form fields at the width their controls expect.
+  const formWidth = formCols ? formCols * 24 : (ui.totalWidth || 0);
   const tableWidth = formWidth;
   const tableStyle: React.CSSProperties = embedded
     ? { width: '100%' }
