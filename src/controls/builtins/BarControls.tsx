@@ -12,20 +12,31 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
   const prevState = control.prevWorkflowState as string | undefined;
   const actionPath = control.path as string;
   if (!actions?.length && !wfState) return null;
+  // Pill stays on the left, vertically centered, and never wraps. Buttons
+  // are in their own flex-wrap group so when they overflow they wrap
+  // aligned after the pill (not under it).
   return (
-    <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      {wfState && <WorkflowPill state={wfState} prevState={prevState} />}
-      {actions?.map((act) => (
-        <Button
-          key={act.index}
-          size="small"
-          type={act.highlight ? 'primary' : 'default'}
-          title={act.hint}
-          onClick={() => onAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
-        >
-          {act.prompt}
-        </Button>
-      ))}
+    <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {wfState && (
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          <WorkflowPill state={wfState} prevState={prevState} />
+        </div>
+      )}
+      {actions?.length ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+          {actions.map((act) => (
+            <Button
+              key={act.index}
+              size="small"
+              type={act.highlight ? 'primary' : 'default'}
+              title={act.hint}
+              onClick={() => onAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
+            >
+              {act.prompt}
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };
