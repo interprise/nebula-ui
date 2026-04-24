@@ -4,7 +4,7 @@ import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRender
 import { Button, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, ListHeader, ListAction, ListColumn } from '../types/ui';
-import { ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
+import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
 import { SidContext } from './ViewRenderer';
 import {
@@ -123,24 +123,88 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
   );
 };
 
-// Full-width renderer for continuation rows (2nd, 3rd, ... rows of a multi-row record)
+/** Build cumulative pixel offsets at each column-unit boundary from the
+ *  current AG Grid column layout. Lets continuation rows align with main
+ *  columns even when minWidths push actual widths away from pure flex
+ *  proportions. Returns offsets[u] = px from the left at unit boundary u.
+ */
+function computeUnitOffsets(api: GridApi): number[] {
+  const cols = api.getAllDisplayedColumns();
+  const offsets: number[] = [0];
+  let px = 0;
+  for (const col of cols) {
+    const flex = (col.getColDef().flex as number | undefined) || 1;
+    const width = col.getActualWidth();
+    const pxPerUnit = width / flex;
+    for (let u = 0; u < flex; u++) {
+      px += pxPerUnit;
+      offsets.push(px);
+    }
+  }
+  return offsets;
+}
+
+/** Size each cell in a colspan-driven list by consuming `unit offsets` left
+ *  to right. Returns the absolute pixel width for each cell. */
+function widthsFromOffsets(
+  offsets: number[],
+  cellSpans: number[],
+): number[] {
+  const result: number[] = [];
+  let pos = 0;
+  const maxUnit = offsets.length - 1;
+  for (const span of cellSpans) {
+    const start = offsets[Math.min(pos, maxUnit)];
+    const end = offsets[Math.min(pos + span, maxUnit)];
+    result.push(end - start);
+    pos += span;
+  }
+  return result;
+}
+
+// Full-width renderer for continuation rows (2nd, 3rd, ... rows of a multi-row record).
+// The outer div is clipped to the viewport width; the inner div holds the
+// full row width and translates horizontally via the --grid-scroll-x CSS
+// variable (set by the parent on AG Grid bodyScroll events) so continuation
+// content stays aligned with the scrolled main columns.
 const ContinuationRowRenderer = (params: ICellRendererParams) => {
   const cells = params.data?._continuationCells as Array<{ html?: string; text?: string; colspan?: number }> | undefined;
   if (!cells || cells.length === 0) return null;
-  const headers = params.data?._continuationHeaders as ListHeader[] | undefined;
+  const offsets = params.api ? computeUnitOffsets(params.api) : null;
+  const widths = offsets ? widthsFromOffsets(offsets, cells.map(c => c.colspan || 1)) : null;
+  const totalWidth = offsets?.[offsets.length - 1];
+
+  if (widths && totalWidth != null) {
+    return (
+      <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: '22px', fontSize: 12 }}>
+        <div style={{
+          display: 'flex',
+          width: totalWidth,
+          padding: '0 4px',
+          transform: 'translateX(calc(var(--grid-scroll-x, 0px) * -1))',
+        }}>
+          {cells.map((cell, i) => {
+            const w = widths[i];
+            const style: React.CSSProperties = { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis' };
+            if (cell.html) {
+              return <span key={i} style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
+            }
+            return <span key={i} style={style}>{cell.text}</span>;
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback before grid layout settles — pure flex distribution
   return (
-    <div style={{
-      display: 'flex',
-      padding: '0 4px',
-      lineHeight: '22px',
-      fontSize: 12,
-    }}>
+    <div style={{ display: 'flex', padding: '0 4px', lineHeight: '22px', fontSize: 12 }}>
       {cells.map((cell, i) => {
-        const flex = cell.colspan || headers?.[i]?.colspan || 1;
+        const style: React.CSSProperties = { flex: cell.colspan || 1, padding: '0 4px' };
         if (cell.html) {
-          return <span key={i} style={{ flex, padding: '0 4px' }} dangerouslySetInnerHTML={{ __html: cell.html }} />;
+          return <span key={i} style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
         }
-        return <span key={i} style={{ flex, padding: '0 4px' }}>{cell.text}</span>;
+        return <span key={i} style={style}>{cell.text}</span>;
       })}
     </div>
   );
@@ -247,6 +311,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         // Minimum width based on longest word in header (~7px per char + padding)
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
         const hdrMinWidth = longestWord.length * 7 + 12;
+        // Content-based min width from control.size: columns should at least
+        // show their declared content width, matching form behavior. Boolean
+        // (checkbox) columns are intrinsically narrow regardless of size.
+        // If the sum exceeds the viewport the grid scrolls horizontally —
+        // better than clipping the declared content.
+        const colCtrl = ui.columns?.[idx]?.control;
+        const colSize = colCtrl?.size;
+        const skipContentMin = colCtrl && isBooleanType(colCtrl.type as string);
+        const contentMinWidth = colSize && !skipContentMin ? Math.min(colSize * 7 + 20, 500) : 0;
+        const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth);
 
         // Editable column support
         const colMeta = editableColumns.get(idx);
@@ -311,7 +385,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
           flex: hdr.colspan || 1,
-          minWidth: hdrMinWidth,
+          minWidth: effectiveMinWidth,
+          maxWidth: effectiveMinWidth,
           ...(isBool ? { cellDataType: 'boolean' } : {}),
           cellRenderer: editCellRenderer || cellRenderer,
           cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx } : undefined,
@@ -385,17 +460,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       return { command: selector?.command, path: selector?.path };
     };
 
-    // Helper to extract cell values from a continuation row
+    // Helper to extract cell values from a continuation row. Cells without a
+    // control (server-emitted placeholders for invisible items, trailing
+    // fillers) are kept as empty entries so subsequent cells don't shift
+    // left out of their slots. The leading DUMMY (idx 0) represents the
+    // selector column width, which the main grid already omits, so we skip
+    // it to align continuation content with main column 0.
     const buildContinuationCells = (row: UIRow): Array<{ html?: string; text?: string; colspan?: number }> => {
       const cells: Array<{ html?: string; text?: string; colspan?: number }> = [];
-      row.cells.forEach((cell: UICell) => {
-        if (cell.elementType === ELTYPE_SELECTOR || cell.elementType === ELTYPE_DUMMY) return;
+      row.cells.forEach((cell: UICell, idx: number) => {
+        if (cell.elementType === ELTYPE_SELECTOR) return;
+        if (cell.elementType === ELTYPE_PROMPT) return;
+        if (idx === 0 && cell.elementType === ELTYPE_DUMMY) return;
+        const colspan = (cell as unknown as Record<string, unknown>).colspan as number | undefined;
         if (cell.control) {
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
           const hasHtml = cell.control.type === 'html' || /<[a-z][\s\S]*>/i.test(val);
-          const colspan = (cell as unknown as Record<string, unknown>).colspan as number | undefined;
           cells.push(hasHtml ? { html: val, colspan } : { text: val, colspan });
+        } else {
+          cells.push({ text: '', colspan });
         }
       });
       return cells;
@@ -837,7 +921,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     onAction('ToggleItem', { navpath: itemId });
   }, [onAction]);
 
-  // Inject continuation header rows into the AG Grid DOM after the ag-header
+  // Inject continuation header rows AFTER the ag-header. Each row is a
+  // clipped viewport whose inner track has width = total cols width and
+  // translates via --grid-scroll-x, mirroring the continuation cells.
   const injectContinuationHeaders = useCallback(() => {
     const container = gridContainerRef.current;
     const contHeaders = ui.continuationHeaders;
@@ -846,23 +932,114 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     const agHeader = container.querySelector('.ag-header');
     if (!agHeader) return;
 
-    // Remove any previously injected continuation headers
     container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
 
-    // Insert after ag-header
+    const api = gridApiRef.current;
+    const offsets = api ? computeUnitOffsets(api) : null;
+    const totalWidth = offsets?.[offsets.length - 1];
+
+    let insertAfter: Element = agHeader;
     contHeaders.forEach((rowHeaders) => {
-      const row = document.createElement('div');
-      row.className = 'continuation-header-row';
-      row.style.cssText = 'display:flex;font-size:12px;color:#888;background:#fafafa;border-bottom:1px solid #f0f0f0;padding:0 4px;';
-      rowHeaders.forEach((hdr) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'continuation-header-row';
+      wrapper.style.cssText = 'width:100%;overflow:hidden;background:#fafafa;border-bottom:1px solid #f0f0f0;';
+      const widths = offsets
+        ? widthsFromOffsets(offsets, rowHeaders.map(h => h.colspan || 1))
+        : null;
+
+      const track = document.createElement('div');
+      if (totalWidth != null) {
+        track.style.cssText = `display:flex;width:${totalWidth}px;font-size:12px;color:#888;padding:0 4px;transform:translateX(calc(var(--grid-scroll-x, 0px) * -1));`;
+      } else {
+        track.style.cssText = 'display:flex;font-size:12px;color:#888;padding:0 4px;';
+      }
+      rowHeaders.forEach((hdr, i) => {
         const cell = document.createElement('div');
-        cell.style.cssText = `flex:${hdr.colspan || 1};padding:3px 4px;`;
+        const w = widths?.[i];
+        if (w != null) {
+          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:3px 4px;overflow:hidden;text-overflow:ellipsis;`;
+        } else {
+          cell.style.cssText = `flex:${hdr.colspan || 1};padding:3px 4px;`;
+        }
         cell.textContent = hdr.text || '';
-        row.appendChild(cell);
+        track.appendChild(cell);
       });
-      agHeader.insertAdjacentElement('afterend', row);
+      wrapper.appendChild(track);
+      insertAfter.insertAdjacentElement('afterend', wrapper);
+      insertAfter = wrapper;
     });
   }, [ui.continuationHeaders]);
+
+  // Propagate horizontal body scroll to continuation rows/headers via a CSS
+  // variable. Uses a native scroll listener on the grid's horizontal-scroll
+  // viewport — more reliable across AG Grid versions than the bodyScroll
+  // API event.
+  useEffect(() => {
+    const container = gridContainerRef.current;
+    if (!container) return;
+
+    const findScroller = (): HTMLElement | null =>
+      container.querySelector<HTMLElement>('.ag-body-horizontal-scroll-viewport') ||
+      container.querySelector<HTMLElement>('.ag-center-cols-viewport') ||
+      container.querySelector<HTMLElement>('.ag-body-viewport');
+
+    let scroller = findScroller();
+    let cleanup: (() => void) | null = null;
+
+    const bind = (el: HTMLElement) => {
+      const onScroll = () => {
+        container.style.setProperty('--grid-scroll-x', `${el.scrollLeft}px`);
+      };
+      onScroll();
+      el.addEventListener('scroll', onScroll, { passive: true });
+      cleanup = () => el.removeEventListener('scroll', onScroll);
+    };
+
+    if (scroller) {
+      bind(scroller);
+    } else {
+      // Grid DOM not mounted yet — retry on next frame
+      const raf = requestAnimationFrame(() => {
+        scroller = findScroller();
+        if (scroller) bind(scroller);
+      });
+      return () => {
+        cancelAnimationFrame(raf);
+        cleanup?.();
+      };
+    }
+
+    return () => cleanup?.();
+  }, [rowData]);
+
+  // Keep continuation row widths in sync with the main grid on column resize
+  // or container resize. Re-renders the continuation cells (via redrawRows on
+  // full-width rows) and re-injects the continuation header rows.
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    const resync = () => {
+      const nodes: Parameters<GridApi['redrawRows']>[0] extends (infer P) | undefined
+        ? P extends { rowNodes?: infer R } ? R : never : never = [] as never;
+      api.forEachNode((n) => {
+        if ((n.data as Record<string, unknown> | undefined)?._isContinuationRow) {
+          (nodes as unknown[]).push(n);
+        }
+      });
+      if ((nodes as unknown[]).length > 0) {
+        api.redrawRows({ rowNodes: nodes });
+      }
+      injectContinuationHeaders();
+    };
+    api.addEventListener('columnResized', resync);
+    api.addEventListener('displayedColumnsChanged', resync);
+    api.addEventListener('gridSizeChanged', resync);
+    return () => {
+      api.removeEventListener('columnResized', resync);
+      api.removeEventListener('displayedColumnsChanged', resync);
+      api.removeEventListener('gridSizeChanged', resync);
+    };
+  }, [injectContinuationHeaders, rowData]);
 
   // After grid data changes, restore editing state if needed
   useEffect(() => {
