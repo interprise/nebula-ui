@@ -77,6 +77,14 @@ html, body {
   width: 100%;
 }
 
+/* All layout tables use fixed layout so cell widths come from the ruler
+   row (proportional) and the table always fits its parent. Grids live
+   inside cells and handle their own horizontal scroll — we never inflate
+   the outer table to accommodate them. */
+.layout-table {
+  table-layout: fixed;
+}
+
 .layout-table td {
   padding: 2px 4px;
   vertical-align: top;
@@ -240,18 +248,52 @@ html, body {
   overflow-x: hidden;
 }
 
+/* Embedded views are transparent containers: no scroll/background/padding,
+   so nested grids manage their own scroll and don't double-wrap. */
+.view-body-embedded {
+  overflow: visible;
+  background: transparent;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+}
+
 /* Split layout: scrollable form on top, fixed bottom panel (tabs/details) */
 .view-split-form {
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   max-width: 100%;
   flex: 0 1 auto;
   max-height: 50%;
   background: #f0f2f5;
   padding: 4px;
-  border-bottom: 2px solid #d9d9d9;
   scrollbar-width: thin;
   scrollbar-color: auto;
+}
+
+/* Keep the bottom panel (tabs, embedded grids) at the container width so
+   a wide form above doesn't force the whole view to expand — bottom-panel
+   children (tab-content, grids) manage their own internal scroll. */
+.view-split-bottom {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Drag handle between the form and the bottom panel */
+.view-split-resizer {
+  flex: 0 0 4px;
+  background: #d9d9d9;
+  cursor: row-resize;
+  position: relative;
+}
+.view-split-resizer:hover,
+.view-split-resizer:active {
+  background: #1890ff;
+}
+.view-split-resizer::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -3px; bottom: -3px;
 }
 
 /* Reveal horizontal scrollbar when mouse is near bottom edge */
@@ -420,6 +462,12 @@ tr.breakRow td {
 /* Multi-row record: continuation rows — remove top border */
 .ag-row.continuation-row {
   border-top-color: transparent !important;
+}
+
+/* Intermediate continuation rows (not the last of their group): also hide
+   bottom border so the stack of continuations reads as one visual block. */
+.ag-row.continuation-row-middle {
+  border-bottom-color: transparent !important;
 }
 
 /* Multi-row record: first row of group — remove bottom border */

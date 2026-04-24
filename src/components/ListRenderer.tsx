@@ -3,7 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, ListHeader, ListAction, ListColumn } from '../types/ui';
+import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
 import { SidContext } from './ViewRenderer';
@@ -91,7 +91,41 @@ const HtmlCellRenderer = (params: ICellRendererParams) => {
   return <span dangerouslySetInnerHTML={{ __html: val }} />;
 };
 
-// Cell renderer for custom controls (delegates to registered component)
+// Render a boolean column as server-decoded text (from BOOLEAN_CODE_TABLE)
+// instead of AG Grid's default checkbox. The checkbox belongs to the
+// cell editor (agCheckboxCellEditor) which only activates during editing;
+// the rest of the time we just want the decoded text.
+const BooleanTextRenderer = (params: ICellRendererParams) => {
+  const field = params.colDef?.field;
+  if (!field) return null;
+  const idx = field.replace('col_', '');
+  const display = params.data?.[`_display_${idx}`] as string | undefined;
+  if (display !== undefined && display !== '') return display;
+  const v = params.value;
+  if (typeof v === 'string') return v;
+  if (v === true) return 'Sì';
+  if (v === false) return 'No';
+  return '';
+};
+
+// For editable columns whose value is a key (remote combos, lookups...) but
+// the server also emits a decoded displayValue, show the displayValue when
+// not editing. The cell editor still sees the raw value via params.value.
+const DisplayValueRenderer = (params: ICellRendererParams) => {
+  const field = params.colDef?.field;
+  if (!field) return null;
+  const idx = field.replace('col_', '');
+  const display = params.data?.[`_display_${idx}`] as string | undefined;
+  if (display !== undefined && display !== '') return display;
+  const v = params.value;
+  return v == null ? '' : String(v);
+};
+
+// Cell renderer for custom controls (delegates to registered component).
+// Merges column-level meta with the per-row control (stashed at _ctrl_${idx})
+// so renderers like reportBar see their per-row reports list. onAction is
+// wired through AG Grid context with the row's navpath so row-scoped
+// commands (ExecuteBarReport, EmailBarReport, ...) target the correct row.
 const CustomCellRenderer = (params: ICellRendererParams) => {
   const field = params.colDef?.field;
   if (!field) return null;
@@ -101,9 +135,25 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
   const CustomComponent = isCellRenderable(controlType) ? getControl(controlType) : undefined;
   if (!CustomComponent) return null;
   const colMeta = params.data?.[`_meta_${idx}`] as Record<string, unknown> | undefined;
-  const control = { type: controlType, value: params.value, editable: false, ...colMeta };
-  const noop = () => {};
-  return <CustomComponent control={control} onAction={noop} onChange={noop} />;
+  const rowCtrl = params.data?.[`_ctrl_${idx}`] as Record<string, unknown> | undefined;
+  const control = {
+    ...(colMeta ?? {}),
+    ...(rowCtrl ?? {}),
+    type: controlType,
+    value: params.value,
+    editable: false,
+  } as UIControl;
+  const rowPath = params.data?._selectorPath as string | undefined;
+  const ctx = params.context as { onAction?: (action: string, params?: Record<string, string>) => void; onChange?: (name: string, value: unknown) => void } | undefined;
+  const onAction = (action: string, extra?: Record<string, string>) => {
+    if (!ctx?.onAction) return;
+    const merged = rowPath ? { navpath: rowPath, ...(extra ?? {}) } : (extra ?? {});
+    ctx.onAction(action, merged);
+  };
+  const onChange = (name: string, value: unknown) => {
+    ctx?.onChange?.(name, value);
+  };
+  return <CustomComponent control={control} onAction={onAction} onChange={onChange} />;
 };
 
 // Full-width renderer for break rows (group separators)
@@ -125,18 +175,21 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
 
 /** Build cumulative pixel offsets at each column-unit boundary from the
  *  current AG Grid column layout. Lets continuation rows align with main
- *  columns even when minWidths push actual widths away from pure flex
- *  proportions. Returns offsets[u] = px from the left at unit boundary u.
+ *  columns even when resizing pushes actual widths away from the size-
+ *  based defaults. Unit counts come from the server headers' colspan
+ *  (ColDef width is pixels, not units). Returns offsets[u] = px from the
+ *  left at unit boundary u.
  */
-function computeUnitOffsets(api: GridApi): number[] {
+function computeUnitOffsets(api: GridApi, headersByField: Map<string, number>): number[] {
   const cols = api.getAllDisplayedColumns();
   const offsets: number[] = [0];
   let px = 0;
   for (const col of cols) {
-    const flex = (col.getColDef().flex as number | undefined) || 1;
+    const field = col.getColDef().field;
+    const units = (field && headersByField.get(field)) || 1;
     const width = col.getActualWidth();
-    const pxPerUnit = width / flex;
-    for (let u = 0; u < flex; u++) {
+    const pxPerUnit = width / units;
+    for (let u = 0; u < units; u++) {
       px += pxPerUnit;
       offsets.push(px);
     }
@@ -145,22 +198,70 @@ function computeUnitOffsets(api: GridApi): number[] {
 }
 
 /** Size each cell in a colspan-driven list by consuming `unit offsets` left
- *  to right. Returns the absolute pixel width for each cell. */
+ *  to right. Returns the absolute pixel width for each cell. When a cell
+ *  extends past the computed offsets (continuation row has more units than
+ *  the main grid — e.g. because invisible main-row items collapsed), use
+ *  the average pixel-per-unit from the main offsets to extrapolate so
+ *  trailing cells get a sensible width rather than 0. */
 function widthsFromOffsets(
   offsets: number[],
   cellSpans: number[],
 ): number[] {
+  const maxUnit = offsets.length - 1;
+  const avgPxPerUnit = maxUnit > 0 ? offsets[maxUnit] / maxUnit : 0;
+  const offsetAt = (u: number): number => {
+    if (u <= maxUnit) return offsets[u];
+    return offsets[maxUnit] + (u - maxUnit) * avgPxPerUnit;
+  };
   const result: number[] = [];
   let pos = 0;
-  const maxUnit = offsets.length - 1;
   for (const span of cellSpans) {
-    const start = offsets[Math.min(pos, maxUnit)];
-    const end = offsets[Math.min(pos + span, maxUnit)];
-    result.push(end - start);
+    result.push(offsetAt(pos + span) - offsetAt(pos));
     pos += span;
   }
   return result;
 }
+
+// Render a single continuation cell. Custom (cell-renderable) controls
+// delegate to the registered React component — main cols are served by
+// AG Grid's cellRenderer pipeline, but continuation cells sit outside
+// that pipeline and need to dispatch themselves.
+const ContinuationCell = ({
+  cell,
+  style,
+  onAction,
+  onChange,
+  rowPath,
+}: {
+  cell: { html?: string; text?: string; colspan?: number; control?: UIControl };
+  style: React.CSSProperties;
+  onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
+  rowPath?: string;
+}) => {
+  if (cell.control && cell.control.type && isCellRenderable(cell.control.type)) {
+    const Component = getControl(cell.control.type);
+    if (Component) {
+      const dispatchAction = (action: string, extra?: Record<string, string>) => {
+        const merged = rowPath ? { navpath: rowPath, ...(extra ?? {}) } : (extra ?? {});
+        onAction(action, merged);
+      };
+      // Swallow clicks so they don't bubble up to the row-level navigation
+      // handler — row activation should only fire when clicking the text
+      // areas of the cell, not when interacting with embedded controls.
+      const stop = (e: React.MouseEvent | React.PointerEvent) => e.stopPropagation();
+      return (
+        <span style={style} onClick={stop} onMouseDown={stop} onPointerDown={stop}>
+          <Component control={cell.control} onAction={dispatchAction} onChange={onChange} />
+        </span>
+      );
+    }
+  }
+  if (cell.html) {
+    return <span style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
+  }
+  return <span style={style}>{cell.text}</span>;
+};
 
 // Full-width renderer for continuation rows (2nd, 3rd, ... rows of a multi-row record).
 // The outer div is clipped to the viewport width; the inner div holds the
@@ -168,11 +269,20 @@ function widthsFromOffsets(
 // variable (set by the parent on AG Grid bodyScroll events) so continuation
 // content stays aligned with the scrolled main columns.
 const ContinuationRowRenderer = (params: ICellRendererParams) => {
-  const cells = params.data?._continuationCells as Array<{ html?: string; text?: string; colspan?: number }> | undefined;
+  const cells = params.data?._continuationCells as Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> | undefined;
   if (!cells || cells.length === 0) return null;
-  const offsets = params.api ? computeUnitOffsets(params.api) : null;
+  const ctx = params.context as {
+    onAction?: (action: string, params?: Record<string, string>) => void;
+    onChange?: (name: string, value: unknown) => void;
+    headersByField?: Map<string, number>;
+  } | undefined;
+  const hbf = ctx?.headersByField ?? new Map<string, number>();
+  const offsets = params.api ? computeUnitOffsets(params.api, hbf) : null;
   const widths = offsets ? widthsFromOffsets(offsets, cells.map(c => c.colspan || 1)) : null;
   const totalWidth = offsets?.[offsets.length - 1];
+  const rowPath = params.data?._selectorPath as string | undefined;
+  const onAction = ctx?.onAction ?? (() => {});
+  const onChange = ctx?.onChange ?? (() => {});
 
   if (widths && totalWidth != null) {
     return (
@@ -186,10 +296,7 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
           {cells.map((cell, i) => {
             const w = widths[i];
             const style: React.CSSProperties = { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis' };
-            if (cell.html) {
-              return <span key={i} style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
-            }
-            return <span key={i} style={style}>{cell.text}</span>;
+            return <ContinuationCell key={i} cell={cell} style={style} onAction={onAction} onChange={onChange} rowPath={rowPath} />;
           })}
         </div>
       </div>
@@ -201,10 +308,7 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
     <div style={{ display: 'flex', padding: '0 4px', lineHeight: '22px', fontSize: 12 }}>
       {cells.map((cell, i) => {
         const style: React.CSSProperties = { flex: cell.colspan || 1, padding: '0 4px' };
-        if (cell.html) {
-          return <span key={i} style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
-        }
-        return <span key={i} style={style}>{cell.text}</span>;
+        return <ContinuationCell key={i} cell={cell} style={style} onAction={onAction} onChange={onChange} rowPath={rowPath} />;
       })}
     </div>
   );
@@ -222,6 +326,9 @@ interface ListRendererProps {
   onGridChange?: (name: string, values: string[]) => void;
   onEditRow?: (navpath: string | null) => void;
   embedded?: boolean;
+  /** Fill available vertical space with internal scroll instead of
+   *  AG Grid's autoHeight (used for grids inside tabs). */
+  fillHeight?: boolean;
 }
 
 const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
@@ -308,18 +415,33 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           autoHeight = true;
         }
         const isRightAlign = rightAlignColumns.has(idx);
-        // Minimum width based on longest word in header (~7px per char + padding)
+        // Minimum width based on longest word in header (~6.3px per char + padding)
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-        const hdrMinWidth = longestWord.length * 7 + 12;
+        const hdrMinWidth = Math.round(longestWord.length * 6.3) + 10;
         // Content-based min width from control.size: columns should at least
         // show their declared content width, matching form behavior. Boolean
         // (checkbox) columns are intrinsically narrow regardless of size.
-        // If the sum exceeds the viewport the grid scrolls horizontally —
-        // better than clipping the declared content.
+        // Custom (cell-renderable) controls don't fit the text-char model and
+        // get a more generous minimum so embedded components (reportBar etc.)
+        // aren't clipped. If the sum exceeds the viewport the grid scrolls
+        // horizontally — better than clipping the declared content.
         const colCtrl = ui.columns?.[idx]?.control;
+        const colCtrlType = colCtrl?.type as string | undefined;
         const colSize = colCtrl?.size;
-        const skipContentMin = colCtrl && isBooleanType(colCtrl.type as string);
-        const contentMinWidth = colSize && !skipContentMin ? Math.min(colSize * 7 + 20, 500) : 0;
+        const isCustom = colCtrlType && isCellRenderable(colCtrlType);
+        // Filler columns (trailing padding in the template with no control)
+        // must still carry pixel width so continuation-row cells that map to
+        // these units don't collapse to 0px. Use the header-based flex units
+        // with a per-unit pixel estimate.
+        const isFiller = !colCtrl;
+        let contentMinWidth = 0;
+        if (colSize) {
+          const perChar = isCustom ? 8 : 6.3;
+          contentMinWidth = Math.round(Math.min(colSize * perChar + 16, 500));
+        } else if (isFiller) {
+          const units = hdr.colspan || 1;
+          contentMinWidth = Math.round(units * 6.3);
+        }
         const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth);
 
         // Editable column support
@@ -373,8 +495,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
         }
 
-        // For boolean columns using AG Grid built-in: set cellDataType and value conversion
-        const isBool = colMeta && isBooleanType(colMeta.type as string);
+        // Boolean columns render as text (server-decoded via BOOLEAN_CODE_TABLE);
+        // editing still uses agCheckboxCellEditor for the active row. Editable
+        // columns with a distinct displayValue (remote combos, List controls
+        // emitting both key + description) use DisplayValueRenderer so the
+        // cell shows the description while the editor still sees the key.
+        const isBool = isBooleanType(colCtrlType);
+        const needsDisplayValue = !isBool && !!colMeta;
+        const resolvedCellRenderer = editCellRenderer || cellRenderer
+          || (isBool ? BooleanTextRenderer : undefined)
+          || (needsDisplayValue ? DisplayValueRenderer : undefined);
 
         cols.push({
           field: `col_${idx}`,
@@ -384,11 +514,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           cellClass: isRightAlign ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[] : hdr.cls,
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
-          flex: hdr.colspan || 1,
-          minWidth: effectiveMinWidth,
-          maxWidth: effectiveMinWidth,
-          ...(isBool ? { cellDataType: 'boolean' } : {}),
-          cellRenderer: editCellRenderer || cellRenderer,
+          // Use fixed width so columns start at their natural size-based
+          // dimension and remain resizable by the user. The colspan-as-
+          // flex-unit-count is recovered from ui.headers in computeUnitOffsets.
+          width: effectiveMinWidth,
+          minWidth: Math.min(40, effectiveMinWidth),
+          resizable: true,
+          cellRenderer: resolvedCellRenderer,
           cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx } : undefined,
           autoHeight,
           wrapText,
@@ -466,17 +598,25 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // left out of their slots. The leading DUMMY (idx 0) represents the
     // selector column width, which the main grid already omits, so we skip
     // it to align continuation content with main column 0.
-    const buildContinuationCells = (row: UIRow): Array<{ html?: string; text?: string; colspan?: number }> => {
-      const cells: Array<{ html?: string; text?: string; colspan?: number }> = [];
+    // Cells carrying a custom (cell-renderable) control — reportBar and the
+    // like — preserve the full control so the continuation renderer can
+    // delegate to the registered React component.
+    const buildContinuationCells = (row: UIRow): Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> => {
+      const cells: Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> = [];
       row.cells.forEach((cell: UICell, idx: number) => {
         if (cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.elementType === ELTYPE_PROMPT) return;
         if (idx === 0 && cell.elementType === ELTYPE_DUMMY) return;
         const colspan = (cell as unknown as Record<string, unknown>).colspan as number | undefined;
         if (cell.control) {
+          const ctrlType = cell.control.type;
+          if (ctrlType && isCellRenderable(ctrlType)) {
+            cells.push({ colspan, control: cell.control });
+            return;
+          }
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
-          const hasHtml = cell.control.type === 'html' || /<[a-z][\s\S]*>/i.test(val);
+          const hasHtml = ctrlType === 'html' || /<[a-z][\s\S]*>/i.test(val);
           cells.push(hasHtml ? { html: val, colspan } : { text: val, colspan });
         } else {
           cells.push({ text: '', colspan });
@@ -555,20 +695,41 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (selectorIndices.has(idx) || cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.control) {
           if (customColumns.has(idx)) {
-            // Custom controls: store raw value + type + column meta for the cell renderer
+            // Custom controls: store raw value + type + column meta for the
+            // cell renderer. Also stash the full per-row control so renderers
+            // can read row-specific fields (e.g. reportBar's reports list).
             rowObj[`col_${idx}`] = cell.control.value;
             rowObj[`_type_${idx}`] = customColumns.get(idx);
+            rowObj[`_ctrl_${idx}`] = cell.control;
             const meta = customColumnMeta.get(idx);
             if (meta) rowObj[`_meta_${idx}`] = meta;
           } else if (editableColumns.has(idx)) {
             // Editable columns: use raw value for cell editors, not displayValue
             const colType = editableColumns.get(idx)?.type as string | undefined;
             if (isBooleanType(colType)) {
-              // AG Grid's boolean cellDataType needs actual booleans
+              // Editor (agCheckboxCellEditor) needs the actual boolean; the
+              // renderer falls back on _display_${idx} (server-decoded text
+              // from BOOLEAN_CODE_TABLE) for read-only display.
               const v = cell.control.value;
               rowObj[`col_${idx}`] = v === true || v === 'true' || v === '1' || v === 'Y' || v === 'S';
+              if (cell.control.displayValue !== undefined) {
+                rowObj[`_display_${idx}`] = cell.control.displayValue;
+              }
             } else {
               rowObj[`col_${idx}`] = cell.control.value ?? '';
+              // Server-decoded text for remote combos / lookups so the cell
+              // shows the description (e.g. customer name) when not editing
+              // while the editor still sees the raw key via col_${idx}.
+              if (cell.control.displayValue !== undefined) {
+                rowObj[`_display_${idx}`] = cell.control.displayValue;
+              }
+            }
+          } else if (isBooleanType(cell.control.type as string | undefined)
+              || isBooleanType(ui.columns?.[idx]?.control?.type as string | undefined)) {
+            // Non-editable boolean: show decoded text from BOOLEAN_CODE_TABLE
+            rowObj[`col_${idx}`] = cell.control.value;
+            if (cell.control.displayValue !== undefined) {
+              rowObj[`_display_${idx}`] = cell.control.displayValue;
             }
           } else {
             rowObj[`col_${idx}`] = cell.control.displayValue ?? cell.control.value ?? '';
@@ -606,6 +767,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
       }
       rows.push(rowObj);
+    }
+
+    // Mark the last continuation row of each record group — only that one
+    // keeps a bottom border, intermediate continuations merge visually
+    // with their group.
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r._isContinuationRow) continue;
+      const next = rows[i + 1];
+      const isLast = !next
+        || !next._isContinuationRow
+        || next._recordGroup !== r._recordGroup;
+      if (isLast) r._isLastContinuationRow = true;
     }
 
     return { columnDefs: cols, rowData: rows };
@@ -792,6 +966,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   }, [isListEdit, selectorInfo, editableColumns, selectorBasePath, onChange, onEditRow, onAction, applyClassByPath]);
 
   const handleRowClicked = (event: RowClickedEvent) => {
+    const src = event.event as MouseEvent | undefined;
+    const target = src?.target as HTMLElement | undefined;
+    if (target?.closest('button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+      return;
+    }
     activateRow(event.data as Record<string, unknown> | undefined);
   };
 
@@ -822,11 +1001,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
   }, [isListEdit, activateRow]);
 
-  // Handle clicks on full-width rows (continuation rows) which may not trigger onRowClicked
+  // Handle clicks on full-width rows (continuation rows) which may not trigger onRowClicked.
+  // Skip interactive targets (buttons, selects, inputs, ant-dropdown items)
+  // so clicks inside embedded controls like reportBar don't also trigger
+  // row navigation.
   const handleGridClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+      return;
+    }
     const api = gridApiRef.current;
     if (!api) return;
-    const rowEl = (e.target as HTMLElement).closest('.ag-row') as HTMLElement | null;
+    const rowEl = target.closest('.ag-row') as HTMLElement | null;
     if (!rowEl) return;
     const rowId = rowEl.getAttribute('row-id');
     if (!rowId) return;
@@ -852,7 +1038,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   };
 
   const getRowClass = (params: { data?: Record<string, unknown> }) => {
-    if (params.data?._isContinuationRow) return 'continuation-row';
+    if (params.data?._isContinuationRow) {
+      return params.data._isLastContinuationRow
+        ? 'continuation-row continuation-row-last'
+        : 'continuation-row continuation-row-middle';
+    }
     if (params.data?._hasContination) return 'record-first-row';
     return undefined;
   };
@@ -921,6 +1111,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     onAction('ToggleItem', { navpath: itemId });
   }, [onAction]);
 
+  // Map column field → unit count (colspan) derived from server headers.
+  // Needed because ColDef now uses fixed pixel widths (for resizing) and
+  // the flex-unit-count is no longer readable from AG Grid.
+  const headersByField = useMemo(() => {
+    const map = new Map<string, number>();
+    ui.headers?.forEach((hdr, idx) => {
+      if (hdr.type === 'selector') return;
+      map.set(`col_${idx}`, hdr.colspan || 1);
+    });
+    return map;
+  }, [ui.headers]);
+
   // Inject continuation header rows AFTER the ag-header. Each row is a
   // clipped viewport whose inner track has width = total cols width and
   // translates via --grid-scroll-x, mirroring the continuation cells.
@@ -935,7 +1137,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
 
     const api = gridApiRef.current;
-    const offsets = api ? computeUnitOffsets(api) : null;
+    const offsets = api ? computeUnitOffsets(api, headersByField) : null;
     const totalWidth = offsets?.[offsets.length - 1];
 
     let insertAfter: Element = agHeader;
@@ -968,7 +1170,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders]);
+  }, [ui.continuationHeaders, headersByField]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll
@@ -1034,10 +1236,29 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     api.addEventListener('columnResized', resync);
     api.addEventListener('displayedColumnsChanged', resync);
     api.addEventListener('gridSizeChanged', resync);
+    api.addEventListener('firstDataRendered', resync);
+    // Embedded grids (e.g. inside tabs) often finish DOM layout after
+    // onGridReady fires — the initial inject finds an empty .ag-header and
+    // leaves the continuation rows unattached. Retry on the next frame so
+    // the headers show up on the first paint of the grid.
+    const raf = requestAnimationFrame(() => injectContinuationHeaders());
+    // For grids that mount hidden (inside a tab panel) the container has
+    // width 0 and AG Grid's flex columns all resolve to 0 — our initial
+    // injection produces 0-width continuation cells. A ResizeObserver on
+    // the container re-injects when the tab becomes visible.
+    const container = gridContainerRef.current;
+    let ro: ResizeObserver | null = null;
+    if (container && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => injectContinuationHeaders());
+      ro.observe(container);
+    }
     return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
       api.removeEventListener('columnResized', resync);
       api.removeEventListener('displayedColumnsChanged', resync);
       api.removeEventListener('gridSizeChanged', resync);
+      api.removeEventListener('firstDataRendered', resync);
     };
   }, [injectContinuationHeaders, rowData]);
 
@@ -1055,8 +1276,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const totalColspan = ui.headers?.reduce((sum, h) => sum + (h.type === 'selector' ? 0 : (h.colspan || 1)), 0) || 0;
   const minListWidth = totalColspan > 0 ? totalColspan * 10 : undefined;
 
+  const listContainerStyle: React.CSSProperties = {};
+  if (minListWidth) listContainerStyle.minWidth = minListWidth;
+  // Embedded grids size to content (capped); outer container shouldn't flex
+  // to fill the parent — shrink to the grid's height so no empty space
+  // below the last row.
+  if (embedded) {
+    listContainerStyle.flex = 'initial';
+  }
+
   return (
-    <div className="list-container" style={minListWidth ? { minWidth: minListWidth } : undefined}>
+    <div className="list-container" style={listContainerStyle}>
       {meta?.title && <div className="view-title">{meta.title}</div>}
 
       {ui.listActions && ui.listActions.length > 0 && (
@@ -1075,7 +1305,33 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
       <div
         ref={gridContainerRef}
-        style={{ width: '100%', flex: embedded ? undefined : 1, minHeight: 0 }}
+        style={(() => {
+          // Top-level list page: fill the route container (has a definite height).
+          if (!embedded) {
+            return { width: '100%', flex: 1, minHeight: 0 };
+          }
+          // Embedded grid (form/detail or tab): size to content but cap at
+          // 60% of viewport. AG Grid's native scroll (both axes) handles
+          // overflow past that cap. Few rows → small grid; many rows →
+          // capped grid with internal scroll.
+          const rowCount = rowData.length || 0;
+          const approxRowHeight = 28;
+          const headerChromeHeight = 40
+            + (ui.continuationHeaders?.length ?? 0) * 24
+            + 30;
+          const contentHeight = rowCount * approxRowHeight + headerChromeHeight;
+          const cappedHeight = Math.min(contentHeight, Math.round(window.innerHeight * 0.6));
+          return {
+            width: '100%',
+            maxWidth: '100%',
+            height: Math.max(120, cappedHeight),
+            minHeight: 0,
+            // Constrain to parent width so AG Grid's internal horizontal
+            // scroll kicks in when columns exceed the viewport.
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+          };
+        })()}
         onClick={handleGridClick}
       >
         <AgGridReact
@@ -1085,6 +1341,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           rowData={rowData}
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); }}
+          context={{ onAction, onChange, headersByField }}
           onRowClicked={handleRowClicked}
           onCellKeyDown={handleCellKeyDown as any}
           onCellValueChanged={handleCellValueChanged}
@@ -1096,7 +1353,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
           enterNavigatesVerticallyAfterEdit
-          domLayout={embedded ? 'autoHeight' : undefined}
+          domLayout={undefined}
           overlayNoRowsTemplate="Nessun record da visualizzare"
         />
       </div>

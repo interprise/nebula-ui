@@ -39,6 +39,9 @@ interface ViewRendererProps {
   onEditRow?: (navpath: string | null) => void;
   /** When true, this is a nested/embedded view — don't apply the split layout */
   embedded?: boolean;
+  /** When true, an embedded list should fill available vertical space with
+   *  its own scroll (tab panels), not expand to fit all rows. */
+  fillHeight?: boolean;
 }
 
 // Session ID context — used by remote combos to call the server
@@ -46,6 +49,11 @@ export const SidContext = React.createContext<string>('S1');
 
 // View path context — used by controls to send navpath with commands
 export const PathContext = React.createContext<string | undefined>(undefined);
+
+// Propagates the "fill available vertical space" signal down to embedded
+// lists. Set by tab content so nested grids use internal scroll instead of
+// AG Grid's autoHeight.
+export const FillHeightContext = React.createContext<boolean>(false);
 
 // View name context — used only for diagnostics (e.g. unknown-control-type warnings)
 export const ViewNameContext = React.createContext<string | undefined>(undefined);
@@ -198,7 +206,9 @@ function renderTabLabel(
   );
 }
 
-const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
+const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded, fillHeight: fillHeightProp }) => {
+  const fillHeightCtx = React.useContext(FillHeightContext);
+  const fillHeight = fillHeightProp ?? fillHeightCtx;
   if (!ui) return null;
 
   // Tree views
@@ -217,11 +227,13 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
     return (
+      <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} />
+        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} fillHeight={fillHeight} />
       </PathContext.Provider>
       </ViewNameContext.Provider>
+      </FillHeightContext.Provider>
     );
   }
 
@@ -283,33 +295,23 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     return max || undefined;
   })();
 
-  // Compute max width across form fields and embedded DetailView controls
-  // (tabs are excluded as they start independent layout regions)
-  const embeddedMaxWidth = (() => {
-    let max = 0;
-    for (const row of ui.rows) {
-      for (const cell of row.cells) {
-        if (cell.elementType === ELTYPE_CONTAINER && cell.control) {
-          const type = cell.control.type;
-          if (type === 'detailView' || type === 'embeddedView') {
-            const tw = cell.control.totalWidth as number | undefined;
-            if (tw && tw > max) max = tw;
-          }
-        }
-      }
-    }
-    return max;
-  })();
-
-  // Table width: max of form width and widest embedded DetailView
-  // Each grid unit = charWidth * gridSize (server default: 6 * 5 = 30px)
-  const formWidth = ui.totalWidth || ((ui.totalCols || formCols) ? (ui.totalCols || formCols)! * 16 : 0);
-  const tableWidth = Math.max(formWidth, embeddedMaxWidth);
-  const tableStyle: React.CSSProperties = { minWidth: tableWidth || '100%' };
+  // The layout-table sizes to the form fields' declared width — grids
+  // (detailView/embeddedView containers) don't contribute to this width
+  // because they are autonomous: they take whatever horizontal space is
+  // available and scroll internally. We derive the width from formCols
+  // (form rows only) rather than ui.totalWidth (which the server computes
+  // including grid contributions and is therefore inflated).
+  const formWidth = formCols ? formCols * 12 : (ui.totalWidth || 0);
+  const tableWidth = formWidth;
+  const tableStyle: React.CSSProperties = embedded
+    ? { width: '100%' }
+    : { minWidth: tableWidth || '100%' };
 
   // Ruler row: hidden row defining the grid columns with fixed widths,
-  // so colspans in subsequent rows distribute space correctly (mirrors old HTML ruler)
-  const totalCols = ui.totalCols || formCols || 0;
+  // so colspans in subsequent rows distribute space correctly (mirrors
+  // old HTML ruler). Use formCols (form rows only) not ui.totalCols —
+  // grids render outside the table and don't constrain the ruler.
+  const totalCols = formCols || ui.totalCols || 0;
   const colWidth = totalCols && tableWidth ? tableWidth / totalCols : 0;
   const rulerRow = totalCols > 0 && colWidth > 0 ? (
     <tr style={{ height: 0, lineHeight: 0, fontSize: 0 }}>
@@ -320,12 +322,44 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   ) : null;
   const edgeScroll = useEdgeScrollReveal();
 
+  // Split layout: form (top) / bottom panel (tabs, embedded views).
+  // The user can drag the resizer between them to change how much space
+  // each gets — useful when the bottom panel contains a grid they want
+  // to see more rows of.
+  const [formFlexBasisPct, setFormFlexBasisPct] = React.useState<number>(40);
+  const splitContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const startY = e.clientY;
+    const rect = container.getBoundingClientRect();
+    const startPct = formFlexBasisPct;
+    const onMove = (ev: MouseEvent) => {
+      const dy = ev.clientY - startY;
+      const deltaPct = (dy / rect.height) * 100;
+      const next = Math.min(90, Math.max(10, startPct + deltaPct));
+      setFormFlexBasisPct(next);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, [formFlexBasisPct]);
+
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
     return (
+      <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-      <div className="view-container">
+      <div className="view-container" ref={splitContainerRef}>
         {ui.title && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
@@ -334,7 +368,13 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
             ))}
           </div>
         )}
-        <div className="view-split-form" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
+        <div
+          className="view-split-form"
+          ref={edgeScroll.ref}
+          onMouseMove={edgeScroll.onMouseMove}
+          onMouseLeave={edgeScroll.onMouseLeave}
+          style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
+        >
           <table className="layout-table" style={tableStyle}>
             <tbody>
               {rulerRow}
@@ -353,6 +393,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
             </tbody>
           </table>
         </div>
+        <div
+          className="view-split-resizer"
+          onMouseDown={onResizerMouseDown}
+          title="Trascina per ridimensionare"
+        />
         <div className="view-split-bottom">
           {bottomRows.map((row, ri) => {
             // Tab rows: render tab bar + content rows in a table sharing the master grid
@@ -373,8 +418,8 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                     />
                   </div>
                   {tabControl.contentRows && (
-                    <div className="tab-content" style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
-                      <table className="layout-table" style={tableStyle}>
+                    <div className="tab-content view-body-embedded" style={{ overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                      <table className="layout-table" style={{ width: '100%' }}>
                         <tbody>
                           {rulerRow}
                           {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
@@ -396,16 +441,30 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       </div>
       </PathContext.Provider>
       </ViewNameContext.Provider>
+      </FillHeightContext.Provider>
     );
   }
 
-  // No split: single scrollable view (query pages, simple detail pages, embedded views)
+  // No split: single view. Top-level pages keep the scrollable view-body.
+  // Embedded views are transparent — an embedded "wrapper" view (just
+  // dispatchers pointing to an inner list) shouldn't introduce its own
+  // scroll container. The inner grid or the parent handles scrolling.
+  const bodyClassName = embedded ? 'view-body view-body-embedded' : 'view-body';
+  const bodyProps = embedded
+    ? { className: bodyClassName }
+    : {
+        className: bodyClassName,
+        ref: edgeScroll.ref,
+        onMouseMove: edgeScroll.onMouseMove,
+        onMouseLeave: edgeScroll.onMouseLeave,
+      };
   return (
+    <FillHeightContext.Provider value={fillHeight}>
     <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
       {ui.title && <div className="view-title">{ui.title}</div>}
-      <div className="view-body" ref={edgeScroll.ref} onMouseMove={edgeScroll.onMouseMove} onMouseLeave={edgeScroll.onMouseLeave}>
+      <div {...bodyProps}>
         <table className="layout-table" style={tableStyle}>
           <tbody>
             {rulerRow}
@@ -427,6 +486,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     </div>
     </PathContext.Provider>
     </ViewNameContext.Provider>
+    </FillHeightContext.Provider>
   );
 };
 
@@ -637,7 +697,7 @@ function renderContainerControl(
             />
           </div>
           {control.contentRows && (
-            <div className="tab-content">
+            <div className="tab-content" style={{ overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <ViewRenderer
                 ui={{
                   rows: control.contentRows,
@@ -649,6 +709,7 @@ function renderContainerControl(
                 onChange={onChange}
                 onGridChange={onGridChange}
                 embedded
+                fillHeight
               />
             </div>
           )}
@@ -674,6 +735,7 @@ function renderContainerControl(
           header: embeddedHeader,
           headers: control.headers as UITree['headers'],
           columns: control.columns as UITree['columns'],
+          continuationHeaders: control.continuationHeaders as UITree['continuationHeaders'],
           footer: embeddedFooter,
           multiEdit: control.multiEdit as boolean | undefined,
           listEdit: control.listEdit as boolean | undefined,
