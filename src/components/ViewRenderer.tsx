@@ -13,6 +13,7 @@ import {
 import ControlRenderer from '../controls/ControlRenderer';
 import ListRenderer from './ListRenderer';
 import TreeRenderer from './TreeRenderer';
+import { viewHasOlapCube } from './olap/detect';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -58,6 +59,13 @@ export const FillHeightContext = React.createContext<boolean>(false);
 // View name context — used only for diagnostics (e.g. unknown-control-type warnings)
 export const ViewNameContext = React.createContext<string | undefined>(undefined);
 
+// Live access to the current tab's form-field values. Shell exposes a
+// ref-backed getter so consumers (e.g. OlapCubeRenderer) can read the
+// latest form snapshot at request time without re-rendering on every
+// keystroke. Default is an empty getter for views/tests rendered outside
+// the Shell.
+export const FormValuesContext = React.createContext<() => Record<string, string | string[]>>(() => ({}));
+
 /** Input-like widgets that always render a visible UI (input/select/
  *  checkbox/textarea) even when disabled or empty — if the server keeps
  *  them editable the cell is kept alive; if read-only they need a value. */
@@ -80,7 +88,7 @@ const BUTTON_TYPES = new Set<string>([
 /** Structural composites that always render their scaffolding. */
 const STRUCTURAL_TYPES = new Set<string>([
   'actionBar', 'buttonBar', 'tab', 'embeddedView', 'detailView',
-  'warning', 'workflowStatus',
+  'warning', 'workflowStatus', 'olapCube',
 ]);
 
 /** Array/object fields whose non-empty presence means the control has
@@ -277,6 +285,8 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     formRows = formRows.filter((r) => !isActionBarRow(r));
   }
 
+  const hasOlapCube = viewHasOlapCube(ui);
+
   // Compute actual column count from form rows only (exclude container/section-header rows
   // whose colspans include child sub-views and inflate the auto-layout table)
   const formCols = (() => {
@@ -364,7 +374,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef}>
-        {ui.title && <div className="view-title">{ui.title}</div>}
+        {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
             {actionBarRows.map((row, ri) => (
@@ -467,7 +477,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
-      {ui.title && <div className="view-title">{ui.title}</div>}
+      {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
       <div {...bodyProps}>
         <table className="layout-table" style={tableStyle}>
           <tbody>

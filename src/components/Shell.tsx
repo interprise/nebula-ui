@@ -33,7 +33,8 @@ import type {
   ServerResponse,
 } from '../types/ui';
 import Toolbar from './Toolbar';
-import ViewRenderer, { SidContext } from './ViewRenderer';
+import { viewHasOlapCube } from './olap/detect';
+import ViewRenderer, { SidContext, FormValuesContext } from './ViewRenderer';
 import HomePanel from './HomePanel';
 import BannerCard from './BannerCard';
 import { ensureNotificationPermission, notify } from '../services/notifications';
@@ -1058,6 +1059,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           />
           {currentTab && (
             <SidContext.Provider value={currentTab.sid}>
+            <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" style={{ position: 'relative' }}>
                 {currentTab.loading && (
                   <div className="loading-overlay">
@@ -1092,7 +1094,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                         }))}
                       />
                     )}
-                    <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} onAction={handleAction} />
+                    {!viewHasOlapCube(currentTab.ui) && (
+                      <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} onAction={handleAction} />
+                    )}
                     <ViewRenderer
                       ui={currentTab.ui}
                       onAction={handleAction}
@@ -1107,6 +1111,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   )
                 )}
               </div>
+            </FormValuesContext.Provider>
             </SidContext.Provider>
           )}
         </Content>

@@ -31,6 +31,7 @@ import {
 } from './DisplayControls';
 import { ActionBarControl, ButtonBarControl } from './BarControls';
 import WorkflowStatusControl from './WorkflowStatusControl';
+import OlapCubeBuiltin from './OlapCubeBuiltin';
 import {
   AttachmentsControl,
   BpmStatusControl,
@@ -83,6 +84,7 @@ export function registerBuiltinControls(): void {
     actionBar: ActionBarControl,
     buttonBar: ButtonBarControl,
     workflowStatus: WorkflowStatusControl,
+    olapCube: OlapCubeBuiltin,
     // Phase 1b new types
     attachments: AttachmentsControl,
     bpmStatus: BpmStatusControl,

@@ -41,6 +41,7 @@ export const EXPECTED_CONTROL_TYPES = [
   'navigateView',
   'navigateViewButton',
   'number',
+  'olapCube',
   'password',
   'path',
   'popupUrl',
