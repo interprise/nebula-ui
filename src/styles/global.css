@@ -396,6 +396,63 @@ html, body {
   padding: 2px 0;
 }
 
+/* BPM bar — open process steps for the current object. Sits below the
+ * workflow row inside .action-bar-wrap, grouped per process instance. */
+.action-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bpm-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  background: #fff8e6;
+  border: 1px solid #f1d98a;
+  border-radius: 4px;
+}
+.bpm-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bpm-process-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b5a14;
+}
+.bpm-cog {
+  color: #b58a00;
+}
+.bpm-status {
+  font-weight: 600;
+}
+.bpm-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bpm-notif {
+  font-size: 12px;
+  color: #555;
+}
+.bpm-notif-active {
+  color: #1f1f1f;
+  font-weight: 500;
+}
+.bpm-users {
+  color: #888;
+}
+.bpm-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* Default buttons: differentiate from input fields by adding a light
    gradient, stronger border, and a small pop on hover so they visually
    read as pressable rather than as disabled text fields. */
