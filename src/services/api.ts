@@ -89,10 +89,31 @@ export async function postAction2(
   return post(CMD2_URL, { action, ...params });
 }
 
-/** POST to the controller and stream the response body as a file download.
- *  Used by Download/Attachments/Report commands that return binary payloads
- *  rather than JSON. Extracts the filename from Content-Disposition when set,
- *  otherwise falls back to `fallbackName`. */
+/** Pattern emitted by `Util.sendJSONFile` for delayed downloads — server
+ *  writes the file to a temp path and returns this descriptor; the client
+ *  must call `LoadFile` with the same params to actually fetch the bytes. */
+const FILE_CALLBACK_RE =
+  /handleFileDownload\.createDelegate\(this,\s*\[\{fileName:\s*"([^"]+)",\s*type:\s*"([^"]+)",\s*index:\s*"([^"]+)"\}\]\)/;
+
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** POST to the controller and either stream the response body directly as a
+ *  file (Download/Attachments/Report commands) or follow the server's
+ *  delayed-download protocol — the legacy XLS/CSV/PDF/etc. flow returns a
+ *  JSON envelope with `uiData.callback = "handleFileDownload.createDelegate(
+ *  ...)"` carrying a temp `fileName` + MIME `type`; we parse those out and
+ *  fetch the actual bytes via `LoadFile`. The temp file is deleted server-side
+ *  after the LoadFile call. Filename falls back to `fallbackName` when the
+ *  server does not advertise one. */
 export async function triggerDownload(
   action: string,
   params: Record<string, string> = {},
@@ -107,21 +128,41 @@ export async function triggerDownload(
     credentials: 'same-origin',
   });
   if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
-  const blob = await resp.blob();
+
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    const json = (await resp.json()) as { uiData?: { callback?: string } };
+    const cb = json.uiData?.callback;
+    const m = cb ? FILE_CALLBACK_RE.exec(cb) : null;
+    if (!m) throw new Error('Download failed: unexpected JSON response');
+    const fileName = decodeURIComponent(m[1]);
+    const fileType = m[2];
+    const indexName = decodeURIComponent(m[3]);
+    const loadBody = buildFormData({
+      action: 'LoadFile',
+      sid,
+      fileName,
+      type: fileType,
+      index: indexName,
+    });
+    const fileResp = await fetch(CMD2_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: loadBody,
+      credentials: 'same-origin',
+    });
+    if (!fileResp.ok) throw new Error(`LoadFile failed: HTTP ${fileResp.status}`);
+    saveBlob(await fileResp.blob(), indexName || fallbackName);
+    return;
+  }
+
   let filename = fallbackName;
   const cd = resp.headers.get('content-disposition');
   if (cd) {
     const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
     if (m) filename = decodeURIComponent(m[1].replace(/"/g, ''));
   }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  saveBlob(await resp.blob(), filename);
 }
 
 export async function uploadFile(
