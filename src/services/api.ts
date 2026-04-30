@@ -185,8 +185,8 @@ export async function uploadFile(
   return resp.json();
 }
 
-export async function reloadMenu(): Promise<ServerResponse> {
-  return post(CMD2_URL, { action: 'JSONMenu', ui: 'react' });
+export async function reloadMenu(extra: Record<string, string> = {}): Promise<ServerResponse> {
+  return post(CMD2_URL, { action: 'JSONMenu', ui: 'react', ...extra });
 }
 
 export async function checkProgress(sid: string = 'S1'): Promise<ServerResponse> {

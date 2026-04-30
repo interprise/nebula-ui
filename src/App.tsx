@@ -23,6 +23,29 @@ registerBuiltinControls();
 
 const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
 
+// SSO landing parameters. When CNAAuthenticator (or another custom Authenticator
+// configured for the app) bounces the user to an external IdP — Sixtema's Piero
+// via tkt, OIDC via code/state/scope, or Nebula FE via nebfe — the IdP
+// redirects back to /entrasp/app/ with these query params. The SPA forwards
+// them on the first JSONMenu POST so the server-side Authenticator can validate
+// them and establish the session, then strips them from the URL bar.
+const SSO_PARAM_NAMES = ['tkt', 'code', 'scope', 'state', 'nebfe', 'token'] as const;
+
+const initialSsoParams: Record<string, string> = (() => {
+  if (typeof window === 'undefined') return {};
+  const search = new URLSearchParams(window.location.search);
+  const out: Record<string, string> = {};
+  let found = false;
+  for (const k of SSO_PARAM_NAMES) {
+    const v = search.get(k);
+    if (v) { out[k] = v; found = true; }
+  }
+  if (found) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+  }
+  return out;
+})();
+
 const hostApi: HostAPI = {
   React,
   antd: Antd,
@@ -42,9 +65,9 @@ const App: React.FC = () => {
   const [loginInfo, setLoginInfo] = useState<LoginInfo | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
-  const loadMenu = useCallback(async () => {
+  const loadMenu = useCallback(async (extra: Record<string, string> = {}) => {
     try {
-      const resp = await api.reloadMenu();
+      const resp = await api.reloadMenu(extra);
       if (resp.redirect) {
         window.location.href = resp.redirect;
         return;
@@ -67,7 +90,7 @@ const App: React.FC = () => {
       if (raw.loggedIn === true || raw.authenticatorName) {
         // Skip login form — already authenticated or SSO authenticator
         setShowLogin(false);
-        loadMenu();
+        loadMenu(initialSsoParams);
       } else {
         setShowLogin(true);
       }
