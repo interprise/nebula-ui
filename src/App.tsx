@@ -87,6 +87,14 @@ const App: React.FC = () => {
       if (raw.loginTitle) setLoginTitle(raw.loginTitle as string);
       const pluginUrl = (raw.controlsPluginUrl as string | undefined) || DEFAULT_CONTROLS_PLUGIN_URL;
       await loadControlPlugin(pluginUrl, hostApi);
+      // If the server returned an SSO redirect URL and we're not in the
+      // middle of consuming an SSO callback, bounce to the IdP directly.
+      // When initialSsoParams is non-empty the IdP just sent us back —
+      // those params must be validated via JSONMenu, not redirected away.
+      if (raw.redirect && Object.keys(initialSsoParams).length === 0) {
+        window.location.href = raw.redirect as string;
+        return;
+      }
       if (raw.loggedIn === true || raw.authenticatorName) {
         // Skip login form — already authenticated or SSO authenticator
         setShowLogin(false);
