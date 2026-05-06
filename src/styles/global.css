@@ -63,6 +63,11 @@ html, body {
 .navigateView:hover {
   text-decoration: underline;
 }
+.navigateView .nav-arrow {
+  margin-left: 3px;
+  font-size: 0.9em;
+  display: inline-block;
+}
 
 /* Layout table for detail/query views */
 .layout-table {
@@ -374,13 +379,31 @@ html, body {
   text-decoration: underline;
 }
 
-/* Warning control */
+/* Warning control. The server's WarningUIControl wraps every text segment
+   (including bare separators like ", " between <<>> link tokens) in its own
+   <ul><li>…</li></ul>. Default browser styling renders each one as a block
+   bullet, producing the broken layout. We unfold mono-<li> ULs inline; only
+   ULs with two or more <li> (real multi-line text) keep the bulleted block. */
 .warning-control ul {
+  display: inline;
   margin: 0;
-  padding-left: 16px;
+  padding: 0;
+  list-style: none;
 }
 .warning-control li {
+  display: inline;
+  margin: 0;
+  list-style: none;
+}
+.warning-control ul:has(li + li) {
+  display: block;
+  padding-left: 16px;
+  list-style: disc;
+}
+.warning-control ul:has(li + li) li {
+  display: list-item;
   margin-bottom: 2px;
+  list-style: disc;
 }
 
 /* Sticky action bar above scrollable form */
