@@ -153,6 +153,27 @@ export interface ListAction {
   option?: string;
 }
 
+export interface AttachmentMeta {
+  key: string;
+  fileName: string;
+  /** Lookup-list description from the BO (e.g. CdmsRisorse "list" lookup),
+   *  falls back to the BO's default description if non-empty. Often more
+   *  informative than the raw file name. */
+  description?: string;
+  size?: number;
+  lastModified?: number;
+  contentType?: string;
+}
+
+export interface AttachmentsInfo {
+  count: number;
+  allowAdd: boolean;
+  allowList: boolean;
+  allowDelete: boolean;
+  cdmsActive: boolean;
+  single?: AttachmentMeta | null;
+}
+
 export interface UITree {
   rows: UIRow[];
   path?: string;
@@ -167,7 +188,7 @@ export interface UITree {
   totalCols?: number;
   totalWidth?: number;
   title?: string;
-  attachments?: string;
+  attachmentsInfo?: AttachmentsInfo | null;
   headers?: ListHeader[];
   header?: ListMeta;
   footer?: ListFooter;
@@ -310,6 +331,9 @@ export interface ServerResponse {
   // response root (not inside the cached template) and the client
   // merges them into the hydrated UI.
   breadcrumbs?: string;
+  // Same pattern as breadcrumbs: per-record, not part of the cached
+  // template. Server emits at response root; client merges into ui.
+  attachmentsInfo?: AttachmentsInfo | null;
   path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;

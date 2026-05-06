@@ -1,4 +1,4 @@
-import type { ServerResponse } from '../types/ui';
+import type { ServerResponse, AttachmentMeta } from '../types/ui';
 
 const CMD_URL = '/entrasp/controller';
 const CMD2_URL = '/entrasp/controller2';
@@ -290,4 +290,36 @@ export async function cdmsExec(
 ): Promise<{ success?: boolean; error?: string }> {
   const resp = await post(CMD2_URL, { action: 'CdmsExec', cmd, ...params });
   return resp as unknown as { success?: boolean; error?: string };
+}
+
+// --- Attachments ---
+
+/** Multipart upload of a single attachment for the BO bound to the current
+ *  DETAIL view of the given session. Server-side handler is `CdmsUpload`. */
+export async function uploadAttachment(
+  file: File,
+  sid: string = 'S1'
+): Promise<ServerResponse> {
+  const formData = new FormData();
+  formData.append('action', 'CdmsUpload');
+  formData.append('sid', sid);
+  formData.append('file', file);
+  const resp = await fetch(CMD_URL, {
+    method: 'POST',
+    body: formData,
+    credentials: 'same-origin',
+  });
+  return resp.json();
+}
+
+/** Fetch the metadata list of attachments for the BO bound to the current
+ *  DETAIL view. The server activates the view via setPostPath(navpath). */
+export async function fetchAttachments(
+  sid: string = 'S1',
+  navpath: string = '',
+): Promise<AttachmentMeta[]> {
+  const params: Record<string, string> = { action: 'AttachmentList', sid };
+  if (navpath) params.navpath = navpath;
+  const resp = await post(CMD2_URL, params);
+  return ((resp as unknown as { rows?: AttachmentMeta[] }).rows) || [];
 }

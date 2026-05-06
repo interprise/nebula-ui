@@ -33,6 +33,7 @@ import type {
   ServerResponse,
 } from '../types/ui';
 import Toolbar from './Toolbar';
+import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
 import ViewRenderer, { SidContext, FormValuesContext } from './ViewRenderer';
 import HomePanel from './HomePanel';
@@ -436,6 +437,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           // Also update the tab state's formValues
           update.formValues = newFormValues;
         }
+      }
+      // attachmentsInfo is per-record and emitted at response root (not
+      // cached with the template). Merge into update.ui in all flows.
+      if (resp.attachmentsInfo !== undefined && update.ui) {
+        update.ui = { ...update.ui, attachmentsInfo: resp.attachmentsInfo };
       }
       if (resp.toolbar) update.toolbar = resp.toolbar;
       if (resp.uiData) {
@@ -1070,29 +1076,42 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 )}
                 {currentTab.ui ? (
                   <>
-                    {parsedBreadcrumbs.length > 0 && (
-                      <Breadcrumb
-                        style={{ padding: '6px 8px', maxWidth: '100%' }}
-                        items={parsedBreadcrumbs.map((b) => ({
-                          title: b.action ? (
-                            <a
-                              title={b.title}
-                              style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
-                              onClick={() => {
-                                const params: Record<string, string> = {};
-                                if (b.navpath) params.navpath = b.navpath;
-                                if (b.option1) params.option1 = b.option1;
-                                handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
-                              }}
-                            >{b.title}</a>
-                          ) : (
-                            <span
-                              title={b.title}
-                              style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
-                            >{b.title}</span>
-                          ),
-                        }))}
-                      />
+                    {(parsedBreadcrumbs.length > 0 || currentTab.ui?.attachmentsInfo) && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px' }}>
+                        {parsedBreadcrumbs.length > 0 ? (
+                          <Breadcrumb
+                            style={{ padding: '6px 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
+                            items={parsedBreadcrumbs.map((b) => ({
+                              title: b.action ? (
+                                <a
+                                  title={b.title}
+                                  style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
+                                  onClick={() => {
+                                    const params: Record<string, string> = {};
+                                    if (b.navpath) params.navpath = b.navpath;
+                                    if (b.option1) params.option1 = b.option1;
+                                    handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
+                                  }}
+                                >{b.title}</a>
+                              ) : (
+                                <span
+                                  title={b.title}
+                                  style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
+                                >{b.title}</span>
+                              ),
+                            }))}
+                          />
+                        ) : <span style={{ flex: 1 }} />}
+                        {currentTab.ui?.attachmentsInfo && (
+                          <AttachmentsBar
+                            info={currentTab.ui.attachmentsInfo}
+                            sid={currentTab.sid}
+                            navpath={currentTab.ui?.path}
+                            onRefresh={() => handleAction('Refresh')}
+                            onOpenMetadata={(key) => handleAction('CdmsEdit', { navpath: key })}
+                          />
+                        )}
+                      </div>
                     )}
                     {!viewHasOlapCube(currentTab.ui) && (
                       <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} onAction={handleAction} />
