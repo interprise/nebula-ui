@@ -1114,7 +1114,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                       </div>
                     )}
                     {!viewHasOlapCube(currentTab.ui) && (
-                      <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} onAction={handleAction} />
+                      <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
                     )}
                     <ViewRenderer
                       ui={currentTab.ui}

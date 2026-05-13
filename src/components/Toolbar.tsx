@@ -152,6 +152,7 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
 interface ToolbarProps {
   items: ToolbarItem[];
   paging?: { currentPage: number; totalPages: number; totalRows: number; position: number; pageSize: number };
+  pageType?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
 }
 
@@ -251,22 +252,27 @@ function renderToolbarItem(
   return btn;
 }
 
-const Toolbar: React.FC<ToolbarProps> = ({ items, paging, onAction }) => {
+const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) => {
   if (!items || items.length === 0) return null;
 
   const rawItems = items as unknown[];
   const splitIdx = rawItems.indexOf('->');
-  const leftItems = splitIdx >= 0 ? rawItems.slice(0, splitIdx) : rawItems;
-  const rightItems = splitIdx >= 0 ? rawItems.slice(splitIdx + 1) : [];
+  // pageType 0 = QUERY: align all items to the right when the server hasn't
+  // emitted an explicit "->" split, matching the legacy ExtJS query toolbar layout.
+  const queryNoSplit = pageType === 0 && splitIdx < 0;
+  const leftItems = splitIdx >= 0 ? rawItems.slice(0, splitIdx) : (queryNoSplit ? [] : rawItems);
+  const rightItems = splitIdx >= 0 ? rawItems.slice(splitIdx + 1) : (queryNoSplit ? rawItems : []);
 
   return (
-    <div className="toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Space wrap size="small">
-        {leftItems.map((raw, idx) => renderToolbarItem(raw, idx, onAction, paging))}
-      </Space>
-      {rightItems.length > 0 && (
+    <div className="toolbar" style={{ display: 'flex', alignItems: 'center' }}>
+      {leftItems.length > 0 && (
         <Space wrap size="small">
-          {rightItems.map((raw, idx) => renderToolbarItem(raw, splitIdx + 1 + idx, onAction, paging))}
+          {leftItems.map((raw, idx) => renderToolbarItem(raw, idx, onAction, paging))}
+        </Space>
+      )}
+      {rightItems.length > 0 && (
+        <Space wrap size="small" style={{ marginLeft: 'auto' }}>
+          {rightItems.map((raw, idx) => renderToolbarItem(raw, (splitIdx >= 0 ? splitIdx + 1 : 0) + idx, onAction, paging))}
         </Space>
       )}
     </div>
