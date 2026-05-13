@@ -367,6 +367,12 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     document.body.style.userSelect = 'none';
   }, [formFlexBasisPct]);
 
+  // If every form row is invisible (e.g. all items above the tab use
+  // isVisible="?!newUI"), don't reserve vertical space for an empty form area —
+  // collapse the top half so the bottom panel (Tab/embeddedView) takes
+  // everything below the action bar.
+  const hasVisibleFormContent = formRows.some(isRowVisible);
+
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
     return (
@@ -382,36 +388,40 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
             ))}
           </div>
         )}
-        <div
-          className="view-split-form"
-          ref={edgeScroll.ref}
-          onMouseMove={edgeScroll.onMouseMove}
-          onMouseLeave={edgeScroll.onMouseLeave}
-          style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
-        >
-          <table className="layout-table" style={tableStyle}>
-            <tbody>
-              {rulerRow}
-              {formRows.map((row, ri) => (
-                <React.Fragment key={row.id || ri}>
-                  <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
-                  {ri === lastHeaderRowIdx && (
-                    <tr className="header-separator-row">
-                      <td colSpan={formCols || 100}>
-                        <div className="header-items-separator" />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div
-          className="view-split-resizer"
-          onMouseDown={onResizerMouseDown}
-          title="Trascina per ridimensionare"
-        />
+        {hasVisibleFormContent && (
+          <>
+            <div
+              className="view-split-form"
+              ref={edgeScroll.ref}
+              onMouseMove={edgeScroll.onMouseMove}
+              onMouseLeave={edgeScroll.onMouseLeave}
+              style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
+            >
+              <table className="layout-table" style={tableStyle}>
+                <tbody>
+                  {rulerRow}
+                  {formRows.map((row, ri) => (
+                    <React.Fragment key={row.id || ri}>
+                      <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+                      {ri === lastHeaderRowIdx && (
+                        <tr className="header-separator-row">
+                          <td colSpan={formCols || 100}>
+                            <div className="header-items-separator" />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div
+              className="view-split-resizer"
+              onMouseDown={onResizerMouseDown}
+              title="Trascina per ridimensionare"
+            />
+          </>
+        )}
         <div className="view-split-bottom">
           {bottomRows.map((row, ri) => {
             // Tab rows: render tab bar + content rows in a table sharing the master grid
