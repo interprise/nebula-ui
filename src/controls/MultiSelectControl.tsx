@@ -171,26 +171,35 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
 
   // Filtered options for the drawer
   const visibleOptions = useMemo(() => {
-    let base: SelItem[];
+    const matchesFilter = (o: SelItem, lower: string) =>
+      (o.listText || o.text).toLowerCase().includes(lower) ||
+      o.value.toLowerCase().includes(lower);
+
     if (onlySelected) {
       // Show items that are currently selected (pendingKeys), looked up from
       // all known sources so users can review/deselect without scrolling.
-      base = pendingKeys.map((k) => knownItemsByKey[k] || { value: k, text: k });
-    } else {
-      base = allOptions;
+      const base = pendingKeys.map((k) => knownItemsByKey[k] || { value: k, text: k });
+      if (!filter) return base;
+      const lower = filter.toLowerCase();
+      return base.filter((o) => matchesFilter(o, lower));
     }
-    if (!filter) return base;
-    const lower = filter.toLowerCase();
-    // For remote mode, server already filtered; client filter is only needed
-    // for static options OR for the "only selected" subset.
-    if (onlySelected || staticOptions.length > 0) {
-      return base.filter(
-        (o) =>
-          (o.listText || o.text).toLowerCase().includes(lower) ||
-          o.value.toLowerCase().includes(lower),
-      );
+
+    // Normal mode: keep already-selected items visible by pinning at the top
+    // (checked) those not present in the current results — so a new search
+    // (e.g. "gestione") never hides a previously-selected item (e.g. "libro").
+    const present = new Set(allOptions.map((o) => o.value));
+    const pinned = pendingKeys
+      .filter((k) => !present.has(k))
+      .map((k) => knownItemsByKey[k] || { value: k, text: k });
+
+    let base = allOptions;
+    // For remote mode the server already filtered; client filter is only needed
+    // for static options. Pinned (selected) items are never filtered out.
+    if (filter && staticOptions.length > 0) {
+      const lower = filter.toLowerCase();
+      base = base.filter((o) => matchesFilter(o, lower));
     }
-    return base;
+    return pinned.length ? [...pinned, ...base] : base;
   }, [allOptions, filter, staticOptions.length, onlySelected, pendingKeys, knownItemsByKey]);
 
   const removeKey = useCallback((key: string) => {
@@ -312,7 +321,13 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
             <Button
               size="small"
               type={onlySelected ? 'primary' : 'default'}
-              onClick={() => setOnlySelected((v) => !v)}
+              onClick={() => {
+                const next = !onlySelected;
+                setOnlySelected(next);
+                // Entering "only selected": drop any leftover search term so it
+                // doesn't hide previously-selected items that don't match it.
+                if (next) setFilter('');
+              }}
               disabled={pendingKeys.length === 0}
               icon={onlySelected ? <CheckCircleFilled /> : <CheckCircleOutlined />}
             >
