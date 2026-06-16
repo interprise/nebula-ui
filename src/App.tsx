@@ -151,14 +151,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleLogout = useCallback(async () => {
+    let redirect: string | undefined;
     try {
-      await api.logout();
+      const resp = await api.logout();
+      redirect = resp?.redirect;
     } catch {
       // ignore
     }
     setLoggedIn(false);
     setLoginInfo(null);
     setMenuItems([]);
+    // For PIS (Piero) logout the server returns the OIDC end_session URL; navigating
+    // there is what actually clears the OP session. Without this, the user stays
+    // signed in at the IdP and the next page load silently re-authenticates.
+    if (redirect) {
+      window.location.href = redirect;
+    }
   }, []);
 
   // Poll the server every 150s for banner updates via the Ping command
