@@ -340,8 +340,51 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // The user can drag the resizer between them to change how much space
   // each gets — useful when the bottom panel contains a grid they want
   // to see more rows of.
-  const [formFlexBasisPct, setFormFlexBasisPct] = React.useState<number>(40);
+  // The split ratio adapts to where the user is working: the area holding
+  // keyboard focus expands — the testata (form) when the caret is on a header
+  // field, the tab/bottom panel when the caret is inside a tab (or on the tab
+  // bar). A manual drag on the resizer overrides this until focus next crosses
+  // between the two areas.
+  const NEUTRAL_PCT = 50;
+  const FORM_FOCUS_PCT = 78;
+  const BOTTOM_FOCUS_PCT = 22;
+  const [focusZone, setFocusZone] = React.useState<'form' | 'bottom' | null>(null);
+  const focusZoneRef = React.useRef<'form' | 'bottom' | null>(null);
+  const [manualPct, setManualPct] = React.useState<number | null>(null);
+  const [resizing, setResizing] = React.useState(false);
   const splitContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // A manual drag (manualPct) wins; otherwise the focused zone sets the target.
+  const formFlexBasisPct =
+    manualPct != null
+      ? manualPct
+      : focusZone === 'form'
+        ? FORM_FOCUS_PCT
+        : focusZone === 'bottom'
+          ? BOTTOM_FOCUS_PCT
+          : NEUTRAL_PCT;
+
+  // Interacting inside .view-split-form (testata) or .view-split-bottom (tab bar
+  // + tab content) drives the adaptive split. Both keyboard focus AND a mouse
+  // click activate the zone, so clicking anywhere in an area (a grid, a label,
+  // empty space — things that don't take focus) still expands it. Interaction
+  // elsewhere (action bar, toolbar, resizer) keeps the last zone. Crossing zones
+  // drops any manual drag override so the auto target takes over again; staying
+  // in a zone preserves a drag.
+  const activateZone = React.useCallback((target: EventTarget | null) => {
+    const t = target as HTMLElement | null;
+    if (!t) return;
+    let zone: 'form' | 'bottom' | null = null;
+    if (t.closest('.view-split-bottom')) zone = 'bottom';
+    else if (t.closest('.view-split-form')) zone = 'form';
+    if (!zone || focusZoneRef.current === zone) return;
+    focusZoneRef.current = zone;
+    setFocusZone(zone);
+    setManualPct(null);
+  }, []);
+  const onSplitFocus = React.useCallback((e: React.FocusEvent) => activateZone(e.target), [activateZone]);
+  const onSplitPointerDown = React.useCallback((e: React.PointerEvent) => activateZone(e.target), [activateZone]);
+
   const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const container = splitContainerRef.current;
@@ -349,17 +392,19 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     const startY = e.clientY;
     const rect = container.getBoundingClientRect();
     const startPct = formFlexBasisPct;
+    setResizing(true);
     const onMove = (ev: MouseEvent) => {
       const dy = ev.clientY - startY;
       const deltaPct = (dy / rect.height) * 100;
       const next = Math.min(90, Math.max(10, startPct + deltaPct));
-      setFormFlexBasisPct(next);
+      setManualPct(next);
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      setResizing(false);
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -379,7 +424,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-      <div className="view-container" ref={splitContainerRef}>
+      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown}>
         {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
@@ -391,7 +436,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
         {hasVisibleFormContent && (
           <>
             <div
-              className="view-split-form"
+              className={`view-split-form${resizing ? ' view-split-form--resizing' : ''}`}
               ref={edgeScroll.ref}
               onMouseMove={edgeScroll.onMouseMove}
               onMouseLeave={edgeScroll.onMouseLeave}
@@ -430,7 +475,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
               const tabControl = tabCell.control;
               const tabActiveTab = tabControl.tabs?.find((t) => t.selected)?.name || tabControl.tabs?.[0]?.name;
               return (
-                <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
                   <div className="tab-sticky-wrapper">
                     <Tabs
                       activeKey={tabActiveTab}

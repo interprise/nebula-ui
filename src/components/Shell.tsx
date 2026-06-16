@@ -997,38 +997,38 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           <Space>
             <img src="/entrasp/images/logos/logo_sx.png" alt="Sixtema" style={{ height: 36, objectFit: 'contain' }} />
           </Space>
-          <Space size="middle" wrap>
+          <Space size="middle" style={{ minWidth: 0, flexWrap: 'nowrap' }}>
             <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
             <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
             {loginInfo.aziende && loginInfo.aziende.length === 1 && (
               <Text style={{ color: '#fff' }}>Azienda: <Text strong style={{ color: '#fff' }}>{loginInfo.aziende[0].text}</Text></Text>
             )}
             {loginInfo.aziende && loginInfo.aziende.length > 1 && (
-              <Space size={4}>
-                <Text style={{ color: '#fff' }}>Azienda:</Text>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <Text style={{ color: '#fff', whiteSpace: 'nowrap' }}>Azienda:</Text>
                 <Select
                   value={loginInfo.customerKey}
                   onChange={handleAziendaChange}
-                  style={{ width: 320 }}
+                  style={{ width: 'clamp(120px, 20vw, 320px)', minWidth: 0 }}
                   options={loginInfo.aziende}
                   fieldNames={{ label: 'text', value: 'value' }}
                 />
-              </Space>
+              </div>
             )}
             {loginInfo.sedi && loginInfo.sedi.length === 1 && (
               <Text style={{ color: '#fff' }}>Sede: <Text strong style={{ color: '#fff' }}>{loginInfo.sedi[0].text}</Text></Text>
             )}
             {loginInfo.sedi && loginInfo.sedi.length > 1 && (
-              <Space size={4}>
-                <Text style={{ color: '#fff' }}>Sede:</Text>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <Text style={{ color: '#fff', whiteSpace: 'nowrap' }}>Sede:</Text>
                 <Select
                   value={loginInfo.sede}
                   onChange={handleSedeChange}
-                  style={{ width: 320 }}
+                  style={{ width: 'clamp(120px, 20vw, 320px)', minWidth: 0 }}
                   options={loginInfo.sedi}
                   fieldNames={{ label: 'text', value: 'value' }}
                 />
-              </Space>
+              </div>
             )}
             <Dropdown
               menu={{
@@ -1042,7 +1042,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 },
               }}
             >
-              <Space style={{ cursor: 'pointer', color: '#fff' }}>
+              <Space style={{ cursor: 'pointer', color: '#fff', flexShrink: 0 }}>
                 <Badge dot={!!loginInfo.notifications}>
                   <UserOutlined style={{ fontSize: 18, color: '#fff' }} />
                 </Badge>

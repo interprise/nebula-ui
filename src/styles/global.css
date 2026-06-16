@@ -133,11 +133,15 @@ html, body {
   overflow: visible;
 }
 
-/* Keep tabs within visible area even when table is wider than viewport */
+/* Tab strip fills the actual available width of its flex column (correct for
+   both sidebar states and under zoom). min-width:0 lets it shrink below the
+   intrinsic tab width so Ant Design's <Tabs> measures a bounded width and
+   collapses overflowing tabs into its native "more" (…) dropdown — no clipping,
+   no horizontal scrollbar. */
 .tab-sticky-wrapper {
-  max-width: calc(100vw - 350px); /* viewport minus app bar (48px) + sidebar (260px) + scrollbar (~20px) + margins */
-  overflow: hidden;
-  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 /* Compact Ant Design controls inside layout table */
@@ -269,11 +273,16 @@ html, body {
   overflow-x: auto;
   max-width: 100%;
   flex: 0 1 auto;
-  max-height: 50%;
   background: #f0f2f5;
   padding: 4px;
   scrollbar-width: thin;
   scrollbar-color: auto;
+  transition: flex-basis 0.15s ease;
+}
+
+/* No animation while the user is actively dragging the resizer */
+.view-split-form--resizing {
+  transition: none;
 }
 
 /* Keep the bottom panel (tabs, embedded grids) at the container width so
