@@ -77,7 +77,18 @@ const iconMap: Record<string, React.ReactNode> = {
  *   doAction2.createCallback('ACTION', 'PARAM')
  *   doAction3.createCallback('ACTION', 'PARAM1', 'PARAM2')
  */
-function parseHandler(handler: string): { action: string; params?: Record<string, string>; showInWindow?: boolean } {
+function parseHandler(handler: string): { action: string; params?: Record<string, string>; showInWindow?: boolean; confirmDelete?: boolean } {
+  // confirmDelete.createCallback('PATH', 'ACTION', 'KEY') — legacy showed an
+  // OK/Cancel dialog client-side, then posted ACTION via doAction3(ACTION, PATH, KEY).
+  // The confirm must run client-side; posting the raw snippet 500s the server.
+  const delMatch = handler.match(/^confirmDelete\.createCallback\(([^)]+)\)$/);
+  if (delMatch) {
+    const args = delMatch[1].split(',').map(s => s.trim().replace(/^'|'$/g, ''));
+    const params: Record<string, string> = {};
+    if (args[0]) params.navpath = args[0];
+    if (args[2]) params.option1 = args[2];
+    return { action: args[1], params, confirmDelete: true };
+  }
   // EntrAsp.UI.Shell.showInWindow.createCallback('COMMAND', 'PARAM')
   const winMatch = handler.match(/^EntrAsp\.UI\.Shell\.showInWindow\.createCallback\(([^)]+)\)$/);
   if (winMatch) {
@@ -112,7 +123,17 @@ function parseHandler(handler: string): { action: string; params?: Record<string
 }
 
 async function invokeHandler(handler: string, onAction: (action: string, params?: Record<string, string>) => void) {
-  const { action, params, showInWindow } = parseHandler(handler);
+  const { action, params, showInWindow, confirmDelete } = parseHandler(handler);
+  if (confirmDelete) {
+    Modal.confirm({
+      title: 'Confermare',
+      content: 'Confermare la cancellazione del record',
+      okText: 'OK',
+      cancelText: 'Annulla',
+      onOk: () => onAction(action, params),
+    });
+    return;
+  }
   if (showInWindow) {
     // Call via controller2 and show result in a modal
     const { postAction2 } = await import('../services/api');
