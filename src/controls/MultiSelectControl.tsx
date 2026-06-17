@@ -4,7 +4,7 @@ import {
   CloseOutlined,
   FolderOpenOutlined,
   SearchOutlined,
-  PlusOutlined,
+  UnorderedListOutlined,
   CheckCircleFilled,
   CheckCircleOutlined,
 } from '@ant-design/icons';
@@ -282,7 +282,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
           <Button
             className="multiselect-picker-btn"
             size="small"
-            icon={selectedKeys.length > 0 ? <FolderOpenOutlined /> : <PlusOutlined />}
+            icon={selectedKeys.length > 0 ? <FolderOpenOutlined /> : <UnorderedListOutlined />}
             onClick={openDrawer}
           />
         </Tooltip>
