@@ -25,22 +25,48 @@ function buildFormData(
   return data;
 }
 
+// --- In-flight request tracking -------------------------------------------
+// Every controller request funnels through post(), so a single counter here
+// lets the UI show a global "working" hint (top progress bar) without each
+// caller having to manage its own flag.
+type InFlightListener = (count: number) => void;
+const inFlightListeners = new Set<InFlightListener>();
+let inFlightCount = 0;
+
+/** Subscribe to the in-flight request count. Fires immediately with the
+ *  current value and returns an unsubscribe function. */
+export function subscribeInFlight(fn: InFlightListener): () => void {
+  inFlightListeners.add(fn);
+  fn(inFlightCount);
+  return () => { inFlightListeners.delete(fn); };
+}
+
+function setInFlight(delta: number): void {
+  inFlightCount = Math.max(0, inFlightCount + delta);
+  for (const l of inFlightListeners) l(inFlightCount);
+}
+
 async function post(
   url: string,
   params: Record<string, string>,
   formValues?: Record<string, string | string[]>
 ): Promise<ServerResponse> {
   const body = buildFormData(params, formValues);
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    credentials: 'same-origin',
-  });
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+  setInFlight(1);
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
+    return await resp.json();
+  } finally {
+    setInFlight(-1);
   }
-  return resp.json();
 }
 
 export async function getConfig(): Promise<ServerResponse> {

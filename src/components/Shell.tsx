@@ -38,6 +38,7 @@ import { viewHasOlapCube } from './olap/detect';
 import ViewRenderer, { SidContext, FormValuesContext } from './ViewRenderer';
 import HomePanel from './HomePanel';
 import BannerCard from './BannerCard';
+import TopProgressBar from './TopProgressBar';
 import { ensureNotificationPermission, notify } from '../services/notifications';
 import * as api from '../services/api';
 import { putTemplate, getTemplate } from '../services/templateCache';
@@ -208,7 +209,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
   const [bannersModalOpen, setBannersModalOpen] = useState(false);
+  const [requestActive, setRequestActive] = useState(false);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
+
+  // Reflect any in-flight controller request as a thin top progress bar.
+  useEffect(() => api.subscribeInFlight((count) => setRequestActive(count > 0)), []);
 
   const handleAziendaChange = useCallback(async (value: string) => {
     await api.postAction2('CambioAzienda', { navpath: value });
@@ -890,6 +895,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Global in-flight hint; suppressed while the heavy async-job overlay is up */}
+      <TopProgressBar active={requestActive && !currentTab?.loading} />
       {/* Vertical app bar */}
       <div className="app-bar">
         {appBarButtons
