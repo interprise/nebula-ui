@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, javaToDayjsFormat } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat } from '../helpers';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
  *  a ref without setState — controlled inputs that re-apply their `value`
@@ -85,13 +85,16 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
 
 export const DurataControl: ControlComponent = ({ control, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
-  const handleChange = useControlChange(control, onChange, onAction);
+  const { store, commit } = useCommitReload(control, onChange, onAction);
+  const [value, setValue] = useSyncedValue(control.value);
   return (
     <Input
       {...commonProps}
-      value={control.value as string}
+      value={value}
       placeholder={control.format}
-      onChange={(e) => handleChange(e.target.value)}
+      onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
+      onBlur={commit}
+      onPressEnter={commit}
     />
   );
 };

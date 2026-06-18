@@ -1,17 +1,20 @@
 import { Input } from 'antd';
 import { BarcodeOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedValue } from '../helpers';
 
 export const BarcodeControl: ControlComponent = ({ control, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
-  const handleChange = useControlChange(control, onChange, onAction);
+  const { store, commit } = useCommitReload(control, onChange, onAction);
+  const [value, setValue] = useSyncedValue(control.value);
   return (
     <Input
       {...commonProps}
-      value={control.value as string}
+      value={value}
       prefix={<BarcodeOutlined />}
-      onChange={(e) => handleChange(e.target.value)}
+      onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
+      onBlur={commit}
+      onPressEnter={commit}
     />
   );
 };

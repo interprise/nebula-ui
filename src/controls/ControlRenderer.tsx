@@ -3,7 +3,7 @@ import { Input } from 'antd';
 import type { UIControl } from '../types/ui';
 import { PathContext, ViewNameContext } from '../components/ViewRenderer';
 import { getControl } from './registry';
-import { useCommonProps, useControlChange, getTextMaxWidth } from './helpers';
+import { useCommonProps, useCommitReload, useSyncedValue, getTextMaxWidth } from './helpers';
 import { withPostDecorations } from './decorations';
 
 // Dev-only: track unknown control types we've already warned about so the
@@ -27,16 +27,19 @@ interface ControlRendererProps {
  *  Matches the legacy `default:` branch of the old switch. */
 const FallbackTextControl: React.FC<ControlRendererProps> = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
-  const handleChange = useControlChange(control, onChange, onAction);
+  const { store, commit } = useCommitReload(control, onChange, onAction);
+  const [value, setValue] = useSyncedValue(control.value);
   const textMaxWidth = getTextMaxWidth(control);
   return (
     <>
       {withPostDecorations(
         <Input
           {...commonProps}
-          value={control.value as string}
+          value={value}
           style={{ width: '100%', maxWidth: textMaxWidth }}
-          onChange={(e) => handleChange(e.target.value)}
+          onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
+          onBlur={commit}
+          onPressEnter={commit}
         />,
         control,
         pageType,
