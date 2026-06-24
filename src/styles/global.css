@@ -554,6 +554,25 @@ tr.breakRow td {
   background: rgba(255, 255, 255, 0.12) !important;
 }
 
+/* Header company/site selectors: slightly smaller text inside (SXADV-5454) */
+.header-select .ant-select-selection-item,
+.header-select .ant-select-selection-placeholder {
+  font-size: 12px;
+}
+
+/* Sidebar menu: distinguish top-level Modules from sub-functions (SXADV-5454) */
+.sidebar .ant-menu-submenu.menu-module > .ant-menu-submenu-title,
+.sidebar li.ant-menu-item.menu-module {
+  font-weight: 600;
+  color: #1E4176;
+  border-bottom: 1px solid #e8e8e8;
+}
+/* Open module: tint the sub-function block so it reads as a grouped set.
+   (subMenuItemBg in the Menu theme tints the items; this covers the container.) */
+.sidebar .ant-menu-sub.ant-menu-inline {
+  background: #eaeef5;
+}
+
 /* AG Grid sizing */
 .ag-theme-alpine {
   --ag-row-height: 22px;

@@ -181,14 +181,20 @@ function collectOpenKeys(items: MenuItem[]): string[] {
   return keys;
 }
 
-function buildMenuItems(items: MenuItem[]): NonNullable<React.ComponentProps<typeof Menu>['items']> {
+function buildMenuItems(items: MenuItem[], level = 0): NonNullable<React.ComponentProps<typeof Menu>['items']> {
   return items.map((item) => ({
     key: item.id,
     label: item.description,
     title: item.description,
-    children: item.children && item.children.length > 0 ? buildMenuItems(item.children) : undefined,
+    // Tag top-level rows so CSS can render Modules distinctly from sub-functions
+    ...(level === 0 ? { className: 'menu-module' } : {}),
+    children: item.children && item.children.length > 0 ? buildMenuItems(item.children, level + 1) : undefined,
   }));
 }
+
+// Fixed-width header labels so the Azienda/Sede selectors line up vertically
+// regardless of label text width.
+const hdrLabelStyle: React.CSSProperties = { color: '#fff', whiteSpace: 'nowrap', display: 'inline-block', width: 60, flexShrink: 0 };
 
 let tabCounter = 1;
 
@@ -940,8 +946,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           zIndex: 99,
         }}
       >
-        <div style={{ padding: '12px', textAlign: 'center' }}>
-          <img src="/entrasp/images/logos/LogoSixtema.jpg" alt="Sixtema" style={{ maxWidth: '100%', maxHeight: 40, objectFit: 'contain' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', gap: 8, height: 80, boxSizing: 'border-box', padding: collapsed ? '0' : '0 12px', background: loginInfo.bkColor || '#1E4176' }}>
+          {!collapsed && (
+            <img src="/entrasp/images/logos/logo_dx.png" alt="Sixtema" style={{ maxHeight: 66, maxWidth: '88%', minWidth: 0, objectFit: 'contain' }} />
+          )}
+          <Tooltip title={collapsed ? 'Espandi menu' : 'Comprimi menu'} placement="right">
+            <Button
+              type="text"
+              aria-label={collapsed ? 'Espandi menu' : 'Comprimi menu'}
+              style={{ color: '#fff' }}
+              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={() => setCollapsed(!collapsed)}
+            />
+          </Tooltip>
         </div>
         {sidebarMode === 'menu' ? (
           <>
@@ -956,7 +973,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 />
               </div>
             )}
-            <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#fff', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
+            <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#eaeef5', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
               <Menu
                 mode="inline"
                 inlineCollapsed={collapsed}
@@ -978,13 +995,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             />
           </Suspense>
         )}
-        <div style={{ textAlign: 'center', padding: 8 }}>
-          <Button
-            type="text"
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setCollapsed(!collapsed)}
-          />
-        </div>
       </div>
 
       {/* Main content */}
@@ -992,50 +1002,87 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         <Header
           style={{
             padding: '0 16px',
-            background: loginInfo.bkColor || '#fff',
+            background: loginInfo.bkColor || '#1E4176',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            height: 'auto',
-            minHeight: 48,
+            gap: 16,
+            height: 80,
+            minHeight: 80,
             lineHeight: 'normal',
           }}
         >
-          <Space>
-            <img src="/entrasp/images/logos/logo_sx.png" alt="Sixtema" style={{ height: 36, objectFit: 'contain' }} />
-          </Space>
-          <Space size="middle" style={{ minWidth: 0, flexWrap: 'nowrap' }}>
-            <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
-            <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
-            {loginInfo.aziende && loginInfo.aziende.length === 1 && (
-              <Text style={{ color: '#fff' }}>Azienda: <Text strong style={{ color: '#fff' }}>{loginInfo.aziende[0].text}</Text></Text>
+          {/* Left: product logo, brand-driven. Pandora instances show the white
+              Pandora mark; Nebula instances keep logo_sx.png. Sized full-height
+              so the white wordmark is legible on the dark header. */}
+          <img
+            src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
+            alt={loginInfo.brand || 'Pandora'}
+            style={{ height: 64, objectFit: 'contain', flexShrink: 0 }}
+          />
+
+          {/* Center: identity, company/site selectors, release */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, whiteSpace: 'nowrap' }}>
+              <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
+              <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+              {loginInfo.aziende && loginInfo.aziende.length === 1 && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                  <Text style={hdrLabelStyle}>Azienda:</Text>
+                  <Text strong style={{ color: '#fff' }}>{loginInfo.aziende[0].text}</Text>
+                </div>
+              )}
+              {loginInfo.aziende && loginInfo.aziende.length > 1 && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  <Text style={hdrLabelStyle}>Azienda:</Text>
+                  <Select
+                    size="small"
+                    className="header-select"
+                    value={loginInfo.customerKey}
+                    onChange={handleAziendaChange}
+                    style={{ width: 240, minWidth: 0 }}
+                    options={loginInfo.aziende}
+                    fieldNames={{ label: 'text', value: 'value' }}
+                  />
+                </div>
+              )}
+              {loginInfo.sedi && loginInfo.sedi.length === 1 && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                  <Text style={hdrLabelStyle}>Sede:</Text>
+                  <Text strong style={{ color: '#fff' }}>{loginInfo.sedi[0].text}</Text>
+                </div>
+              )}
+              {loginInfo.sedi && loginInfo.sedi.length > 1 && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  <Text style={hdrLabelStyle}>Sede:</Text>
+                  <Select
+                    size="small"
+                    className="header-select"
+                    value={loginInfo.sede}
+                    onChange={handleSedeChange}
+                    style={{ width: 240, minWidth: 0 }}
+                    options={loginInfo.sedi}
+                    fieldNames={{ label: 'text', value: 'value' }}
+                  />
+                </div>
+              )}
+            </div>
+            {loginInfo.dbVersion && (
+              <Text style={{ color: '#fff', whiteSpace: 'nowrap', opacity: 0.9 }}>{loginInfo.dbVersion}</Text>
             )}
-            {loginInfo.aziende && loginInfo.aziende.length > 1 && (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
-                <Text style={{ color: '#fff', whiteSpace: 'nowrap' }}>Azienda:</Text>
-                <Select
-                  value={loginInfo.customerKey}
-                  onChange={handleAziendaChange}
-                  style={{ width: 'clamp(120px, 20vw, 320px)', minWidth: 0 }}
-                  options={loginInfo.aziende}
-                  fieldNames={{ label: 'text', value: 'value' }}
-                />
-              </div>
-            )}
-            {loginInfo.sedi && loginInfo.sedi.length === 1 && (
-              <Text style={{ color: '#fff' }}>Sede: <Text strong style={{ color: '#fff' }}>{loginInfo.sedi[0].text}</Text></Text>
-            )}
-            {loginInfo.sedi && loginInfo.sedi.length > 1 && (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
-                <Text style={{ color: '#fff', whiteSpace: 'nowrap' }}>Sede:</Text>
-                <Select
-                  value={loginInfo.sede}
-                  onChange={handleSedeChange}
-                  style={{ width: 'clamp(120px, 20vw, 320px)', minWidth: 0 }}
-                  options={loginInfo.sedi}
-                  fieldNames={{ label: 'text', value: 'value' }}
-                />
-              </div>
+          </div>
+
+          {/* Right: company logo (if any) + Sixtema wordmark + user menu */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            {loginInfo.logoaz && !loginInfo.logoaz.endsWith('/') && !loginInfo.logoaz.includes('null') && (
+              <img
+                src={`/entrasp/${loginInfo.logoaz}`}
+                alt="Azienda"
+                style={{ height: 48, maxWidth: 160, objectFit: 'contain' }}
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+              />
             )}
             <Dropdown
               menu={{
@@ -1055,7 +1102,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 </Badge>
               </Space>
             </Dropdown>
-          </Space>
+          </div>
         </Header>
 
         <Content style={{ padding: '8px 16px', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>

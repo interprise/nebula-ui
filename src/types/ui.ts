@@ -275,9 +275,10 @@ export interface LoginInfo {
   aziende?: { value: string; text: string }[];
   sedi?: { value: string; text: string }[];
   title?: string;
+  brand?: string;          // "Pandora" | "Nebula" — server-driven branding
   bkColor?: string;
   logoaz?: string;
-  dbVersion?: string;
+  dbVersion?: string;      // e.g. "Rel. 1.560.10#d" — header release indicator
   cdms?: boolean;
   emailSent?: boolean;
   agendaList?: boolean;
