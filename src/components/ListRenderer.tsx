@@ -20,6 +20,12 @@ type SortDispatch = (sortExpression: string) => void;
 const sortDispatchRef = { current: null as SortDispatch | null };
 const toggleItemDispatchRef = { current: null as ((itemId: string) => void) | null };
 
+/** Last-selected record path per list, keyed by tab(sid)+view. Survives the
+ *  ListRenderer remount that happens when navigating into a detail and back,
+ *  so the originating row can be re-highlighted and scrolled into view on
+ *  return (item 5455.1C). */
+const lastSelectedByView = new Map<string, string>();
+
 /** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort.
  *  Also renders a configureIcon (green/red dot) when in configuring mode. */
 const ServerSortHeader = (props: {
@@ -76,6 +82,23 @@ const rawValueComparator = (colIdx: number) =>
     if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
     return String(rawA).localeCompare(String(rawB));
   };
+
+/** Parse a CSS inline-style string ("text-align:right;font-weight:bold") into a
+ *  React/AG-Grid style object with camelCased keys. Used to apply per-cell
+ *  ViewItem contentStyle (alignment, font, background) to grid cells. */
+function parseInlineStyle(css: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const decl of css.split(';')) {
+    const i = decl.indexOf(':');
+    if (i < 0) continue;
+    const prop = decl.slice(0, i).trim();
+    const val = decl.slice(i + 1).trim();
+    if (!prop || !val) continue;
+    const camel = prop.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+    out[camel] = val;
+  }
+  return out;
+}
 
 const gridTheme = themeAlpine.withParams({
   rowHeight: 22,
@@ -335,6 +358,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const sid = useContext(SidContext);
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
+  // Stable key for persisting the selected row across the remount that occurs
+  // when navigating into a detail and back (item 5455.1C).
+  const selKey = `${sid ?? ''}|${ui.viewName ?? ui.path ?? ''}`;
 
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
@@ -392,6 +418,51 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       }
     }
 
+    // Columns whose content style requests wrapping (e.g. numerator
+    // definitions with "white-space:pre-wrap") need autoHeight so the row grows
+    // and the whole value shows over multiple lines instead of being clipped to
+    // the first line (item 5455.3). Detected from the first data row's cells.
+    const wrapColumns = new Set<number>();
+    {
+      const firstDataRow = ui.rows.find((r: UIRow) => r.cls !== 'breakRow' && !isContinuationRow(r));
+      firstDataRow?.cells.forEach((cell: UICell, idx: number) => {
+        const st = cell.control?.style;
+        if (st && /white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
+      });
+    }
+
+    // Secondary (continuation) header labels sit under the primary header at
+    // the same column positions (mapped by cumulative colspan units, the same
+    // model used at render time). The base width calc only looks at the primary
+    // header, so longer secondary labels (e.g. "Cliente" under "Tipo doc.")
+    // get truncated (item 5455.2). Compute an additive per-column min width
+    // from the secondary labels so columns grow enough to show them.
+    const secondaryMinWidth = new Map<number, number>(); // key: serverHeaders idx
+    if (serverHeaders && ui.continuationHeaders && ui.continuationHeaders.length > 0) {
+      const mainCols: { idx: number; start: number; span: number }[] = [];
+      let unit = 0;
+      serverHeaders.forEach((h, idx) => {
+        if (h.type === 'selector') return;
+        const span = h.colspan || 1;
+        mainCols.push({ idx, start: unit, span });
+        unit += span;
+      });
+      for (const chRow of ui.continuationHeaders) {
+        let pos = 0;
+        for (const sh of chRow) {
+          const span = sh.colspan || 1;
+          const longest = (sh.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
+          const need = Math.round(longest.length * 6.3) + 10;
+          const covered = mainCols.filter(c => c.start < pos + span && (c.start + c.span) > pos);
+          if (covered.length > 0) {
+            const share = Math.ceil(need / covered.length);
+            for (const c of covered) secondaryMinWidth.set(c.idx, Math.max(secondaryMinWidth.get(c.idx) || 0, share));
+          }
+          pos += span;
+        }
+      }
+    }
+
     // Build column definitions from server headers
     const cols: ColDef[] = [];
     if (serverHeaders && serverHeaders.length > 0) {
@@ -406,7 +477,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         let wrapText = false;
         // Server-driven auto-height: UIControl.isColumnAutoHeight() emits autoHeight in column metadata
         const colAutoHeight = !!ui.columns?.[idx]?.control?.autoHeight;
-        if (isHtml || colAutoHeight) {
+        if (isHtml || colAutoHeight || wrapColumns.has(idx)) {
           if (isHtml) cellRenderer = HtmlCellRenderer;
           autoHeight = true;
           wrapText = true;
@@ -442,7 +513,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           const units = hdr.colspan || 1;
           contentMinWidth = Math.round(units * 6.3);
         }
-        const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth);
+        // Date/timestamp columns must always fit a formatted date (dd/mm/yyyy),
+        // even when the header is short ("Dal"/"Al") and no size is declared —
+        // otherwise they collapse far too narrow (item 5455.5).
+        if (colCtrlType === 'date' || colCtrlType === 'timestamp') {
+          contentMinWidth = Math.max(contentMinWidth, colCtrlType === 'timestamp' ? 130 : 88);
+        }
+        const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth, secondaryMinWidth.get(idx) || 0);
 
         // Editable column support
         const colMeta = editableColumns.get(idx);
@@ -511,7 +588,23 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           headerName: hdr.text || '',
           sortable: allDataLocal && !isMultiEdit,
           comparator: allDataLocal ? rawValueComparator(idx) : undefined,
-          cellClass: isRightAlign ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[] : hdr.cls,
+          // Static header class + money/number right-align fallback, combined
+          // with the per-cell dynamic class the server emits from the ViewItem
+          // contentClass (state colors like docProvvisorio). Stashed as
+          // _cls_{idx} during rowData build.
+          cellClass: (params: { data?: Record<string, unknown> }) => {
+            const base = isRightAlign
+              ? [hdr.cls, 'ag-right-aligned-cell'].filter(Boolean) as string[]
+              : (hdr.cls ? [hdr.cls] : []);
+            const dyn = params.data?.[`_cls_${idx}`] as string | undefined;
+            return dyn ? [...base, ...dyn.split(/\s+/).filter(Boolean)] : base;
+          },
+          // Per-cell inline style from ViewItem contentStyle (alignment, font,
+          // background); stashed as _style_{idx} during rowData build.
+          cellStyle: (params: { data?: Record<string, unknown> }) => {
+            const s = params.data?.[`_style_${idx}`] as string | undefined;
+            return s ? parseInlineStyle(s) : null;
+          },
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
           // Use fixed width so columns start at their natural size-based
@@ -657,6 +750,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         rowObj._isContinuationRow = true;
         rowObj._continuationCells = contCells;
         rowObj._recordGroup = recordGroup;
+        if (row.cls) rowObj._rowCls = row.cls;
         // Attach headers for this continuation row if available
         if (continuationHeaders && continuationHeaders[contRowIdx]) {
           rowObj._continuationHeaders = continuationHeaders[contRowIdx];
@@ -672,6 +766,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // Normal row (first or only row of record)
       contRowIdx = 0;
       recordGroup++;
+      // Server row class: zebra striping (evenRow/oddRow) and the view's
+      // dynamic RowClass (whole-row state coloring). Applied in getRowClass.
+      if (row.cls) rowObj._rowCls = row.cls;
       // Check if next row is a continuation — mark this as having continuations
       const nextRow = i + 1 < ui.rows.length ? ui.rows[i + 1] : null;
       if (nextRow && isContinuationRow(nextRow)) {
@@ -694,6 +791,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       row.cells.forEach((cell: UICell, idx: number) => {
         if (selectorIndices.has(idx) || cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.control) {
+          // Per-cell styling from ViewItem contentStyle/contentClass (the
+          // server evaluates static + dynamic ?expr per row). Applied by the
+          // ColDef cellClass/cellStyle callbacks.
+          if (cell.control.cls) rowObj[`_cls_${idx}`] = cell.control.cls;
+          if (cell.control.style) rowObj[`_style_${idx}`] = cell.control.style;
           if (customColumns.has(idx)) {
             // Custom controls: store raw value + type + column meta for the
             // cell renderer. Also stash the full per-row control so renderers
@@ -899,6 +1001,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (!data || data._isBreakRow) return;
     const path = data._selectorPath as string | undefined;
     lastSelectedPath.current = path ?? null;
+    if (path) lastSelectedByView.set(selKey, path); else lastSelectedByView.delete(selKey);
     applyClassByPath(path ?? null, 'record-group-selected');
     if (isListEdit && path && path === editingRowPath.current) return;
 
@@ -963,7 +1066,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       }
       onAction(command, { navpath: path });
     }
-  }, [isListEdit, selectorInfo, editableColumns, selectorBasePath, onChange, onEditRow, onAction, applyClassByPath]);
+  }, [isListEdit, selectorInfo, editableColumns, selectorBasePath, onChange, onEditRow, onAction, applyClassByPath, selKey]);
 
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;
@@ -1021,12 +1124,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (!rowNode.data._isContinuationRow) return;
     const path = rowNode.data._selectorPath as string | undefined;
     lastSelectedPath.current = path ?? null;
+    if (path) lastSelectedByView.set(selKey, path); else lastSelectedByView.delete(selKey);
     applyClassByPath(path ?? null, 'record-group-selected');
     const command = rowNode.data._selectorCommand;
     if (command && path) {
       onAction(command, { navpath: path });
     }
-  }, [applyClassByPath, onAction]);
+  }, [applyClassByPath, onAction, selKey]);
 
   const isFullWidthRow = (params: { rowNode: { data?: Record<string, unknown> } }) =>
     !!params.rowNode.data?._isBreakRow || !!params.rowNode.data?._isContinuationRow;
@@ -1038,13 +1142,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   };
 
   const getRowClass = (params: { data?: Record<string, unknown> }) => {
+    const rowCls = params.data?._rowCls as string | undefined;
     if (params.data?._isContinuationRow) {
-      return params.data._isLastContinuationRow
+      const base = params.data._isLastContinuationRow
         ? 'continuation-row continuation-row-last'
         : 'continuation-row continuation-row-middle';
+      return rowCls ? `${base} ${rowCls}` : base;
     }
-    if (params.data?._hasContination) return 'record-first-row';
-    return undefined;
+    if (params.data?._hasContination) return rowCls ? `record-first-row ${rowCls}` : 'record-first-row';
+    return rowCls;
   };
 
   const getRowHeight = (params: { data?: Record<string, unknown> }): number | undefined => {
@@ -1269,6 +1375,35 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // Re-apply selection highlight (may be lost during grid re-render from other actions)
     applyClassByPath(editingRowPath.current, 'record-group-selected');
   }, [rowData, isListEdit, applyClassByPath]);
+
+  // Returning to a list after a detail: re-highlight the originating record and
+  // scroll it into view (item 5455.1C). The path is read from the module-level
+  // map so it survives the remount; retries a few frames until the grid API and
+  // rows are ready.
+  useEffect(() => {
+    if (isListEdit) return; // edit mode handled by the effect above
+    const stored = lastSelectedByView.get(selKey);
+    if (!stored) return;
+    let raf = 0;
+    let tries = 0;
+    const attempt = () => {
+      const api = gridApiRef.current;
+      if (!api) {
+        if (tries++ < 10) raf = requestAnimationFrame(attempt);
+        return;
+      }
+      lastSelectedPath.current = stored;
+      applyClassByPath(stored, 'record-group-selected');
+      let rowIndex: number | null = null;
+      api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
+        if (rowIndex == null && n.data?._selectorPath === stored && n.rowIndex != null) rowIndex = n.rowIndex;
+      });
+      if (rowIndex == null && tries++ < 10) { raf = requestAnimationFrame(attempt); return; }
+      if (rowIndex != null) api.ensureIndexVisible(rowIndex, 'middle');
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [rowData, selKey, isListEdit, applyClassByPath]);
 
   const footer = ui.footer;
 

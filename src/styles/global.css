@@ -619,6 +619,67 @@ tr.breakRow td {
   background-color: var(--ag-selected-row-background-color) !important;
 }
 
+/* ============================================================
+   Legacy list state classes — ported from entrasp GRIGIO/style.css.
+   Applied per-cell from the ViewItem contentClass (?cssClass ->
+   BO.getCssClass()) via the ColDef cellClass callback, and per-row from
+   the view RowClass via getRowClass. Each is scoped to both .ag-cell and
+   .ag-row .ag-cell so it applies however the server attached it. No
+   !important: grouped hover/selection (above) intentionally win on bg.
+   ============================================================ */
+
+/* Zebra striping — server-driven, record-grouping-aware (evenRow/oddRow) */
+.ag-row.oddRow { background-color: #DFE8FF; }
+.ag-row.evenRow { background-color: #ffffff; }
+
+/* Greyed text — provisional / deleted documents */
+.ag-cell.docProvvisorio, .ag-row.docProvvisorio .ag-cell,
+.ag-cell.deleted, .ag-row.deleted .ag-cell {
+  color: #888888;
+}
+
+/* Colored text states */
+.ag-cell.red, .ag-row.red .ag-cell { color: red; }
+.ag-cell.blue, .ag-row.blue .ag-cell { color: blue; }
+
+/* Commitment (impegno) markers — bold, centered, underlined */
+.ag-cell.impegno { font-weight: bold; text-align: center; text-decoration: underline; }
+.ag-cell.impegnoAnnullato { font-weight: bold; color: #800000; text-align: center; text-decoration: underline; }
+.ag-cell.impegnoConsuntivato { font-weight: bold; color: #006000; text-align: center; text-decoration: underline; }
+
+/* Background shades (cell paints over zebra row) */
+.ag-cell.grigio, .ag-row.grigio .ag-cell { background-color: #DDDDDD; }
+.ag-cell.prezzi { background-color: #EEEEEE; }
+.ag-cell.prezziW { background-color: #FFFFFF; }
+.ag-cell.prestazioni { background-color: #F5F5F5; }
+.ag-cell.prestazioniErr { background-color: #FAFAD2; }
+
+/* Lock-icon markers (served via the /entrasp/images Vite proxy) */
+.ag-cell.daApprovare {
+  padding-left: 20px;
+  background-image: url(/entrasp/images/icons/lock_go.png);
+  background-repeat: no-repeat;
+  background-position: left center;
+}
+.ag-cell.bloccato {
+  padding-left: 20px;
+  background-image: url(/entrasp/images/icons/lock_delete.png);
+  background-repeat: no-repeat;
+  background-position: left center;
+}
+
+/* Breadcrumb links: make clickable steps (incl. the "« back one step" link)
+   read clearly as actions rather than greyed inactive text (item 5455.0). */
+.breadcrumb-link,
+.breadcrumb-back-link {
+  color: #1677ff !important;
+}
+.breadcrumb-link:hover,
+.breadcrumb-back-link:hover {
+  color: #4096ff !important;
+  text-decoration: underline;
+}
+
 /* Wait cursor during server requests (set on body via JS) */
 body[style*="cursor: wait"],
 body[style*="cursor: wait"] * {

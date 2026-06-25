@@ -389,10 +389,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       else if (resp.ui?.dataOnly && resp.ui.templateKey) {
         const tpl = getTemplate(resp.ui.templateKey);
         const existingTab = tabs.find(t => t.key === tabKey);
-        const bindings = existingTab?.bindings ?? {};
-        const scopePaths = existingTab?.scopePaths ?? {};
+        // A reused (cached) template can map to a DIFFERENT live viewstate id
+        // than when first cached, so the server now re-sends bindings/scopePaths
+        // on DATA-only responses. Prefer the fresh manifest; fall back to the
+        // tab's last-known one only if the server didn't send it. Persisting the
+        // refreshed manifest keeps subsequent posts on the current navpath
+        // (fixes the stale "S1-0.0" vs live "S1-21.0" desync).
+        const bindings = resp.bindings ?? existingTab?.bindings ?? {};
+        const scopePaths = resp.scopePaths ?? existingTab?.scopePaths ?? {};
         if (tpl) {
           const hydrated = hydrate(tpl, resp.ui.values, resp.ui.dynProps, bindings, scopePaths);
+          update.bindings = bindings;
+          update.scopePaths = scopePaths;
           // DATA-only is a reload on the same view: carry the breadcrumbs
           // forward from the existing tab state (the template doesn't cache
           // them and the server doesn't re-emit them on reloads).
@@ -804,11 +812,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // Parse HTML breadcrumbs into structured items
   const parsedBreadcrumbs = useMemo(() => {
     if (!breadcrumbs) return [];
-    const items: { title: string; action?: string; navpath?: string; option1?: string }[] = [];
+    const items: { title: string; action?: string; navpath?: string; option1?: string; isBack?: boolean }[] = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${breadcrumbs}</div>`, 'text/html');
     doc.querySelectorAll('.breadcrumbElement, [onclick]').forEach((el) => {
-      const title = (el.getAttribute('title') || el.textContent || '').replace(/^<<\s*/, '');
+      const rawTitle = (el.getAttribute('title') || el.textContent || '');
+      // The "go back one step" element is marked with a leading "<<" — keep a
+      // flag so it can render with a clear back-link affordance (item 5455.0).
+      const isBack = /^\s*<<\s*/.test(rawTitle);
+      const title = rawTitle.replace(/^\s*<<\s*/, '');
       const onclick = el.getAttribute('onclick') || '';
       const m = onclick.match(/doAction[23]?\(\s*'([^']+)'(?:\s*,\s*'([^']*)')?(?:\s*,\s*'([^']*)')?\s*\)/);
       if (title) {
@@ -817,6 +829,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           action: m?.[1],
           navpath: m?.[2],
           option1: m?.[3],
+          isBack,
         });
       }
     });
@@ -1139,14 +1152,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                               title: b.action ? (
                                 <a
                                   title={b.title}
-                                  style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
+                                  className={b.isBack ? 'breadcrumb-back-link' : 'breadcrumb-link'}
+                                  style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom', color: '#1677ff', cursor: 'pointer', fontWeight: b.isBack ? 600 : undefined }}
                                   onClick={() => {
                                     const params: Record<string, string> = {};
                                     if (b.navpath) params.navpath = b.navpath;
                                     if (b.option1) params.option1 = b.option1;
                                     handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
                                   }}
-                                >{b.title}</a>
+                                >{b.isBack ? '« ' : ''}{b.title}</a>
                               ) : (
                                 <span
                                   title={b.title}

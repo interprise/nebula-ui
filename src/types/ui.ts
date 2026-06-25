@@ -5,6 +5,7 @@ export interface UIControl {
   editable?: boolean;
   hint?: string;
   cls?: string;
+  style?: string; // per-cell inline CSS from ViewItem contentStyle (list cells)
   mandatory?: boolean;
   tabStop?: boolean;
   value?: unknown;
