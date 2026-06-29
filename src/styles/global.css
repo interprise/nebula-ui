@@ -762,9 +762,12 @@ body[style*="cursor: wait"] * {
 .configure-icon:hover { opacity: 0.8; }
 
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
-   don't stretch controls to fill the cell — let them sit at their natural width */
-.companion-cell .ant-input:not(textarea),
-.companion-cell .ant-select {
+   don't stretch inputs to fill the cell — let them sit at their natural width.
+   NOTE: this must NOT include .ant-select — an antd Select is a <div> with no
+   intrinsic width, so width:auto collapses it to just the dropdown arrow
+   (SXADV-5461.1). Combos keep their inline width:100% + min/maxWidth instead,
+   like every non-companion combo. */
+.companion-cell .ant-input:not(textarea) {
   width: auto !important;
 }
 

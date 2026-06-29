@@ -13,9 +13,9 @@ const RemoteCombo: React.FC<{
   control: UIControl;
   commonProps: CommonInputProps;
   value: unknown;
-  maxWidth?: number;
+  widthStyle: React.CSSProperties;
   onChange: (val: unknown) => void;
-}> = ({ control, commonProps, value, maxWidth, onChange }) => {
+}> = ({ control, commonProps, value, widthStyle, onChange }) => {
   const sid = useContext(SidContext);
   const displayText = control.displayText as string | undefined;
   const navpath = control.navpath as string;
@@ -74,7 +74,7 @@ const RemoteCombo: React.FC<{
       loading={fetching}
       notFoundContent={fetching ? 'Caricamento...' : (hasFetched ? 'Nessun risultato' : null)}
       onDropdownVisibleChange={handleDropdownOpen}
-      style={{ width: '100%', ...(maxWidth && { maxWidth }) }}
+      style={widthStyle}
       options={options}
       onSearch={handleSearch}
       onChange={onChange}
@@ -86,6 +86,16 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const textMaxWidth = getTextMaxWidth(control);
+  // Width handling (SXADV-5461.1). antd Select is a <div> with no intrinsic
+  // width, so `width:100%` alone collapses it to ~1 char inside an auto-layout
+  // table column or a flex slot (unlike a text <input>, which has a default
+  // intrinsic width). When the ViewItem declares a `size`, honor it like the
+  // legacy UI: render the combo at its size-derived width instead of stretching
+  // to (or collapsing within) the cell. Without a size, fill the cell but floor
+  // the width so it can't collapse.
+  const widthStyle: React.CSSProperties = control.size != null
+    ? { width: textMaxWidth, maxWidth: textMaxWidth, flexShrink: 0 }
+    : { width: '100%', maxWidth: textMaxWidth, minWidth: 160 };
 
   if (control.remote) {
     return withPostDecorations(
@@ -93,7 +103,7 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
         control={control}
         commonProps={commonProps}
         value={control.value}
-        maxWidth={textMaxWidth}
+        widthStyle={widthStyle}
         onChange={handleChange}
       />,
       control,
@@ -110,7 +120,7 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
       showSearch
       optionFilterProp="label"
       allowClear
-      style={{ width: '100%', maxWidth: textMaxWidth }}
+      style={widthStyle}
       onChange={handleChange}
       options={(control.options || []).map((o) => ({ value: o.value, label: o.text }))}
     />,
