@@ -259,6 +259,10 @@ export interface UIData {
   trackAsynchJob?: boolean;
   showProgress?: boolean;
   callback?: string;
+  // Server-driven "open this URL" directive emitted by workflow navigateUrl
+  // events (e.g. visualizzaFE → VisFE styled-XML viewer). The client opens it
+  // in a new window/tab, mirroring the legacy doAction handler (SXADV-5457.3).
+  openUrl?: string;
 }
 
 export interface ErrorItem {

@@ -86,7 +86,12 @@ const App: React.FC = () => {
       const raw = resp as Record<string, unknown>;
       if (raw.loginTitle) setLoginTitle(raw.loginTitle as string);
       const pluginUrl = (raw.controlsPluginUrl as string | undefined) || DEFAULT_CONTROLS_PLUGIN_URL;
-      await loadControlPlugin(pluginUrl, hostApi);
+      // Cache-bust the dynamically imported plugin bundle. It is imported once
+      // at startup, so without this the browser pins the previously cached
+      // module and a freshly deployed plugin (new controls/fixes) is never
+      // picked up until a manual hard-refresh.
+      const bustedPluginUrl = pluginUrl + (pluginUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+      await loadControlPlugin(bustedPluginUrl, hostApi);
       // If the server returned an SSO redirect URL and we're not in the
       // middle of consuming an SSO callback, bounce to the IdP directly.
       // When initialSsoParams is non-empty the IdP just sent us back —

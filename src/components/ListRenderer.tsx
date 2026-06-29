@@ -176,7 +176,19 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
   const onChange = (name: string, value: unknown) => {
     ctx?.onChange?.(name, value);
   };
-  return <CustomComponent control={control} onAction={onAction} onChange={onChange} />;
+  // Swallow clicks so interacting with an embedded control (attachment
+  // download link, action icon, ...) doesn't bubble up to the AG Grid row
+  // click handler and navigate into the detail view (SXADV-5457.2/.3). The
+  // React stopPropagation alone can't stop AG Grid's row-click — AG Grid
+  // listens on the cell natively, before the synthetic event reaches React's
+  // root — so the row handlers also bail when the native target sits inside a
+  // .list-cell-control wrapper (see handleRowClicked / handleGridClick).
+  const stop = (e: React.MouseEvent | React.PointerEvent) => e.stopPropagation();
+  return (
+    <span className="list-cell-control" onClick={stop} onMouseDown={stop} onPointerDown={stop} style={{ display: 'inline-flex', alignItems: 'center', width: '100%' }}>
+      <CustomComponent control={control} onAction={onAction} onChange={onChange} />
+    </span>
+  );
 };
 
 // Full-width renderer for break rows (group separators)
@@ -274,7 +286,7 @@ const ContinuationCell = ({
       // areas of the cell, not when interacting with embedded controls.
       const stop = (e: React.MouseEvent | React.PointerEvent) => e.stopPropagation();
       return (
-        <span style={style} onClick={stop} onMouseDown={stop} onPointerDown={stop}>
+        <span className="list-cell-control" style={style} onClick={stop} onMouseDown={stop} onPointerDown={stop}>
           <Component control={cell.control} onAction={dispatchAction} onChange={onChange} />
         </span>
       );
@@ -318,7 +330,15 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
         }}>
           {cells.map((cell, i) => {
             const w = widths[i];
-            const style: React.CSSProperties = { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis' };
+            // Custom (cell-renderable) controls — e.g. the report bar — render
+            // embedded components that can exceed the column width; clipping
+            // them with overflow:hidden + ellipsis cuts off their buttons
+            // (SXADV-5457.1). Keep the box width for column alignment but let
+            // the control overflow visibly instead of being clipped.
+            const isCustom = !!(cell.control && cell.control.type && isCellRenderable(cell.control.type));
+            const style: React.CSSProperties = isCustom
+              ? { width: w, minWidth: w, padding: '0 4px', overflow: 'visible', whiteSpace: 'nowrap' }
+              : { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis' };
             return <ContinuationCell key={i} cell={cell} style={style} onAction={onAction} onChange={onChange} rowPath={rowPath} />;
           })}
         </div>
@@ -1071,7 +1091,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;
     const target = src?.target as HTMLElement | undefined;
-    if (target?.closest('button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+    if (target?.closest('.list-cell-control, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
       return;
     }
     activateRow(event.data as Record<string, unknown> | undefined);
@@ -1110,7 +1130,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // row navigation.
   const handleGridClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+    if (target.closest('.list-cell-control, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
       return;
     }
     const api = gridApiRef.current;

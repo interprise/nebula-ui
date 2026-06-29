@@ -30,7 +30,8 @@ export const AttachmentsControl: ControlComponent = ({ control, onAction }) => {
               type="text"
               icon={<DeleteOutlined />}
               title="Elimina"
-              onClick={() => onAction(deleteCmd, { option1: item.key })}
+              // CdmsDelete (a Command) reads the attachment id from `key`.
+              onClick={() => onAction(deleteCmd, { key: item.key })}
             />
           )}
           {canEdit && editCmd && (
@@ -39,7 +40,8 @@ export const AttachmentsControl: ControlComponent = ({ control, onAction }) => {
               type="text"
               icon={<EditOutlined />}
               title="Modifica"
-              onClick={() => onAction(editCmd, { option1: item.key })}
+              // CdmsEdit (a Command) reads the attachment id from `navpath`.
+              onClick={() => onAction(editCmd, { navpath: item.key })}
             />
           )}
           {downloadCmd ? (
@@ -47,7 +49,8 @@ export const AttachmentsControl: ControlComponent = ({ control, onAction }) => {
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                triggerDownload(downloadCmd, { option1: item.key }, undefined, item.fileName);
+                // DocDownload is a Command2 (→ /controller2) reading `key`.
+                triggerDownload(downloadCmd, { key: item.key }, undefined, item.fileName, true);
               }}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
             >

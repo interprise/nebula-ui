@@ -465,6 +465,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (resp.toolbar) update.toolbar = resp.toolbar;
       if (resp.uiData) {
         update.uiData = resp.uiData;
+        // Server-driven "open this URL" directive from workflow navigateUrl
+        // events (e.g. visualizzaFE → VisFE styled-XML viewer / foglio di
+        // stile). The legacy client did window.open(uiData.openUrl); mirror
+        // that here so the action actually opens its window instead of just
+        // reloading the list (SXADV-5457.3).
+        const openUrl = resp.uiData.openUrl;
+        if (openUrl) {
+          const full = /^https?:\/\//i.test(openUrl)
+            ? openUrl
+            : `/entrasp/${openUrl.replace(/^\//, '')}`;
+          window.open(full, '_blank', 'noopener,noreferrer');
+        }
         // Handle file download callback from server
         const cb = resp.uiData.callback as string | undefined;
         if (cb && cb.includes('handleFileDownload')) {

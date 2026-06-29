@@ -17,16 +17,26 @@ export const ButtonControl: ControlComponent = ({ control, onAction }) => (
   </Button>
 );
 
-export const ActionControl: ControlComponent = ({ control, onAction }) => (
-  <Button
-    id={control.id}
-    type="link"
-    disabled={control.disabled}
-    onClick={() => control.action && onAction(control.action)}
-  >
-    {control.prompt}
-  </Button>
-);
+export const ActionControl: ControlComponent = ({ control, onAction }) => {
+  // The server hides actions with no applicable workflow event for the row.
+  if (control.visible === false || !control.action) return null;
+  // workflow.Action resolves the event by option1 (the event index emitted by
+  // the server); without it the command can't find the event (SXADV-5457.3).
+  const extra = control.option1 != null ? { option1: String(control.option1) } : undefined;
+  return (
+    <Button
+      id={control.id}
+      type="link"
+      size="small"
+      disabled={control.disabled}
+      icon={control.icon ? <img src={`/entrasp/images/${control.icon}`} width={16} height={16} /> : undefined}
+      onClick={() => onAction(control.action as string, extra)}
+      title={control.hint}
+    >
+      {control.prompt}
+    </Button>
+  );
+};
 
 export const WindowButtonControl: ControlComponent = ({ control, onAction }) => (
   <Button

@@ -144,10 +144,15 @@ export async function triggerDownload(
   action: string,
   params: Record<string, string> = {},
   sid: string = 'S1',
-  fallbackName: string = 'download'
+  fallbackName: string = 'download',
+  // Some download commands are Command2 (resolved at /controller2) — e.g.
+  // DocDownload for CDMS attachments, which streams the file directly. Posting
+  // such a command to /controller fails with HTTP 400 (unknown command), so
+  // callers must route it to the Command2 endpoint (SXADV-5457.2).
+  useCommand2: boolean = false,
 ): Promise<void> {
   const body = buildFormData({ action, sid, ...params });
-  const resp = await fetch(CMD_URL, {
+  const resp = await fetch(useCommand2 ? CMD2_URL : CMD_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,

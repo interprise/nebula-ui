@@ -100,7 +100,9 @@ export function registerBuiltinControls(): void {
     visibilityFilter: BooleanControl,
     // entrasp-specific types register from the plugin (see note above).
   });
-  registerCellRenderable('workflowStatus');
+  // attachments + action render per-row in list views (download links and
+  // workflow action icons, e.g. the active-invoices list — SXADV-5457).
+  registerCellRenderable('workflowStatus', 'attachments', 'action');
   auditRegistry();
 }
 
