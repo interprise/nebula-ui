@@ -20,6 +20,9 @@ const PLACEHOLDER = /^\?i(\d+)$/;
 // merged (not overwritten as `value`) into the cached template stub.
 const STRUCTURED_VALUE_TYPES = new Set([
   'detailView', 'tab', 'warning', 'workflowStatus', 'actionBar', 'buttonBar',
+  // MultiSelect emits its per-render descriptor (value, selectedItems,
+  // negationValue, navpath) as a structured DATA value merged into the stub.
+  'multiselect',
   // entrasp custom controls with fully-dynamic descriptors
   'assegnazioni', 'partitario', 'disponibilita', 'richOffAtt',
   'consuntivazione', 'cdmsClass', 'lgtcCalendario', 'sottoconti',

@@ -43,6 +43,7 @@ import { ensureNotificationPermission, notify } from '../services/notifications'
 import * as api from '../services/api';
 import { putTemplate, getTemplate } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
+import { negationFieldName } from '../controls/helpers';
 import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
 
 const { Header, Content } = Layout;
@@ -292,7 +293,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
               values[name] = String(ctrl.value);
             }
+            // Re-seed the negation ($not) flag from the server's authoritative
+            // state so it survives this rebuild and is posted on ExecuteQuery.
+            // Without it, toggling "not" then triggering any reload would drop
+            // the flag (no control carries it) — same class of loss the scalar
+            // value above was fixed for (SXADV-5465).
+            if (name && ctrl.negation && ctrl.negationValue) {
+              values[negationFieldName(name)] = '1';
+            }
           }
+
           // Recurse into embedded/detail views and tabs
           if (ctrl.contentRows) {
             walkRows(ctrl.contentRows);

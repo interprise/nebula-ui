@@ -44,6 +44,19 @@ export function getFieldName(control: UIControl): string {
   return control.name || control.id || '';
 }
 
+/** Wire-form name for a query field's negation ("$not") flag. The server reads
+ *  it as `controlName + "$not" + "." + viewstateId` (the `$not` infix sits
+ *  BEFORE the viewstate-id suffix — see UIControl.getControlName(item,vs,"$not")).
+ *  The hydrated field name is `controlName.viewstateId`, so we must insert
+ *  `$not` before the trailing `.viewstateId`, not append it at the end
+ *  (SXADV-5465). Falls back to a plain suffix when the name has no binding. */
+export function negationFieldName(wireName: string): string {
+  const i = wireName.lastIndexOf('.');
+  return i >= 0
+    ? wireName.slice(0, i) + '$not' + wireName.slice(i)
+    : wireName + '$not';
+}
+
 export function getTextMaxWidth(control: UIControl): number {
   return control.size ? Math.min(control.size * 8 + 16, 500) : 500;
 }

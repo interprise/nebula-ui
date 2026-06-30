@@ -8,6 +8,32 @@ import {
   FileSearchOutlined,
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
+import { useSyncedState, negationFieldName } from './helpers';
+
+/** Query "not" negation toggle. The raw `onChange` (Shell.handleFieldChange)
+ *  writes to a ref without setState, so a controlled `checked={control.
+ *  negationValue}` would never update — the box appeared unclickable
+ *  (SXADV-5465.1). Hold the checked state locally and re-sync only when the
+ *  server actually changes negationValue, mirroring the input controls. */
+const NegationCheckbox: React.FC<{
+  control: UIControl;
+  fieldName: string;
+  onChange?: (name: string, value: unknown) => void;
+}> = ({ control, fieldName, onChange }) => {
+  const [checked, setChecked] = useSyncedState(!!control.negationValue);
+  return (
+    <span className="negation-box">
+      <span className="negation-label">not</span>
+      <Checkbox
+        checked={checked}
+        onChange={(e) => {
+          setChecked(e.target.checked);
+          onChange?.(negationFieldName(fieldName), e.target.checked ? '1' : '');
+        }}
+      />
+    </span>
+  );
+};
 
 /** Wraps a control with post-decoration icons/widgets matching the Java addPostDecoration() output. */
 export const withPostDecorations = (
@@ -40,13 +66,7 @@ export const withPostDecorations = (
   return (
     <span className="post-decorations">
       {hasNegation && (
-        <span className="negation-box">
-          <span className="negation-label">not</span>
-          <Checkbox
-            checked={!!control.negationValue}
-            onChange={(e) => onChange?.(fieldName + '$not', e.target.checked ? '1' : '')}
-          />
-        </span>
+        <NegationCheckbox control={control} fieldName={fieldName} onChange={onChange} />
       )}
       {element}
       {postPrompt && <span className="post-prompt">{postPrompt}</span>}
