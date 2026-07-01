@@ -3,6 +3,7 @@ import { Input, InputNumber, DatePicker, Select, Checkbox } from 'antd';
 import type { ICellEditorParams, ICellRendererParams } from 'ag-grid-community';
 import dayjs from 'dayjs';
 import { fetchComboOptions } from '../services/api';
+import { parseFlexibleDate } from './helpers';
 
 // Column metadata from server (attached via cellEditorParams / cellRendererParams)
 interface ColMeta {
@@ -88,25 +89,54 @@ NumberCellEditor.displayName = 'NumberCellEditor';
 export const DateCellEditor = React.forwardRef(
   (props: ICellEditorParams & { colMeta?: ColMeta }, ref) => {
     const fmt = props.colMeta?.format || 'DD/MM/YYYY';
-    const [value, setValue] = useState<dayjs.Dayjs | null>(() => {
+    const initial = (() => {
       if (!props.value) return null;
       const d = dayjs(props.value, fmt);
       return d.isValid() ? d : null;
-    });
+    })();
+    const [value, setValue] = useState<dayjs.Dayjs | null>(initial);
+    const pickerRef = useRef<React.ComponentRef<typeof DatePicker>>(null);
+    // Latest raw text the user typed, captured live. On Tab, AG Grid ends the
+    // edit WITHOUT calling getValue() (verified), so we can't rely on it for a
+    // typed-but-unpicked value like a bare day. We capture keystrokes and, on
+    // blur, flex-parse and write straight into the row via setDataValue so the
+    // value commits regardless of getValue (SXADV-5469).
+    const rawRef = useRef<string | null>(null);
 
-    React.useImperativeHandle(ref, () => ({
-      getValue: () => (value ? value.format(fmt) : ''),
-    }));
+    useEffect(() => {
+      const input = pickerRef.current?.nativeElement?.querySelector('input');
+      if (!input) return;
+      const onInput = () => { rawRef.current = input.value; };
+      input.addEventListener('input', onInput);
+      return () => input.removeEventListener('input', onInput);
+    }, []);
+
+    // Resolve the current committed value: flex-parse typed text, else the
+    // value picked from the calendar popup.
+    const resolve = () => {
+      const raw = (rawRef.current ?? '').trim();
+      const d = raw ? parseFlexibleDate(raw, fmt) : value;
+      return d ? d.format(fmt) : '';
+    };
+
+    React.useImperativeHandle(ref, () => ({ getValue: resolve }));
 
     return (
       <DatePicker
+        ref={pickerRef}
         value={value}
         onChange={(d) => setValue(d)}
+        onBlur={() => {
+          if (rawRef.current == null) return; // nothing typed
+          const colId = props.column?.getColId?.();
+          if (colId) props.node?.setDataValue(colId, resolve());
+        }}
         format={fmt}
+        placeholder=""
         size="small"
         style={{ width: '100%' }}
+        preserveInvalidOnBlur
         autoFocus
-        open
       />
     );
   }

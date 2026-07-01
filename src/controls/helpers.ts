@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
+import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
 
@@ -32,6 +34,109 @@ export function useSyncedValue(controlValue: unknown): [string, (v: string) => v
 export function javaToDayjsFormat(fmt: string | undefined): string | undefined {
   if (!fmt) return undefined;
   return fmt.replace(/dd/g, 'DD').replace(/yyyy/g, 'YYYY').replace(/yy/g, 'YY');
+}
+
+/** Autocomplete a partially-typed Italian date, restoring the flexible input
+ *  the classic (ExtJS) line accepted but the antd DatePicker's strict
+ *  single-format parse dropped (SXADV-5469). Missing month/year are filled
+ *  from *today*; a 2-digit year uses dayjs's own century pivot.
+ *
+ *  Accepted forms (separators: `/ - .` or space), `dateFmt` = display format
+ *  (`DD/MM/YYYY`):
+ *    - `1`/`2` digits or one token        → day only, current month + year
+ *    - `4` digits or `dd/mm`              → dd/mm, current year
+ *    - `6` digits or `dd/mm/yy`           → 2-digit year (dayjs pivot)
+ *    - `8` digits or `dd/mm/yyyy`         → full date
+ *    - `3`/`5`/`7` bare digits            → rejected (matches legacy)
+ *  Returns a validated `Dayjs`, or `null` when the input can't be completed
+ *  into a real calendar date. */
+export function parseFlexibleDate(raw: string, dateFmt = 'DD/MM/YYYY'): Dayjs | null {
+  const s = (raw ?? '').trim();
+  if (!s) return null;
+
+  // Already a well-formed value in the display format — keep it as-is.
+  const strict = dayjs(s, dateFmt, true);
+  if (strict.isValid()) return strict;
+
+  const now = dayjs();
+  let day: string;
+  let month: string;
+  let year: string | undefined;
+
+  if (/[^0-9]/.test(s)) {
+    const parts = s.split(/[^0-9]+/).filter((p) => p.length > 0);
+    if (parts.length === 0) return null;
+    [day, month, year] = [parts[0], parts[1] ?? String(now.month() + 1), parts[2]];
+  } else {
+    switch (s.length) {
+      case 1:
+      case 2:
+        [day, month, year] = [s, String(now.month() + 1), undefined];
+        break;
+      case 4:
+        [day, month, year] = [s.slice(0, 2), s.slice(2, 4), undefined];
+        break;
+      case 6:
+        [day, month, year] = [s.slice(0, 2), s.slice(2, 4), s.slice(4, 6)];
+        break;
+      case 8:
+        [day, month, year] = [s.slice(0, 2), s.slice(2, 4), s.slice(4, 8)];
+        break;
+      default:
+        return null; // 3, 5, 7, or > 8 bare digits
+    }
+  }
+
+  if (!year) year = String(now.year());
+
+  const dd = day.padStart(2, '0');
+  const mm = month.padStart(2, '0');
+  // Parse against the matching year width so dayjs applies its 2-digit pivot.
+  const yearFmt = year.length <= 2 ? 'YY' : 'YYYY';
+  const yyyy = year.padStart(yearFmt === 'YY' ? 2 : 4, '0');
+  const parsed = dayjs(`${dd}/${mm}/${yyyy}`, `DD/MM/${yearFmt}`, true);
+  return parsed.isValid() ? parsed : null;
+}
+
+/** Blur handler for antd `DatePicker` that restores flexible date entry. Used
+ *  with `preserveInvalidOnBlur` so the picker keeps (rather than wipes) the raw
+ *  typed text on focus-out: this handler then reads it and, when the picker's
+ *  own strict parse would have rejected it, autocompletes via
+ *  {@link parseFlexibleDate} and commits the result. Single display format is
+ *  kept (not a format array) so the picker never commits mid-typing. Supports
+ *  timestamp formats by splitting off a trailing time token. */
+export function useFlexibleDateBlur(
+  fmt: string,
+  commit: (value: Dayjs | null, valueStr: string) => void,
+): (e: FocusEvent<HTMLElement>) => void {
+  return useCallback(
+    (e: FocusEvent<HTMLElement>) => {
+      const raw = (e.target as HTMLInputElement).value?.trim();
+      if (!raw) return;
+      // The picker already accepts a well-formed value; don't double-commit.
+      if (dayjs(raw, fmt, true).isValid()) return;
+
+      const hasTime = /[Hh]/.test(fmt);
+      const dateFmt = hasTime ? fmt.split(/\s+/)[0] : fmt;
+      let datePart = raw;
+      let timePart = '';
+      if (hasTime) {
+        const m = raw.match(/^(\S+)\s+(.+)$/);
+        if (m) [, datePart, timePart] = m;
+      }
+
+      let d = parseFlexibleDate(datePart, dateFmt);
+      if (!d) return;
+      if (hasTime) {
+        const t = timePart
+          ? dayjs(timePart, ['HH:mm', 'HHmm', 'H:mm', 'HH.mm'], true)
+          : null;
+        d = d.hour(t?.isValid() ? t.hour() : 0).minute(t?.isValid() ? t.minute() : 0);
+      }
+      commit(d, d.format(fmt));
+    },
+    [fmt, commit],
+  );
 }
 
 export function decodeHtmlEntities(s: string): string {

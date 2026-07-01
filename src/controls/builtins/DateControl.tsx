@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur } from '../helpers';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
  *  a ref without setState — controlled inputs that re-apply their `value`
@@ -31,16 +31,21 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
   const handleChange = useControlChange(control, onChange, onAction);
   const dateFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY';
   const [value, setValue] = useLocalDayjs(control.value, dateFmt);
+  const commit = (d: Dayjs | null, dateStr: string) => {
+    setValue(d);
+    handleChange(dateStr);
+  };
+  const onBlur = useFlexibleDateBlur(dateFmt, commit);
   return (
     <DatePicker
       {...commonProps}
       value={value}
       format={dateFmt}
+      placeholder=""
       style={{ minWidth: 96 }}
-      onChange={(d, dateStr) => {
-        setValue(d);
-        handleChange(dateStr);
-      }}
+      preserveInvalidOnBlur
+      onChange={(d, dateStr) => commit(d, dateStr as string)}
+      onBlur={onBlur}
     />
   );
 };
@@ -54,6 +59,7 @@ export const TimeControl: ControlComponent = ({ control, onAction, onChange }) =
       {...commonProps}
       value={value}
       format="HH:mm"
+      placeholder=""
       style={{ minWidth: 95 }}
       onChange={(t, timeStr) => {
         setValue(t);
@@ -68,17 +74,22 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
   const handleChange = useControlChange(control, onChange, onAction);
   const tsFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY HH:mm';
   const [value, setValue] = useLocalDayjs(control.value, tsFmt);
+  const commit = (d: Dayjs | null, dateStr: string) => {
+    setValue(d);
+    handleChange(dateStr);
+  };
+  const onBlur = useFlexibleDateBlur(tsFmt, commit);
   return (
     <DatePicker
       {...commonProps}
       showTime
       value={value}
       format={tsFmt}
+      placeholder=""
       style={{ minWidth: 170 }}
-      onChange={(d, dateStr) => {
-        setValue(d);
-        handleChange(dateStr);
-      }}
+      preserveInvalidOnBlur
+      onChange={(d, dateStr) => commit(d, dateStr as string)}
+      onBlur={onBlur}
     />
   );
 };
