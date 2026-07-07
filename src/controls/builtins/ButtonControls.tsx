@@ -75,7 +75,13 @@ export const LookupControl: ControlComponent = ({ control, onAction }) => {
   );
 };
 
-export const NavigateViewControl: ControlComponent = ({ control, onAction }) => (
+export const NavigateViewControl: ControlComponent = ({ control, onAction }) => {
+  // Visibility is a render-time concern: the server always emits the descriptor
+  // (so it survives template caching) and carries per-record navigability as a
+  // `visible` dynProp. Hide when the current record has no navigable target
+  // (SXADV-5474).
+  if (control.visible === false) return null;
+  return (
   <span
     id={control.id}
     className="navigate-view-link"
@@ -83,13 +89,18 @@ export const NavigateViewControl: ControlComponent = ({ control, onAction }) => 
     title={control.hint}
     onClick={() => control.action && onAction(control.action, {
       navpath: control.navpath as string,
-      option1: control.name as string,
+      // option1 must be the BARE item name: the server resolves the source
+      // ViewItem via getItemByName (exact match). control.name is hydrated to
+      // the wire-form "name.viewstateId", so use the dedicated controlName
+      // field (falling back to name for pre-fix servers) — SXADV-5474.
+      option1: (control.controlName ?? control.name) as string,
     })}
   >
     <LinkOutlined style={{ marginRight: 4, fontSize: 12 }} />
     {control.prompt as string}
   </span>
-);
+  );
+};
 
 export const AddControl: ControlComponent = ({ control, onAction }) => {
   if (control.visible === false) return null;

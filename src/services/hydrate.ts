@@ -82,9 +82,24 @@ function hydrateControl(
       if (out === null) out = { ...src };
       out.navigateAdd = { ...srcAdd, navpath };
     }
-    // Reload info lives as flat fields on the control; fill in navpath
-    // for controls that advertise a reload trigger.
-    if (src.reload && !src.navpath) {
+    // Flat navpath on the control itself, refreshed from the per-tab scope
+    // path. Two cases:
+    //  - Standalone action/link controls (navigateView, navigateViewButton,
+    //    add, lookup, windowButton, button) bake `navpath = mVS.getPath()`
+    //    into the cached template. A reused template freezes it at the
+    //    viewstate id from first-cache, so it goes stale on later navigations
+    //    and the link dispatches against a dead viewstate — the click looks
+    //    dead (SXADV-5474). Overwrite it with the current scope path.
+    //  - Reload-trigger controls carry no navpath in the template; fill it in.
+    // Structured-value controls (actionBar, tab, multiselect, …) re-emit their
+    // descriptor in DATA mode and get navpath overwritten by the value merge
+    // below, so this is a no-op for them.
+    if (typeof src.navpath === 'string') {
+      if (src.navpath !== navpath) {
+        if (out === null) out = { ...src };
+        out.navpath = navpath;
+      }
+    } else if (src.reload) {
       if (out === null) out = { ...src };
       out.navpath = navpath;
     }
