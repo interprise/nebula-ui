@@ -487,7 +487,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                     />
                   </div>
                   {tabControl.contentRows && (
-                    <div className="tab-content view-body-embedded" style={{ overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                       <table className="layout-table" style={{ width: '100%' }}>
                         <tbody>
                           {rulerRow}
@@ -654,6 +654,12 @@ const CellRenderer: React.FC<{
   if (cell.style) {
     tdProps.style = parseInlineStyle(cell.style);
   }
+  // Field hint (ViewItem hint="...") → native hover tooltip. Text/number inputs
+  // forward the control-level `title`, but antd DatePicker/Select drop it, so
+  // hints silently failed on those. Setting it on the content cell makes the
+  // hover explanation work uniformly for every control type.
+  const cellHint = cell.control?.hint as string | undefined;
+  if (cellHint) tdProps.title = cellHint;
 
   switch (cell.elementType) {
     case ELTYPE_PROMPT:
@@ -766,7 +772,7 @@ function renderContainerControl(
             />
           </div>
           {control.contentRows && (
-            <div className="tab-content" style={{ overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div className="tab-content" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <ViewRenderer
                 ui={{
                   rows: control.contentRows,
@@ -799,6 +805,11 @@ function renderContainerControl(
           viewName: (control.viewName ?? control.contentViewName) as string,
           pageType: isHorizontal ? 1 : (control.pageType as number | undefined),
           totalCols: control.totalCols as number | undefined,
+          // totalWidth is needed alongside totalCols so ListRenderer can size
+          // columns by their server colspan proportion (perUnit = totalWidth /
+          // totalCols). Without it, columns that declare no `size` — e.g. List /
+          // CodeTable / GenericList combos — collapse to their header width.
+          totalWidth: control.totalWidth as number | undefined,
           // Derive path from header or footer (server puts it there for embedded views)
           path: embeddedHeader?.path || embeddedFooter?.path || (control.path as string | undefined),
           header: embeddedHeader,

@@ -48,12 +48,41 @@ html, body {
   font-weight: bold;
   padding: 4px 8px;
 }
+/* Hint contentClass header styles (SXADV-5472). Hints used as top-prompts /
+   column headers carry these legacy classes via contentClass; text-align is
+   what gives the operator/column labels their "centered in the middle of the
+   fields" position. Mirrors the legacy GRIGIO stylesheet. */
 .section_header,
-.section_header2 {
-  background-color: #D9E1EA;
-  color: black;
+.section_header3 {
+  background-color: #D0DEF0;
+  color: #15428B;
   font-weight: bold;
-  padding: 4px 8px;
+  border: 1px solid #99BBE8;
+  text-align: center;
+  padding: 2px 4px;
+}
+.section_header2 {
+  background-color: #D0DEF0;
+  color: #15428B;
+  font-weight: bold;
+  padding: 2px 4px;
+}
+.section_header_left {
+  background-color: #D0DEF0;
+  color: #15428B;
+  font-weight: bold;
+  border: 1px solid #99BBE8;
+  text-align: left;
+  padding-left: 5px;
+}
+.master_header2 {
+  color: #15428B;
+  font-weight: bold;
+}
+.topPrompt {
+  background-color: whitesmoke;
+  color: #000;
+  vertical-align: top;
 }
 /* Clickable decorative spans generated server-side */
 .navigateView {

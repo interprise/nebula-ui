@@ -49,6 +49,16 @@ import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
 const { Header, Content } = Layout;
 const { Text } = Typography;
 
+/**
+ * Re-issues the request that produced the current response, appending `token`
+ * to an accumulating `messages` string. Used to answer server-side
+ * CONFIRMATION/YESNOCANCEL prompts by replaying the *original* request (menu
+ * navigation, Save, Delete, …) rather than a hardcoded Post — so the action
+ * the confirmation was guarding actually proceeds (SXADV-5470.1). Mirrors the
+ * legacy ExtJS processOkCancel/reqopt reuse.
+ */
+type ConfirmReplay = (token: string) => void;
+
 interface TabState {
   key: string;
   label: string;
@@ -248,7 +258,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     []
   );
 
-  const handleErrors = useCallback((errors: ErrorItem[]) => {
+  const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
     for (const err of errors) {
       switch (err.type) {
         case 'ERROR':
@@ -266,11 +276,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           Modal.confirm({
             content: err.message,
             onOk: () => {
-              const tab = getActiveTabState();
-              if (tab && err.mnemonic) {
-                api.postAction('Post', {
-                  messages: `${err.mnemonic},Y`,
-                }, tab.formValues, tab.sid);
+              if (!err.mnemonic) return;
+              // Answer token per CORE's message grammar (Session.addConfirmation):
+              // plain confirmations are matched on "<mnemonic>,"; yes/no/cancel
+              // prompts expect "<mnemonic>:S,". The trailing comma is required.
+              const token = err.type === 'YESNOCANCEL'
+                ? `${err.mnemonic}:S,`
+                : `${err.mnemonic},`;
+              if (replay) {
+                // Re-run the request that raised the prompt so its guarded
+                // action (menu change, save, …) actually proceeds.
+                replay(token);
+              } else {
+                // No replay context (e.g. a dialog-driven action) — fall back to
+                // re-posting on the active tab so the prompt isn't a dead end.
+                const tab = getActiveTabState();
+                if (tab) api.postAction('Post', { messages: token }, tab.formValues, tab.sid);
               }
             },
           });
@@ -354,24 +375,30 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   );
 
   const processResponseInner = useCallback(
-    (tabKey: string, resp: ServerResponse) => {
+    (tabKey: string, resp: ServerResponse, replay?: ConfirmReplay) => {
       const r = resp as Record<string, unknown>;
       if (r.notLoggedIn) {
+        updateTabState(tabKey, { loading: false, progressPct: undefined });
         message.error('Sessione scaduta. Effettuare nuovamente il login.');
         return;
       }
       if (r.noSession) {
+        updateTabState(tabKey, { loading: false, progressPct: undefined });
         message.error('Sessione non valida. Riprovare.');
         return;
       }
       if (resp.errors && resp.errors.length > 0) {
-        handleErrors(resp.errors);
+        handleErrors(resp.errors, replay);
       }
       if (resp.redirect) {
         window.location.href = resp.redirect;
         return;
       }
-      const update: Partial<TabState> = {};
+      // This is the terminal handler for a completed (non-async) response —
+      // always drop the loading overlay that handleMenuClick/handleAction/
+      // replay raised, so a menu click can't leave the tab spinning (or the
+      // HomePanel showing behind a dialog) — SXADV-5470.0.
+      const update: Partial<TabState> = { loading: false, progressPct: undefined };
       // Two-phase pipeline — METADATA+DATA: cache the stable template and
       // render the initial hydrated tree. The binding manifest is per-tab
       // (not cached with the template) — it maps each structural scope to
@@ -523,7 +550,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   processResponseInnerRef.current = processResponseInner;
 
   const processResponse = useCallback(
-    (tabKey: string, resp: ServerResponse, sid?: string) => {
+    (tabKey: string, resp: ServerResponse, sid?: string, replay?: ConfirmReplay) => {
       // Server says "poll me for progress" — show spinner and start polling
       if ((resp.uiData?.showProgress || resp.uiData?.trackAsynchJob || resp.trackAsynchJob) && !resp.ui) {
         const tabSid = sid || tabs.find((t) => t.key === tabKey)?.sid || 'S1';
@@ -531,9 +558,33 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         pollProgress(tabKey, tabSid);
         return;
       }
-      processResponseInner(tabKey, resp);
+      processResponseInner(tabKey, resp, replay);
     },
     [processResponseInner, pollProgress, tabs, updateTabState]
+  );
+
+  // Build a confirmation-replay bound to the request that produced a response.
+  // `request(extra)` must re-issue that exact request with the extra params
+  // merged in; `messages` accumulates across chained prompts (each answer is a
+  // pre-formatted token ending in ","). See ConfirmReplay / SXADV-5470.1.
+  const makeConfirmReplay = useCallback(
+    (tabKey: string, sid: string, request: (extra: Record<string, string>) => Promise<ServerResponse>): ConfirmReplay => {
+      let messages = '';
+      const replay: ConfirmReplay = (token) => {
+        messages += token;
+        document.body.style.cursor = 'wait';
+        updateTabState(tabKey, { loading: true, progressPct: undefined });
+        request({ messages })
+          .then((resp) => processResponse(tabKey, resp, sid, replay))
+          .catch((e) => {
+            updateTabState(tabKey, { loading: false, progressPct: undefined });
+            message.error(`Error: ${e}`);
+          })
+          .finally(() => { document.body.style.cursor = ''; });
+      };
+      return replay;
+    },
+    [processResponse, updateTabState]
   );
 
   const handleMenuClick = useCallback(
@@ -546,12 +597,23 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       tab.formValues = {};
       formValuesRef.current[tab.key] = tab.formValues;
       editNavpathRef.current = null;
-      updateTabState(tab.key, { label: menuLabel, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
+      // Keep the current view mounted under a loading overlay while the new
+      // screen loads, instead of blanking `ui` to undefined. Blanking made the
+      // HomePanel ("BENVENUTO…") flash on every menu click, and linger behind
+      // the confirm dialog when the navigation hit an "unsaved changes" prompt
+      // (SXADV-5470.0 / .1). processResponse installs the new view (and clears
+      // loading) once it arrives.
+      updateTabState(tab.key, { label: menuLabel, loading: true, progressPct: undefined, formValues: tab.formValues });
 
       document.body.style.cursor = 'wait';
+      // If the navigation raises a confirmation ("annullare TUTTE le modifiche?"),
+      // replay THIS ExecuteMenuItem with the answer appended so the menu change
+      // actually proceeds — the old code posted a hardcoded Post and dropped the
+      // navigation, leaving the user stuck on the previous view (SXADV-5470.1).
+      const replay = makeConfirmReplay(tab.key, tab.sid, (extra) => api.executeMenuItem(menuId, tab.sid, extra));
       try {
         const resp = await api.executeMenuItem(menuId, tab.sid);
-        processResponse(tab.key, resp);
+        processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
@@ -559,7 +621,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState]
+    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay]
   );
 
   const handleAction = useCallback(
@@ -684,10 +746,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       }
 
       document.body.style.cursor = 'wait';
+      const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
+      // Replay THIS action (Save/Delete/navigation/…) with the answer appended
+      // if it raises a confirmation — instead of the old hardcoded Post that
+      // discarded the real action and its response (SXADV-5470.1).
+      const replay = makeConfirmReplay(tab.key, tab.sid, (extra) =>
+        api.postAction(action, { ...serverParams, ...extra }, fv, tab.sid));
       try {
-        const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
         const resp = await api.postAction(action, serverParams, fv, tab.sid);
-        processResponse(tab.key, resp);
+        processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         message.error(`Error: ${e}`);
@@ -695,7 +762,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu]
+    [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu, makeConfirmReplay]
   );
 
   // CDMS: clicking a folder in the tree opens a filtered document list in the active tab

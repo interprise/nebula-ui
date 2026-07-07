@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FocusEvent } from 'react';
+import type { CSSProperties, FocusEvent } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
@@ -164,6 +164,23 @@ export function negationFieldName(wireName: string): string {
 
 export function getTextMaxWidth(control: UIControl): number {
   return control.size ? Math.min(control.size * 8 + 16, 500) : 500;
+}
+
+/** Parse a server-sent inline CSS string (e.g. contentStyle="text-align:center;")
+ *  into a React style object. Mirrors ViewRenderer's cell-style parser. */
+export function parseInlineStyle(styleStr?: string): CSSProperties | undefined {
+  if (!styleStr) return undefined;
+  const style: Record<string, string> = {};
+  styleStr.split(';').forEach((rule) => {
+    const idx = rule.indexOf(':');
+    if (idx < 0) return;
+    const prop = rule.slice(0, idx).trim();
+    const val = rule.slice(idx + 1).trim();
+    if (!prop || !val) return;
+    const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+    style[camel] = val;
+  });
+  return style as CSSProperties;
 }
 
 export interface CommonInputProps {

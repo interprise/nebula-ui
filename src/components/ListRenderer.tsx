@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef, useEffect, useContext } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Typography } from 'antd';
@@ -405,8 +405,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
 
 
-  const { columnDefs, rowData } = useMemo(() => {
-    if (!ui.rows || ui.rows.length === 0) return { columnDefs: [], rowData: [] };
+  const { columnDefs, rowData, serverEditingPath, serverEditingFirstCol } = useMemo(() => {
+    // An empty list still has column metadata (ui.headers / ui.columns). Build
+    // the columns from it so the header row and the "no records" overlay render
+    // correctly. Bailing to zero columns here left an empty list (e.g.
+    // registratoriCassaList) header-less and made the continuation-header
+    // injection paint a garbled, clipped sliver. Only bail when there is truly
+    // nothing to build columns from (no rows AND no header metadata).
+    if ((!ui.rows || ui.rows.length === 0) && (!ui.headers || ui.headers.length === 0)) {
+      return { columnDefs: [], rowData: [], serverEditingPath: null, serverEditingFirstCol: null };
+    }
+    const uiRows: UIRow[] = ui.rows ?? [];
 
     const serverHeaders = ui.headers;
 
@@ -430,7 +439,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       });
     } else {
       // Fallback: check first data row
-      const firstDataRow = ui.rows.find((r: UIRow) => r.cls !== 'breakRow');
+      const firstDataRow = uiRows.find((r: UIRow) => r.cls !== 'breakRow');
       if (firstDataRow) {
         firstDataRow.cells.forEach((cell: UICell, idx: number) => {
           if (cell.control?.type === 'html') htmlColumns.add(idx);
@@ -444,7 +453,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // the first line (item 5455.3). Detected from the first data row's cells.
     const wrapColumns = new Set<number>();
     {
-      const firstDataRow = ui.rows.find((r: UIRow) => r.cls !== 'breakRow' && !isContinuationRow(r));
+      const firstDataRow = uiRows.find((r: UIRow) => r.cls !== 'breakRow' && !isContinuationRow(r));
       firstDataRow?.cells.forEach((cell: UICell, idx: number) => {
         const st = cell.control?.style;
         if (st && /white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
@@ -540,6 +549,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           contentMinWidth = Math.max(contentMinWidth, colCtrlType === 'timestamp' ? 130 : 88);
         }
         const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth, secondaryMinWidth.get(idx) || 0);
+        // Starting width honors the server's colspan proportions (the same
+        // model the legacy grid used): the server sizes columns in colspan
+        // units — ui.totalCols spread over ui.totalWidth — so e.g. Descrizione
+        // at colspan 12 is meant to be by far the widest column. Without this,
+        // width collapses to effectiveMinWidth (a header/content *minimum*), so
+        // text columns with no declared `size` (codice, descrizione) render far
+        // too narrow. Floor at the minimum so nothing clips, and fall back to
+        // the minimum when the server omits the proportion metadata.
+        const perUnit = ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0;
+        const colspanWidth = perUnit > 0 ? Math.round((hdr.colspan || 1) * perUnit) : 0;
+        const effectiveWidth = Math.max(effectiveMinWidth, colspanWidth);
 
         // Editable column support
         const colMeta = editableColumns.get(idx);
@@ -627,10 +647,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           },
           headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
-          // Use fixed width so columns start at their natural size-based
-          // dimension and remain resizable by the user. The colspan-as-
-          // flex-unit-count is recovered from ui.headers in computeUnitOffsets.
-          width: effectiveMinWidth,
+          // Fixed width so columns start at their colspan-proportioned
+          // dimension (see effectiveWidth) and remain resizable by the user.
+          // The colspan-as-flex-unit-count is recovered from ui.headers in
+          // computeUnitOffsets for continuation-row cell alignment.
+          width: effectiveWidth,
           minWidth: Math.min(40, effectiveMinWidth),
           resizable: true,
           cellRenderer: resolvedCellRenderer,
@@ -654,7 +675,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       });
     } else {
       // Fallback: derive columns from first data row cells
-      const firstRow = ui.rows[0];
+      const firstRow = uiRows[0];
       if (firstRow) {
         firstRow.cells.forEach((cell: UICell, idx: number) => {
           if (cell.elementType === ELTYPE_CONTENT) {
@@ -745,9 +766,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     let lastSelectorInfo: { command?: string; path?: string } = {};
     let contRowIdx = 0; // tracks which continuation row within a record (0-based)
     let recordGroup = 0; // groups main + continuation rows for hover
+    // The row the SERVER placed in the edit path (ViewItem.isEditable only
+    // emits editable cell metadata for that row). After an Add on a listEdit
+    // grid it's the new insert record — we auto-open its editor below so the
+    // record "opens in editing" without a manual click (SXADV-5470.2).
+    let serverEditingPath: string | null = null;
+    let serverEditingFirstCol: number | null = null;
 
-    for (let i = 0; i < ui.rows.length; i++) {
-      const row = ui.rows[i];
+    for (let i = 0; i < uiRows.length; i++) {
+      const row = uiRows[i];
       const rowObj: Record<string, unknown> = { _rowId: row.id };
 
       // Break rows (group separators) — full-width section headers
@@ -790,7 +817,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // dynamic RowClass (whole-row state coloring). Applied in getRowClass.
       if (row.cls) rowObj._rowCls = row.cls;
       // Check if next row is a continuation — mark this as having continuations
-      const nextRow = i + 1 < ui.rows.length ? ui.rows[i + 1] : null;
+      const nextRow = i + 1 < uiRows.length ? uiRows[i + 1] : null;
       if (nextRow && isContinuationRow(nextRow)) {
         rowObj._hasContination = true;
         rowObj._recordGroup = recordGroup;
@@ -886,6 +913,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               rowObj[`_editable_${ci}`] = true;
             }
           }
+          // Remember the first edit-path row and its first editable column so
+          // the effect below can start the grid editor on it.
+          if (serverEditingPath == null) {
+            serverEditingPath = (rowObj._selectorPath as string | undefined) ?? null;
+            for (const ci of Array.from(editableColumns.keys()).sort((a, b) => a - b)) {
+              if (rowObj[`_editable_${ci}`]) { serverEditingFirstCol = ci; break; }
+            }
+          }
         }
       }
       rows.push(rowObj);
@@ -904,8 +939,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (isLast) r._isLastContinuationRow = true;
     }
 
-    return { columnDefs: cols, rowData: rows };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, allDataLocal, isMultiEdit, isListEdit]);
+    return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, allDataLocal, isMultiEdit, isListEdit, editableColumns]);
 
   // Refs and helpers for grouped hover/selection on multi-row records
   const gridApiRef = useRef<GridApi | null>(null);
@@ -994,6 +1029,56 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const lastHoverPath = useRef<string | null>(null);
   const lastSelectedPath = useRef<string | null>(null);
+
+  // When an embedded grid lives inside a dual-area bottom panel
+  // (.view-split-bottom), cap its height at the panel's *visible* height
+  // instead of a fixed 60vh. Sizing to 60vh (or content) makes a tall grid
+  // overflow the tab, which forces a second, outer scrollbar and makes the
+  // grid's own scroll fight the container's — you can only scroll "to a point".
+  // Tables in the ancestor chain block CSS flex height propagation, so measure
+  // the available space and cap the grid to it: few rows still shrink to
+  // content; many rows fill the visible area and scroll internally (one region).
+  const [fillCapHeight, setFillCapHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!embedded) return;
+    const gridEl = gridContainerRef.current;
+    if (!gridEl || typeof ResizeObserver === 'undefined') return;
+    // The bottom panel has a definite height and clips overflow — it is the
+    // viewport the grid should fill down to. Absent it (e.g. a grid inline in
+    // a form), keep the 60vh fallback by leaving fillCapHeight null.
+    const bound = gridEl.closest<HTMLElement>('.view-split-bottom');
+    if (!bound) return;
+    const measure = () => {
+      const el = gridContainerRef.current;
+      if (!el) return;
+      // The constraining viewport is the outermost scroll container between the
+      // grid and the bottom panel — the bottom-panel tab's own .tab-content,
+      // whose height is fixed by flex (it doesn't grow to content). Fall back to
+      // the panel itself if there's no scroll container.
+      let scrollC: HTMLElement = bound;
+      for (let p = el.parentElement; p && p !== bound.parentElement; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') scrollC = p; // keep last → outermost
+      }
+      // Everything inside the viewport except the grid's own box (tab bars,
+      // padding, pagination, ancestor spacing) is chrome — independent of the
+      // grid's height. The grid may occupy the remainder without overflowing.
+      const chrome = scrollC.scrollHeight - el.clientHeight;
+      const avail = scrollC.clientHeight - chrome;
+      setFillCapHeight(Math.max(120, Math.floor(avail)));
+    };
+    measure();
+    // AG Grid / fonts settle a frame later — re-measure once the layout is final.
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(bound);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [embedded, rowData.length]);
 
   const getGridViewport = useCallback((): HTMLElement | null => {
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
@@ -1396,6 +1481,46 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     applyClassByPath(editingRowPath.current, 'record-group-selected');
   }, [rowData, isListEdit, applyClassByPath]);
 
+  // Auto-open the editor on a NEW server edit-path row (e.g. the record added
+  // by "Nuovo" on an editable list with no detail view). The legacy client
+  // rendered that row's cells as always-live <input>s and focused currField;
+  // AG Grid needs an explicit startEditingCell. Only fires when the edit-path
+  // row differs from the one we're already editing, so plain reloads of the
+  // current row don't reopen/fight the editor (SXADV-5470.2). Retries a few
+  // frames until the grid has applied the new rowData and assigned rowIndex.
+  useEffect(() => {
+    if (!isListEdit || !serverEditingPath) return;
+    if (editingRowPath.current === serverEditingPath) return;
+    let raf = 0;
+    let tries = 0;
+    const attempt = () => {
+      const api = gridApiRef.current;
+      if (!api) {
+        if (tries++ < 10) raf = requestAnimationFrame(attempt);
+        return;
+      }
+      let rowIndex: number | null = null;
+      api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
+        if (rowIndex == null && n.data?._selectorPath === serverEditingPath && n.rowIndex != null) {
+          rowIndex = n.rowIndex;
+        }
+      });
+      if (rowIndex == null) {
+        if (tries++ < 10) raf = requestAnimationFrame(attempt);
+        return;
+      }
+      editingRowPath.current = serverEditingPath;
+      onEditRow?.(serverEditingPath);
+      applyClassByPath(serverEditingPath, 'record-group-selected');
+      api.ensureIndexVisible(rowIndex, 'middle');
+      if (serverEditingFirstCol != null) {
+        api.startEditingCell({ rowIndex, colKey: `col_${serverEditingFirstCol}` });
+      }
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [rowData, serverEditingPath, serverEditingFirstCol, isListEdit, onEditRow, applyClassByPath]);
+
   // Returning to a list after a detail: re-highlight the originating record and
   // scroll it into view (item 5455.1C). The path is read from the module-level
   // map so it survives the remount; retries a few frames until the grid API and
@@ -1465,17 +1590,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           if (!embedded) {
             return { width: '100%', flex: 1, minHeight: 0 };
           }
-          // Embedded grid (form/detail or tab): size to content but cap at
-          // 60% of viewport. AG Grid's native scroll (both axes) handles
-          // overflow past that cap. Few rows → small grid; many rows →
-          // capped grid with internal scroll.
+          // Embedded grid (form/detail or tab): size to content but cap so it
+          // never overflows its container. Inside a dual-area bottom panel the
+          // cap is the panel's measured visible height (fillCapHeight) so the
+          // grid fills it and scrolls internally; elsewhere fall back to 60% of
+          // the viewport. AG Grid's native scroll handles overflow past the cap.
+          // Few rows → small grid; many rows → capped grid with internal scroll.
           const rowCount = rowData.length || 0;
           const approxRowHeight = 28;
           const headerChromeHeight = 40
             + (ui.continuationHeaders?.length ?? 0) * 24
             + 30;
           const contentHeight = rowCount * approxRowHeight + headerChromeHeight;
-          const cappedHeight = Math.min(contentHeight, Math.round(window.innerHeight * 0.6));
+          const cap = fillCapHeight ?? Math.round(window.innerHeight * 0.6);
+          const cappedHeight = Math.min(contentHeight, cap);
           return {
             width: '100%',
             maxWidth: '100%',

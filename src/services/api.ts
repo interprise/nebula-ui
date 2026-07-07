@@ -90,12 +90,16 @@ export async function logout(): Promise<ServerResponse> {
 
 export async function executeMenuItem(
   menuId: string,
-  sid: string = 'S1'
+  sid: string = 'S1',
+  // Extra params (e.g. `messages` when replaying a menu navigation after the
+  // user answered an "unsaved changes" confirmation — see SXADV-5470.1).
+  extra: Record<string, string> = {}
 ): Promise<ServerResponse> {
   return post(CMD_URL, {
     action: 'ExecuteMenuItem',
     menuId,
     sid,
+    ...extra,
   });
 }
 

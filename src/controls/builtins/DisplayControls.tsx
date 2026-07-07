@@ -1,7 +1,7 @@
 import { Input } from 'antd';
 import { BarcodeOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useCommitReload, useSyncedValue } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedValue, parseInlineStyle } from '../helpers';
 
 export const BarcodeControl: ControlComponent = ({ control, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
@@ -59,7 +59,29 @@ export const HintControl: ControlComponent = ({ control, onAction }) => {
       </span>
     );
   }
-  return <span className="hint-text">{control.value as string}</span>;
+  // A hint used as a top-prompt / column header carries its legacy styling via
+  // contentClass (control.cls) — e.g. `section_header` centers the text (the
+  // "middle of the fields" look) and applies the header chrome — and/or
+  // contentStyle (control.style, e.g. text-align). Both were dropped before, so
+  // header hints collapsed to plain left-aligned text (SXADV-5472). Render as a
+  // block filling the cell so text-align in those styles actually centers.
+  const value = control.value as string | undefined;
+  // Blank content (empty or whitespace-only, e.g. a spacer `content=" "`) must
+  // NOT get the header class/style, or it renders as an empty blue box. Keep the
+  // spaces so the cell still reserves its width.
+  if (!value || value.trim() === '') {
+    return <span className="hint-text" style={{ display: 'block', width: '100%' }}>{value}</span>;
+  }
+  const cls = control.cls as string | undefined;
+  const style = parseInlineStyle(control.style as string | undefined);
+  return (
+    <span
+      className={cls || 'hint-text'}
+      style={{ display: 'block', width: '100%', ...style }}
+    >
+      {value}
+    </span>
+  );
 };
 
 export const HighlightControl: ControlComponent = ({ control }) => (
