@@ -191,6 +191,31 @@ function isActionBarRow(row: UIRow): boolean {
   return row.cells.some((cell) => cell.control?.type === 'actionBar');
 }
 
+/** Inline embedded views (EmbeddedViewUIControl, e.g. anagraficheVrEmbQuery in a
+ *  query form) are emitted differently by mode: FULL renders their child fields
+ *  as flat sibling rows in the parent form, but METADATA nests them under a
+ *  sectionContent container cell carrying `rows` (+ `scope` for hydration). The
+ *  renderer only draws top-level rows, so under the always-METADATA query
+ *  pipeline the embedded fields silently disappeared on every reload/clear.
+ *  hydrate() has already resolved the nested rows (names/values
+ *  keyed by scope) — here we just lift them up to the parent stream so they
+ *  render inline exactly as FULL mode does. FULL responses carry no such cell,
+ *  so this is a no-op there. Recurses for embeds nested inside embeds. */
+function flattenInlineEmbeds(rows: UIRow[]): UIRow[] {
+  let changed = false;
+  const out: UIRow[] = [];
+  for (const row of rows) {
+    const embed = row.cells.find((c) => c.scope != null && Array.isArray(c.rows));
+    if (embed && row.cells.length === 1 && embed.rows) {
+      out.push(...flattenInlineEmbeds(embed.rows));
+      changed = true;
+    } else {
+      out.push(row);
+    }
+  }
+  return changed ? out : rows;
+}
+
 /** Build a tab label node, adding a configure icon when configuring mode is active */
 function renderTabLabel(
   tab: { prompt: string; configureIcon?: { included: boolean; itemId: string } },
@@ -231,6 +256,11 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   }
 
   if (!ui.rows) return null;
+
+  // Lift inline embedded-view fields (nested under sectionContent cells in
+  // METADATA mode) up to sibling rows so they render like FULL mode.
+  const flatRows = flattenInlineEmbeds(ui.rows);
+  if (flatRows !== ui.rows) ui = { ...ui, rows: flatRows };
 
   const pageType = ui.pageType; // 0=QUERY, 1=LIST, 2=DETAIL
   if (pageType === 1) {
