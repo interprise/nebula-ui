@@ -133,6 +133,7 @@ export interface ListHeader {
 
 export interface ListMeta {
   title?: string;
+  subtitle?: string; // applied-filter description under the title (SXADV-5484)
   path?: string;
   recordCount?: number;
   position?: number;

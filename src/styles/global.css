@@ -273,6 +273,24 @@ html, body {
   margin-bottom: 4px;
 }
 
+/* Applied-filter description under the list title (SXADV-5484), mirroring the
+   legacy .subTitle. When present it carries the separator so the title+subtitle
+   read as one header group. */
+.view-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: #8c8c8c;
+  padding: 0 0 6px;
+  border-bottom: 1px solid #e8e8e8;
+  margin-bottom: 4px;
+}
+
+.view-title:has(+ .view-subtitle) {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 2px;
+}
+
 .view-body {
   overflow-y: auto;
   overflow-x: auto;

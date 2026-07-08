@@ -1568,6 +1568,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   return (
     <div className="list-container" style={listContainerStyle}>
       {meta?.title && <div className="view-title">{meta.title}</div>}
+      {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
 
       {ui.listActions && ui.listActions.length > 0 && (
         <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '4px 8px' }}>
