@@ -46,6 +46,46 @@ function setInFlight(delta: number): void {
   for (const l of inFlightListeners) l(inFlightCount);
 }
 
+/** Best-effort conversion of a JS object-literal ("relaxed" JSON) string into
+ *  strict JSON: quote bare identifier keys and turn single-quoted string
+ *  literals into double-quoted ones. Returns null when the input doesn't look
+ *  like a simple object literal, so unrelated payloads are never mangled. */
+function relaxedToJson(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return null;
+  // Single-quoted string values -> double-quoted. The auth layer never embeds a
+  // single quote inside these values (they are URLs / booleans / short msgs).
+  let out = trimmed.replace(/'([^']*)'/g, (_m, s: string) => JSON.stringify(s));
+  // Bare identifier keys:  {foo:  / ,bar:  ->  {"foo":  / ,"bar":
+  // (a preceding `{`/`,` anchors the key, so `https:` inside a value is safe)
+  out = out.replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, '$1"$2"$3');
+  return out;
+}
+
+/** Parse a controller response, tolerating the *relaxed* JSON the CORE/SSO auth
+ *  layer still emits — unquoted keys and single-quoted strings, e.g.
+ *  `{redirect: 'https://…'}`, `{notLoggedIn: true}`. The legacy ExtJS client
+ *  used `Ext.decode`, which accepted these; the browser's strict `JSON.parse`
+ *  throws on them, which used to silently drop the SSO-map logout redirect
+ *  (SXADV-5481.1). Normal UI/render responses are valid JSON and take the fast
+ *  path; only auth-layer object-literals hit the fallback. Same-origin payloads. */
+async function parseResponse(resp: Response): Promise<ServerResponse> {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text) as ServerResponse;
+  } catch (strictErr) {
+    const relaxed = relaxedToJson(text);
+    if (relaxed !== null) {
+      try {
+        return JSON.parse(relaxed) as ServerResponse;
+      } catch {
+        // fall through and surface the original strict-parse error
+      }
+    }
+    throw strictErr;
+  }
+}
+
 async function post(
   url: string,
   params: Record<string, string>,
@@ -63,7 +103,7 @@ async function post(
     if (!resp.ok) {
       throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
     }
-    return await resp.json();
+    return await parseResponse(resp);
   } finally {
     setInFlight(-1);
   }
@@ -217,7 +257,7 @@ export async function uploadFile(
     body: formData,
     credentials: 'same-origin',
   });
-  return resp.json();
+  return parseResponse(resp);
 }
 
 export async function reloadMenu(extra: Record<string, string> = {}): Promise<ServerResponse> {
@@ -344,7 +384,7 @@ export async function uploadAttachment(
     body: formData,
     credentials: 'same-origin',
   });
-  return resp.json();
+  return parseResponse(resp);
 }
 
 /** Fetch the metadata list of attachments for the BO bound to the current
