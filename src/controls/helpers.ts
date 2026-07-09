@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, FocusEvent } from 'react';
+import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, SetStateAction } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
@@ -108,11 +108,21 @@ export function parseFlexibleDate(raw: string, dateFmt = 'DD/MM/YYYY'): Dayjs | 
 export function useFlexibleDateBlur(
   fmt: string,
   commit: (value: Dayjs | null, valueStr: string) => void,
+  currentValue?: Dayjs | null,
 ): (e: FocusEvent<HTMLElement>) => void {
   return useCallback(
     (e: FocusEvent<HTMLElement>) => {
       const raw = (e.target as HTMLInputElement).value?.trim();
-      if (!raw) return;
+      if (!raw) {
+        // Emptied via keyboard (Canc/Backspace). With `preserveInvalidOnBlur`
+        // the picker keeps the controlled `value` prop and visually restores
+        // the old date on blur, so the clear never sticks (SXADV-5489.1).
+        // Commit null to make the keyboard clear persist — but only when there
+        // was a value, else every tab-through of an empty date field would
+        // fire a spurious change/reload.
+        if (currentValue) commit(null, '');
+        return;
+      }
       // The picker already accepts a well-formed value; don't double-commit.
       if (dayjs(raw, fmt, true).isValid()) return;
 
@@ -135,7 +145,78 @@ export function useFlexibleDateBlur(
       }
       commit(d, d.format(fmt));
     },
-    [fmt, commit],
+    [fmt, commit, currentValue],
+  );
+}
+
+/** Controlled-`open` state for an antd `Select` that opens ONLY on a deliberate
+ *  gesture — typing, or a click on the trigger arrow — never on a plain
+ *  body/focus click. antd opens the dropdown on any click of the selector, but
+ *  the legacy (ExtJS) combo dropped its list only from the trigger button or
+ *  typeahead; a body click just focused the field (SXADV-5489.2). The returned
+ *  `onOpenChange` honors antd's CLOSE requests (click-away, blur, selection) but
+ *  ignores its OPEN requests — callers open explicitly via `setOpen`. */
+export function useSelectOpen(): {
+  open: boolean;
+  setOpen: Dispatch<SetStateAction<boolean>>;
+  onOpenChange: (visible: boolean) => void;
+} {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = useCallback((visible: boolean) => {
+    if (!visible) setOpen(false);
+  }, []);
+  return { open, setOpen, onOpenChange };
+}
+
+const norm = (v: unknown): string | undefined =>
+  v == null || v === '' ? undefined : String(v);
+
+/** onKeyDown for a single-select antd `Select` (`showSearch`) handling two keys
+ *  the legacy line supported but antd doesn't for single-selects (SXADV-5489.2):
+ *
+ *  - **Canc/Backspace** with an empty search box clears the value from the
+ *    keyboard (antd only removes selections on Backspace in `mode="multiple"`).
+ *  - **Esc** acts as a field-level undo, restoring `baseline` (the last
+ *    server/committed value) — a value the user had just cleared or changed is
+ *    otherwise lost. Also closes the dropdown, since `open` is controlled.
+ *  - **Ctrl+Space / Ctrl+ArrowDown** opens the list from the keyboard — the
+ *    dropdown is controlled to stay shut on focus, so this is the keyboard
+ *    equivalent of a trigger-arrow click (same combo as ExpBuilderControl).
+ *
+ *  `clear`/`restore` receive the value to commit; `close`/`openList` toggle. */
+export function useSelectKeys(
+  value: unknown,
+  baseline: unknown,
+  clear: (val: unknown) => void,
+  restore: (val: string | undefined) => void,
+  close: () => void,
+  openList: () => void,
+): (e: KeyboardEvent<HTMLElement>) => void {
+  return useCallback(
+    (e: KeyboardEvent<HTMLElement>) => {
+      if (e.ctrlKey && (e.code === 'Space' || e.key === ' ' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openList();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        const b = norm(baseline);
+        if (b !== norm(value)) restore(b); // undo to the baseline
+        return;
+      }
+      if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+      if (value == null || value === '') return;
+      // Non-empty search input → the key edits the filter text, don't hijack it.
+      if ((e.target as HTMLInputElement).value) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clear(undefined);
+    },
+    [value, baseline, clear, restore, close, openList],
   );
 }
 

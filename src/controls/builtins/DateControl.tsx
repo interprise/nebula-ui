@@ -35,7 +35,7 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
     setValue(d);
     handleChange(dateStr);
   };
-  const onBlur = useFlexibleDateBlur(dateFmt, commit);
+  const onBlur = useFlexibleDateBlur(dateFmt, commit, value);
   return (
     <DatePicker
       {...commonProps}
@@ -78,7 +78,7 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
     setValue(d);
     handleChange(dateStr);
   };
-  const onBlur = useFlexibleDateBlur(tsFmt, commit);
+  const onBlur = useFlexibleDateBlur(tsFmt, commit, value);
   return (
     <DatePicker
       {...commonProps}
