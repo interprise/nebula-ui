@@ -960,3 +960,27 @@ body[style*="cursor: wait"] * {
   50%  { width: 55%; }
   100% { transform: translateX(260%); width: 40%; }
 }
+
+/* SXADV-5486: application messages must render consolidated at the bottom-right,
+   matching the legacy ExtJS UI. antd 6's `message` component is hardwired to
+   top-center (its config exposes only `top`, no placement), where the toast
+   holder is a full-width fixed bar pinned to the top. Because the content pane
+   sits to the right of the 48px app bar + 260px sidebar, a viewport-centered
+   toast read as "decentrata" and overlapped the header's Profilo / company
+   selector / login-user area. Placement can't be set via the message API, so we
+   reposition the holder to the bottom-right here (all `message.*` toasts follow,
+   app-wide). `notification` supports `placement` natively and is unaffected.
+   Overrides use !important because antd injects its component styles at runtime
+   with equal single-class specificity; ordering is otherwise non-deterministic. */
+.ant-message {
+  top: auto !important;
+  bottom: 16px !important;
+  left: auto !important;
+  right: 16px !important;
+  /* antd sets an inline `transform: translateX(-50%)` (paired with left:50%) to
+     center the holder. We repin it to the right edge, so that centering
+     transform must be cancelled or the toast is dragged half its width to the
+     left, away from the right margin. */
+  transform: none !important;
+  width: auto !important;
+}
