@@ -200,12 +200,21 @@ function isActionBarRow(row: UIRow): boolean {
  *  hydrate() has already resolved the nested rows (names/values
  *  keyed by scope) — here we just lift them up to the parent stream so they
  *  render inline exactly as FULL mode does. FULL responses carry no such cell,
- *  so this is a no-op there. Recurses for embeds nested inside embeds. */
+ *  so this is a no-op there. Recurses for embeds nested inside embeds.
+ *
+ *  A `content="this"` embedded view at the top of a detail (e.g. the whole
+ *  testata of anagraficheUnDetail wrapped in `anagraficheUnTestaDetail`) is
+ *  emitted the same way — a lone CONTAINER cell carrying `rows` — but WITHOUT a
+ *  `scope` (it binds to the same BO, so its fields live in the parent scope and
+ *  hydrate() already filled them via the parent scope). The CONTAINER render
+ *  case only draws `cell.control`, so such a control-less container renders a
+ *  blank <td> and the entire testata vanished (SXADV-5487). Lift these too:
+ *  match any lone cell that nests `rows` and has no control of its own. */
 function flattenInlineEmbeds(rows: UIRow[]): UIRow[] {
   let changed = false;
   const out: UIRow[] = [];
   for (const row of rows) {
-    const embed = row.cells.find((c) => c.scope != null && Array.isArray(c.rows));
+    const embed = row.cells.find((c) => Array.isArray(c.rows) && (c.scope != null || c.control == null));
     if (embed && row.cells.length === 1 && embed.rows) {
       out.push(...flattenInlineEmbeds(embed.rows));
       changed = true;

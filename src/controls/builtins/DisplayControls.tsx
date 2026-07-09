@@ -35,12 +35,23 @@ export const HtmlControl: ControlComponent = ({ control }) => (
   <span dangerouslySetInnerHTML={{ __html: (control.value as string) || '' }} />
 );
 
-export const HtmlFormatControl: ControlComponent = ({ control }) => (
-  <span
-    className={(control.cls as string) || ''}
-    dangerouslySetInnerHTML={{ __html: (control.value as string) || '' }}
-  />
-);
+export const HtmlFormatControl: ControlComponent = ({ control }) => {
+  const cls = control.cls as string | undefined;
+  const style = parseInlineStyle(control.style as string | undefined);
+  // A styled htmlFormat (e.g. a header carrying contentClass="section_header"
+  // and/or contentStyle) must render as a block filling the cell, or its class
+  // styling — background bar, `text-align:center` — has nothing to lay out
+  // against and collapses to plain inline text (SXADV-5487). Mirror HintControl.
+  // Plain (unclassed) htmlFormat keeps its inline behavior.
+  const styled = !!cls || !!control.style;
+  return (
+    <span
+      className={cls || ''}
+      style={styled ? { display: 'block', width: '100%', ...style } : style}
+      dangerouslySetInnerHTML={{ __html: (control.value as string) || '' }}
+    />
+  );
+};
 
 export const HintControl: ControlComponent = ({ control, onAction }) => {
   const forGroup = control.forGroup as string | undefined;
