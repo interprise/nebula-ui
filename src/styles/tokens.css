@@ -1,0 +1,56 @@
+/* =============================================================================
+ * Central theme tokens — the single source of truth for themeable style values.
+ *
+ * Why this file exists: colours (and other themeable values) were previously
+ * hardcoded inline throughout global.css and TSX. To support theming we route
+ * themeable values through CSS custom properties defined here. A theme is then
+ * "just" a set of overrides for these variables — see the `[data-theme]` hook
+ * at the bottom, and (for antd's own components) the ConfigProvider theme in
+ * App.tsx.
+ *
+ * Conventions
+ * -----------
+ * - Names are SEMANTIC (what the value is *for*), not literal ("--app-neutral"
+ *   not "--grey-4"). That way a theme can repaint the meaning without every
+ *   consumer needing to change.
+ * - The DEFAULT (light) values below are seeded from the pre-existing hardcoded
+ *   colours, so introducing this layer is a no-op visually.
+ * - Migration is incremental: when you touch a rule in global.css that uses a
+ *   raw literal, replace it with the matching var(--app-*) here, adding a new
+ *   token if none fits. New code should reference tokens, never raw literals.
+ * ========================================================================== */
+
+:root {
+  /* --- Brand / interactive ------------------------------------------------ */
+  --app-primary: #1677ff;          /* antd colorPrimary — links, checked state  */
+  --app-primary-hover: #4096ff;
+
+  /* --- Neutrals / borders / surfaces -------------------------------------- */
+  --app-border: #d9d9d9;
+  --app-neutral: #bfbfbf;          /* muted/"not set" marks; disabled outlines  */
+  --app-surface-muted: #f5f5f5;
+
+  /* --- Feedback ----------------------------------------------------------- */
+  --app-success: #52c41a;
+  --app-warning: #faad14;
+  --app-error: #ff4d4f;
+
+  /* --- Component-specific semantic tokens ---------------------------------
+   * Defined in terms of the palette above so a theme can override either the
+   * base token or the specific one. Keep these keyed to a concrete UI concern. */
+
+  /* Query-filter tri-state checkbox (SXADV-5485): the indeterminate / NULL
+   * ("not filtered") mark must read as neutral, distinct from the primary-blue
+   * checked state, so an unset filter isn't mistaken for a valued one. */
+  --app-checkbox-indeterminate: var(--app-neutral);
+}
+
+/* -----------------------------------------------------------------------------
+ * Dark theme scaffold. The host toggles it by setting `data-theme="dark"` on
+ * <html> (or any ancestor). Override tokens here as the palette is defined.
+ * Left intentionally minimal until a dark palette is signed off — for antd
+ * components, pair this with `theme.darkAlgorithm` in App.tsx's ConfigProvider.
+ * -------------------------------------------------------------------------- */
+[data-theme='dark'] {
+  /* e.g. --app-neutral: #6e7681;  --app-border: #30363d; ... */
+}
