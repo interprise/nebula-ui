@@ -35,6 +35,7 @@ const BooleanInner: React.FC<{
     return (
       <Checkbox
         id={control.id}
+        className="query-tristate"
         checked={!isNull && boolVal}
         indeterminate={isNull}
         disabled={isDisabled}

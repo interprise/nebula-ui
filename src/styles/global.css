@@ -210,6 +210,19 @@ html, body {
   line-height: 26px;
 }
 
+/* Tri-state query filter checkboxes (SXADV-5485): the indeterminate/NULL state
+ * ("not filtered") must read as neutral grey, not the primary blue that antd
+ * uses — otherwise an unset filter looks identical to a valued one. Only the
+ * indeterminate mark is retinted; the checked (blue) and unchecked states keep
+ * antd defaults so true/false filters stay distinguishable. */
+/* antd v6 renders the indeterminate mark as `.ant-checkbox-indeterminate::after`
+ * (the box + mark live on `.ant-checkbox` itself; there is no coloured
+ * `.ant-checkbox-inner` here). Retint that square to neutral; the box border is
+ * already antd's grey `colorBorder`, so only the blue mark needs overriding. */
+.query-tristate.ant-checkbox-wrapper .ant-checkbox-indeterminate::after {
+  background-color: var(--app-checkbox-indeterminate);
+}
+
 
 .layout-table .ant-picker-input > input {
   font-size: 13px !important;
