@@ -82,16 +82,30 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    api.getConfig().then(async (resp) => {
-      const raw = resp as Record<string, unknown>;
-      if (raw.loginTitle) setLoginTitle(raw.loginTitle as string);
-      const pluginUrl = (raw.controlsPluginUrl as string | undefined) || DEFAULT_CONTROLS_PLUGIN_URL;
+    // The control plugin loads exactly once per page load, so anything that
+    // skips this call leaves the app without the entrasp custom controls for
+    // the rest of the session: ControlRenderer then falls back to a text input
+    // and an object-valued control (ruoli, contatti, …) renders as
+    // "[object Object]" with nothing in the console to explain it. Load it
+    // outside the GetConfig promise chain so a failing/500 GetConfig — which
+    // happens while the server is restarting — can no longer take the controls
+    // down with it. `controlsPluginUrl` only ever overrides the default path,
+    // so the default is a safe standalone fallback.
+    const loadPlugin = (url: string) =>
       // Cache-bust the dynamically imported plugin bundle. It is imported once
       // at startup, so without this the browser pins the previously cached
       // module and a freshly deployed plugin (new controls/fixes) is never
       // picked up until a manual hard-refresh.
-      const bustedPluginUrl = pluginUrl + (pluginUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
-      await loadControlPlugin(bustedPluginUrl, hostApi);
+      loadControlPlugin(url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now(), hostApi);
+    const configPromise = api.getConfig();
+    const pluginLoaded = configPromise
+      .then((resp) => (resp as Record<string, unknown>).controlsPluginUrl as string | undefined)
+      .catch(() => undefined)
+      .then((url) => loadPlugin(url || DEFAULT_CONTROLS_PLUGIN_URL));
+    configPromise.then(async (resp) => {
+      const raw = resp as Record<string, unknown>;
+      if (raw.loginTitle) setLoginTitle(raw.loginTitle as string);
+      await pluginLoaded;
       // If the server returned an SSO redirect URL and we're not in the
       // middle of consuming an SSO callback, bounce to the IdP directly.
       // When initialSsoParams is non-empty the IdP just sent us back —
