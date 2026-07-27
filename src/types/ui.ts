@@ -177,6 +177,18 @@ export interface ListMeta {
   addLabel?: string;
 }
 
+/** Action bar of an embedded list (detail grid / tab): Add + XLS export +
+ *  dynamic report, emitted once per embedded list and rendered above the grid
+ *  in the primary-toolbar style (SXADV-5693). Supersedes the scattered
+ *  header/footer Add buttons the legacy renderer emitted below the grid. */
+export interface GridActions {
+  path?: string;
+  addCommand?: string;
+  addLabel?: string;
+  xlsCommand?: string;
+  printCommand?: string;
+}
+
 export interface ListFooter {
   addCommand: string;
   path?: string;
@@ -239,6 +251,7 @@ export interface UITree {
   headers?: ListHeader[];
   header?: ListMeta;
   footer?: ListFooter;
+  gridActions?: GridActions;
   columns?: ListColumn[];
   continuationHeaders?: ListHeader[][];
   listActions?: ListAction[];

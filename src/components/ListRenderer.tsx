@@ -2,8 +2,8 @@ import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffe
 import { fixServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
-import { Button, Pagination, Typography } from 'antd';
-import { PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
+import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
@@ -1758,7 +1758,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return () => cancelAnimationFrame(raf);
   }, [rowData, selKey, isListEdit, applyClassByPath]);
 
-  const footer = ui.footer;
+  // The server emits gridActions for embedded lists only. `ui.footer` (the
+  // legacy below-the-grid Add) is deliberately no longer rendered — its command
+  // is the same one gridActions carries, now shown once above the grid.
+  const gridActions = ui.gridActions;
+  const gridPath = gridActions?.path || ui.path;
 
   // The container never claims more than the available width: horizontal
   // overflow is AG Grid's job (internal scroll, per-column minWidths keep the
@@ -1780,6 +1784,47 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     <div className="list-container" style={listContainerStyle}>
       {meta?.title && <div className="view-title">{meta.title}</div>}
       {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
+
+      {/* Embedded-list action bar, above the grid and styled like the primary
+          toolbar. The legacy renderer put Add *below* the grid (and again in the
+          section header) so users who had scrolled a long list could reach it
+          without scrolling back; detail grids paginate now, so a single bar on
+          top is both enough and consistent with the page toolbar (SXADV-5693). */}
+      {gridActions && (gridActions.addCommand || gridActions.xlsCommand || gridActions.printCommand) && (
+        <div className="toolbar grid-actions">
+          <Space wrap size="small">
+            {gridActions.addCommand && (
+              <Button
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() => onAction(gridActions.addCommand!, gridPath ? { navpath: gridPath } : undefined)}
+              >
+                {gridActions.addLabel || 'Nuovo'}
+              </Button>
+            )}
+            {gridActions.xlsCommand && (
+              <Tooltip title="Esporta in Excel">
+                <Button
+                  size="small"
+                  icon={<FileExcelOutlined />}
+                  aria-label="Esporta in Excel"
+                  onClick={() => onAction(gridActions.xlsCommand!, gridPath ? { navpath: gridPath } : undefined)}
+                />
+              </Tooltip>
+            )}
+            {gridActions.printCommand && (
+              <Tooltip title="Stampa">
+                <Button
+                  size="small"
+                  icon={<PrinterOutlined />}
+                  aria-label="Stampa"
+                  onClick={() => onAction(gridActions.printCommand!, gridPath ? { navpath: gridPath } : undefined)}
+                />
+              </Tooltip>
+            )}
+          </Space>
+        </div>
+      )}
 
       {ui.listActions && ui.listActions.length > 0 && (
         <div className="action-bar" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '4px 8px' }}>
@@ -1897,29 +1942,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         </div>
       )}
 
-      {/* Add button from header metadata */}
-      {meta?.addCommand && (
-        <div style={{ marginTop: 8 }}>
-          <Button
-            icon={<PlusOutlined />}
-            onClick={() => onAction(meta.addCommand!, ui.path ? { navpath: ui.path } : undefined)}
-          >
-            {meta.addLabel || 'Nuovo'}
-          </Button>
-        </div>
-      )}
-
-      {/* Add button from footer (embedded lists) */}
-      {footer && (
-        <div style={{ marginTop: 8 }}>
-          <Button
-            icon={<PlusOutlined />}
-            onClick={() => onAction(footer.addCommand, footer.path ? { navpath: footer.path } : undefined)}
-          >
-            {footer.label || 'Nuovo'}
-          </Button>
-        </div>
-      )}
     </div>
   );
 };

@@ -1079,6 +1079,10 @@ function renderContainerControl(
           columns: control.columns as UITree['columns'],
           continuationHeaders: control.continuationHeaders as UITree['continuationHeaders'],
           footer: embeddedFooter,
+          // Add / XLS / print bar rendered above the grid (SXADV-5693). Only
+          // embedded lists get it, and this is the only path that builds their
+          // UITree — omit it here and the bar silently never renders.
+          gridActions: control.gridActions as UITree['gridActions'],
           multiEdit: control.multiEdit as boolean | undefined,
           listEdit: control.listEdit as boolean | undefined,
           inlineEdit: control.inlineEdit as boolean | undefined,
