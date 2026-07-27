@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Button, Tooltip, Badge, message } from 'antd';
+import { Button, Tooltip, Badge, App } from 'antd';
 import { UploadOutlined, PaperClipOutlined } from '@ant-design/icons';
 import type { AttachmentsInfo } from '../types/ui';
 import * as api from '../services/api';
@@ -26,6 +26,9 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
   onRefresh,
   onOpenMetadata,
 }) => {
+  // Context-aware message so toasts inherit the ConfigProvider CSS-var theme;
+  // the static `message` import renders invisibly under it. (SXADV-5542)
+  const { message } = App.useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);

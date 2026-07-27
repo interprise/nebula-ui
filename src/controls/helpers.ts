@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, SetStateAction } from 'react';
+import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, RefObject, SetStateAction } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
@@ -147,6 +147,41 @@ export function useFlexibleDateBlur(
     },
     [fmt, commit, currentValue],
   );
+}
+
+/** Return focus to a date/time picker's input after a value is chosen from its
+ *  popup. antd closes the panel on a calendar/clock selection but — unlike a
+ *  click on the field itself — does NOT return focus to the input (rc-picker's
+ *  `triggerConfirm` force-closes the panel without the refocus `onSelectorClick`
+ *  does). Focus falls to `<body>`, so the next Tab lands on the page's first
+ *  focusable element — the app-bar "Esci" button — instead of the next field
+ *  (SXADV-5680). `.focus()` only focuses the input; it does not reopen the panel
+ *  (rc-picker opens only on click/keydown), so this is safe.
+ *
+ *  Guard (see inline note): restore only when focus is "stranded" — on `<body>`
+ *  or still on the picker's own dropdown. A real Tab-out has moved focus to a
+ *  genuine next field, so it is left alone. NOTE this covers only the case where
+ *  the picker stays mounted; a field that fires a server reload on change
+ *  remounts the picker (ref becomes null) and is instead handled by
+ *  `captureFocusBeforeReload`'s id fallback + `restoreFocus`. */
+export function useRestorePickerFocus(
+  pickerRef: RefObject<{ focus: () => void } | null>,
+): () => void {
+  return useCallback(() => {
+    requestAnimationFrame(() => {
+      const active = document.activeElement as HTMLElement | null;
+      // "Stranded" focus after a popup selection: either dropped to <body>, or
+      // still held by the picker's own dropdown panel (antd keeps the panel
+      // mounted+focused through its close transition, so it isn't <body> yet).
+      // A real Tab-out has instead moved focus to a genuine next field — not the
+      // dropdown, not <body> — so we leave that alone.
+      const stranded =
+        !active ||
+        active === document.body ||
+        active.closest('.ant-picker-dropdown') != null;
+      if (stranded) pickerRef.current?.focus();
+    });
+  }, [pickerRef]);
 }
 
 /** Controlled-`open` state for an antd `Select` that opens ONLY on a deliberate
@@ -303,16 +338,19 @@ export function useControlChange(
         // field, so document.activeElement IS the target we want after
         // re-render. For checkbox toggles the activeElement is the
         // checkbox itself, so focus stays put. Either way, restoring
-        // from the snapshot matches user intent.
-        captureFocusBeforeReload();
-        // Field-triggered reloads don't need a fresh toolbar — state
-        // that actually affects toolbar buttons (Save dirty, etc.)
-        // updates on the next explicit action. Save bandwidth by asking
-        // the server to skip toolbar emission.
-        onAction(command, { navpath, option1, skipToolbar: '1' });
+        // from the snapshot matches user intent. When the change came from a
+        // popup that stranded focus (DatePicker calendar), activeElement has no
+        // id — fall back to this control's id so focus returns to the field
+        // instead of <body> after the re-render (SXADV-5680).
+        captureFocusBeforeReload(control.id);
+        // Let the reload return the fresh toolbar: it stages an edit, so the
+        // server's dirty state changes and Annulla/Salva must reflect it (was
+        // skipped for bandwidth, but that left Annulla stuck disabled after an
+        // edit in the bottom panel).
+        onAction(command, { navpath, option1 });
       }
     },
-    [fieldName, reload, command, navpath, option1, onChange, onAction],
+    [fieldName, reload, command, navpath, option1, onChange, onAction, control.id],
   );
 }
 
@@ -348,8 +386,8 @@ export function useCommitReload(
   const commit = useCallback(() => {
     if (!reload || !dirtyRef.current) return;
     dirtyRef.current = false;
-    captureFocusBeforeReload();
-    onAction(command, { navpath, option1, skipToolbar: '1' });
-  }, [reload, command, navpath, option1, onAction]);
+    captureFocusBeforeReload(control.id);
+    onAction(command, { navpath, option1 });
+  }, [reload, command, navpath, option1, onAction, control.id]);
   return { store, commit };
 }

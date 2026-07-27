@@ -1,5 +1,6 @@
 import React from 'react';
-import { Button, Dropdown, Space, Tooltip, Modal } from 'antd';
+import { fixServerHtml } from '../services/serverHtml';
+import { Button, Dropdown, Space, Tooltip, App } from 'antd';
 import {
   DownOutlined,
   ReloadOutlined,
@@ -122,10 +123,12 @@ function parseHandler(handler: string): { action: string; params?: Record<string
   return { action: handler };
 }
 
-async function invokeHandler(handler: string, onAction: (action: string, params?: Record<string, string>) => void) {
+type ModalApi = ReturnType<typeof App.useApp>['modal'];
+
+async function invokeHandler(handler: string, onAction: (action: string, params?: Record<string, string>) => void, modal: ModalApi) {
   const { action, params, showInWindow, confirmDelete } = parseHandler(handler);
   if (confirmDelete) {
-    Modal.confirm({
+    modal.confirm({
       title: 'Confermare',
       content: 'Confermare la cancellazione del record',
       okText: 'OK',
@@ -145,7 +148,7 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
       // GetViewHelp returns { items: [{ prompt, help }] }
       const items = result.items as Array<{ prompt: string; help: string }> | undefined;
       if (items && items.length > 0) {
-        Modal.info({
+        modal.info({
           title: 'Aiuto',
           width: 600,
           content: (
@@ -153,14 +156,14 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
               {items.map((item, i) => (
                 <div key={i} style={{ marginBottom: 12 }}>
                   <strong>{item.prompt}</strong>
-                  <div dangerouslySetInnerHTML={{ __html: item.help || '' }} />
+                  <div dangerouslySetInnerHTML={{ __html: fixServerHtml(item.help || '') }} />
                 </div>
               ))}
             </div>
           ),
         });
       } else {
-        Modal.info({ title: 'Aiuto', content: 'Nessun contenuto di aiuto disponibile.' });
+        modal.info({ title: 'Aiuto', content: 'Nessun contenuto di aiuto disponibile.' });
       }
     } catch {
       document.body.style.cursor = '';
@@ -181,17 +184,18 @@ function renderToolbarItem(
   raw: unknown,
   idx: number,
   onAction: (action: string, params?: Record<string, string>) => void,
-  paging?: ToolbarProps['paging'],
+  paging: ToolbarProps['paging'] | undefined,
+  modal: ModalApi,
 ): React.ReactNode {
   if (typeof raw === 'string') {
     if (raw === '->') return null; // handled by split
-    return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: raw }} />;
+    return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: fixServerHtml(raw) }} />;
   }
   const item = raw as ToolbarItem;
   const rawObj = raw as Record<string, unknown>;
   if (rawObj.tag) {
     if (rawObj.tag === 'span') {
-      return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: rawObj.html as string || '' }} />;
+      return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: fixServerHtml(rawObj.html as string || '') }} />;
     }
     if (rawObj.tag === 'input') {
       // Use paging.currentPage if available (updated on pagination), fall back to server value
@@ -235,7 +239,7 @@ function renderToolbarItem(
             key: sub.id || `sub_${si}`,
             label: sub.text,
             disabled: sub.disabled,
-            onClick: () => sub.handler && invokeHandler(sub.handler, onAction),
+            onClick: () => sub.handler && invokeHandler(sub.handler, onAction, modal),
           })),
         }}
       >
@@ -256,7 +260,7 @@ function renderToolbarItem(
       disabled={item.disabled}
       size="small"
       type={item.pressed ? 'primary' : 'default'}
-      onClick={() => item.handler && invokeHandler(item.handler, onAction)}
+      onClick={() => item.handler && invokeHandler(item.handler, onAction, modal)}
       icon={item.icon ? iconMap[item.icon] : undefined}
     >
       {item.text}
@@ -274,6 +278,10 @@ function renderToolbarItem(
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) => {
+  // Context-aware modal so dialogs inherit the ConfigProvider CSS-var theme;
+  // the static antd import renders invisibly under it. Called before the early
+  // return so the hook order stays stable. (SXADV-5542)
+  const { modal } = App.useApp();
   if (!items || items.length === 0) return null;
 
   const rawItems = items as unknown[];
@@ -288,12 +296,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) 
     <div className="toolbar" style={{ display: 'flex', alignItems: 'center' }}>
       {leftItems.length > 0 && (
         <Space wrap size="small">
-          {leftItems.map((raw, idx) => renderToolbarItem(raw, idx, onAction, paging))}
+          {leftItems.map((raw, idx) => renderToolbarItem(raw, idx, onAction, paging, modal))}
         </Space>
       )}
       {rightItems.length > 0 && (
         <Space wrap size="small" style={{ marginLeft: 'auto' }}>
-          {rightItems.map((raw, idx) => renderToolbarItem(raw, (splitIdx >= 0 ? splitIdx + 1 : 0) + idx, onAction, paging))}
+          {rightItems.map((raw, idx) => renderToolbarItem(raw, (splitIdx >= 0 ? splitIdx + 1 : 0) + idx, onAction, paging, modal))}
         </Space>
       )}
     </div>

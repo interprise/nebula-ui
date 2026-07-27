@@ -7,8 +7,7 @@ import {
   Spin,
   Empty,
   Typography,
-  Modal,
-  message,
+  App,
   Space,
 } from 'antd';
 import {
@@ -65,6 +64,9 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
   onRefresh,
   onOpenMetadata,
 }) => {
+  // Context-aware message/modal so they inherit the ConfigProvider CSS-var
+  // theme; the static antd imports render invisibly under it. (SXADV-5542)
+  const { message, modal } = App.useApp();
   const [items, setItems] = useState<AttachmentMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +100,7 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
 
   const handleDelete = useCallback(
     (row: AttachmentMeta) => {
-      Modal.confirm({
+      modal.confirm({
         title: 'Eliminare allegato?',
         icon: <ExclamationCircleOutlined />,
         content: row.fileName,

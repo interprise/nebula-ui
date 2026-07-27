@@ -173,6 +173,21 @@ html, body {
   flex-shrink: 1;
 }
 
+/* Fit more tabs before they overflow into the "…" menu (5450.1C): antd's
+   default 32px inter-tab gap and roomy paddings waste width on small
+   viewports / under zoom, hiding tabs (e.g. "Storico Ordini") behind "…"
+   sooner than needed. Tighter gap + compact label ≈ 30% more visible tabs. */
+.tab-sticky-wrapper .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 14px;
+}
+.tab-sticky-wrapper .ant-tabs-tab {
+  padding: 6px 0;
+  font-size: 13px;
+}
+.tab-sticky-wrapper .ant-tabs-nav {
+  margin-bottom: 4px;
+}
+
 /* Compact Ant Design controls inside layout table */
 .layout-table .ant-input:not(textarea),
 .layout-table .ant-input-number,
@@ -237,25 +252,36 @@ html, body {
 
 /* Disabled controls: override antd CSS variables for readable text */
 .layout-table {
-  --ant-color-text-disabled: #333;
+  --ant-color-text-disabled: var(--app-text-readonly);
   --ant-color-bg-container-disabled: #f5f5f5;
 }
 
 .layout-table .ant-input-disabled,
 .layout-table .ant-input[disabled] {
-  color: #333 !important;
-  -webkit-text-fill-color: #333 !important;
+  color: var(--app-text-readonly) !important;
+  -webkit-text-fill-color: var(--app-text-readonly) !important;
 }
 
 .layout-table .ant-select-disabled {
-  color: #333 !important;
-  -webkit-text-fill-color: #333 !important;
+  color: var(--app-text-readonly) !important;
+  -webkit-text-fill-color: var(--app-text-readonly) !important;
 }
 
 .layout-table .ant-picker-disabled,
 .layout-table .ant-picker-disabled .ant-picker-input > input {
-  color: #333 !important;
-  -webkit-text-fill-color: #333 !important;
+  color: var(--app-text-readonly) !important;
+  -webkit-text-fill-color: var(--app-text-readonly) !important;
+}
+
+/* InputNumber (money/number) was NOT covered by the rules above — its disabled
+ * inner input is `.ant-input-number-input` inside `.ant-input-number-disabled`,
+ * and the € prefix lives in `.ant-input-number-prefix`. Confirmed-document
+ * amounts therefore stayed at antd's faint rgba(0,0,0,0.25) and were illegible
+ * (SXADV-5543). */
+.layout-table .ant-input-number-disabled .ant-input-number-input,
+.layout-table .ant-input-number-disabled .ant-input-number-prefix {
+  color: var(--app-text-readonly) !important;
+  -webkit-text-fill-color: var(--app-text-readonly) !important;
 }
 
 /* Filler cells — collapse in auto layout so they don't absorb extra width */
@@ -424,6 +450,30 @@ html, body {
   overflow: auto;
 }
 
+/* Grid-only tab panels: keep the grid inside the visible tab width so AG Grid
+   scrolls internally with a SINGLE bar, instead of the grid running to its full
+   natural column width and forcing the scrolling ancestor (.tab-content) to grow
+   a SECOND horizontal scrollbar doing the same job (5450.1A) — and so the grid's
+   own vertical scrollbar stays glued to a right edge that is on-screen rather
+   than only appearing after scrolling the outer bar fully right (5450.1B).
+
+   The tab body reuses the master form's ruler row (89 fixed-width spacer cells),
+   which under table-layout:fixed pins the table to ~2100px regardless of the
+   viewport; a max-width can't shrink a fixed-layout table. Scoped to tabs that
+   actually contain a grid (:has(.list-container)) so pure form-field tabs keep
+   their fixed ruler and stay aligned; there the empty ruler cells collapse under
+   table-layout:auto and the table (hence the grid cell) bounds to the scrollport
+   width via cqw. */
+.view-split-bottom .tab-content:has(.list-container) {
+  container-type: inline-size;
+}
+.view-split-bottom .tab-content:has(.list-container) > table.layout-table {
+  table-layout: auto;
+  width: 100cqw;
+  min-width: 0;
+  max-width: 100cqw;
+}
+
 
 /* Hint and highlight text */
 .hint-text {
@@ -445,6 +495,59 @@ html, body {
 /* Navigate view links */
 .navigate-view-link:hover {
   color: #4096ff;
+  text-decoration: underline;
+}
+
+/* Nav links stay single-line by default (grid cells have fixed row height)… */
+.navigate-view-link {
+  white-space: nowrap;
+}
+
+/* The form scroll areas are inline-size containers so bars inside the (often
+   wider) layout table can bound themselves to the VISIBLE scrollport width
+   via cqw units — see .button-bar below (5450.1C). */
+.view-body,
+.view-split-form {
+  container-type: inline-size;
+}
+
+/* Button bars (e.g. the anagrafica navigation-links band) are flex-wrap, but
+   their cell is as wide as the layout table — wider than the viewport on
+   small screens / under zoom — so the wrap never engaged and trailing links
+   ("Righe Ordini Tutte", "Storico Ordini", "Storico Offerte") sat off-screen
+   with no visual clue (5450.1C). Capping at the scrollport width makes the
+   bar wrap where the user can see; sticky keeps it in view when the form is
+   scrolled horizontally. */
+.layout-table .button-bar {
+  max-width: 100cqw;
+  position: sticky;
+  left: 0;
+}
+/* …but inside form layout cells they wrap instead: table-layout:fixed cells
+   shrink with the viewport/zoom and overflow:hidden would silently clip away
+   trailing links entirely — "Righe Ordini Tutte", "Storico Ordini", "Storico
+   Offerte" vanished at zoom 110% on 14" (5450.1C). Wrapping keeps every link
+   visible at any width, like the legacy <a>-in-cell rendering. */
+.layout-table td .navigate-view-link {
+  white-space: normal;
+}
+
+/* Info Banner "Area Link"/attachments area (SXADV-5526.2). The server ships a
+   raw HTML string using the legacy classes `ht-content-at` / `ht-text`; style
+   them here so the download/link list reads as a proper section under the
+   banner body. */
+.banner-attachments .ht-content-at {
+  border-top: 1px solid var(--app-border, #d9d9d9);
+  padding-top: 8px;
+}
+.banner-attachments .ht-text {
+  margin-right: 10px;
+  white-space: nowrap;
+}
+.banner-attachments a {
+  color: var(--app-primary, #1677ff);
+}
+.banner-attachments a:hover {
   text-decoration: underline;
 }
 
@@ -620,6 +723,50 @@ tr.breakRow td {
   font-size: 12px;
 }
 
+/* Identity block: highlighted background so the logged-in user reads at a glance
+   (SXADV-5454.3). Sits at the far right, just before the login icon (5454.4b). */
+.login-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  line-height: 1.25;
+}
+
+/* ALFA (test) environment badge in the header (SXADV-5454.2B) */
+.alfa-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 4px;
+  background: #d4380d;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  line-height: 1.5;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+}
+
+/* Draggable right edge of the expanded sidebar (SXADV-5454.0.a) */
+.sidebar-resize-handle {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 101;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: rgba(22, 119, 255, 0.35);
+}
+
 /* Sidebar menu: distinguish top-level Modules from sub-functions (SXADV-5454) */
 .sidebar .ant-menu-submenu.menu-module > .ant-menu-submenu-title,
 .sidebar li.ant-menu-item.menu-module {
@@ -669,9 +816,11 @@ tr.breakRow td {
   --ag-row-hover-color: transparent;
 }
 
-/* Grouped hover: applied via JS to all rows of a logical record */
+/* Grouped hover: applied via JS to all rows of a logical record.
+   Uses the same blue as the current-record highlight (record-group-selected)
+   so the hovered row is clearly evidenced — SXADV-5683. */
 .ag-row.record-group-hover {
-  background-color: color-mix(in srgb, transparent, #2196f3 8%) !important;
+  background-color: var(--ag-selected-row-background-color) !important;
 }
 
 /* Grouped selection: applied via JS to all rows of a logical record */
@@ -983,4 +1132,65 @@ body[style*="cursor: wait"] * {
      left, away from the right margin. */
   transform: none !important;
   width: auto !important;
+}
+
+/* ── listEdit bottom edit panel (grid stays read-only; editing happens here in
+   the stable React tree so antd controls work, unlike inside AG Grid rows) ── */
+/* Stacked in-flow below the grid (NOT an overlay): the grid renders at its own
+   height above and stays fully visible; the panel is a normal block beneath it,
+   capped, so rows are never hidden behind a popup. Appears on record selection,
+   closes via its button or a click outside. */
+.edit-panel {
+  max-height: 45vh;
+  border-top: 2px solid var(--color-border, #d9d9d9);
+  background: var(--color-bg-elevated, #fff);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.edit-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 2px 8px;
+  position: sticky;
+  top: 0;
+  left: 0;
+  background: var(--color-bg-elevated, #fff);
+  border-bottom: 1px solid var(--color-border, #eee);
+  z-index: 1;
+}
+.edit-panel-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary, #555); }
+.edit-panel-head-actions { display: flex; align-items: center; gap: 4px; }
+.selector-nav-cell { padding: 0 !important; display: flex; align-items: center; justify-content: center; }
+.selector-nav {
+  cursor: pointer;
+  color: var(--color-primary, #1677ff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+}
+.selector-nav:hover { background: rgba(22, 119, 255, 0.12); }
+.edit-panel-body { padding: 6px 8px; overflow: auto; }
+.edit-panel-table { border-collapse: collapse; width: 100%; }
+.edit-panel-th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #666);
+  text-align: left;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+.edit-panel-td { padding: 2px 4px; vertical-align: top; }
+
+/* Combo chevron is the click target that opens the list (open-on-arrow, not
+   open-on-body). The Select's own cursor is `text` for the search input, so the
+   arrow wouldn't read as clickable — force a pointer and keep it hit-testable. */
+.combo-chevron {
+  cursor: pointer !important;
+  pointer-events: auto;
 }

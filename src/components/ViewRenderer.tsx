@@ -1,7 +1,10 @@
 import React, { useCallback, useRef } from 'react';
+import { fixServerHtml } from '../services/serverHtml';
 import { Tabs } from 'antd';
 import { BookOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
+import type { UITree, UIRow, UICell, UIControl, ListRecord, RowEditData } from '../types/ui';
+import { hydrate } from '../services/hydrate';
+import { putPanelTemplate, getPanelTemplate } from '../services/templateCache';
 import {
   ELTYPE_PROMPT,
   ELTYPE_CONTENT,
@@ -12,6 +15,7 @@ import {
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ListRenderer from './ListRenderer';
+import EditPanel from './EditPanel';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 
@@ -45,11 +49,26 @@ interface ViewRendererProps {
   fillHeight?: boolean;
 }
 
+// Remembered testata/rows split, per view and per tab. Shell renders a single
+// ViewRenderer per tab with no key, so navigating detail -> back reuses the same
+// fiber: plain state would not be "reset", it would be inherited from the view
+// just left (the child detail's caret sits in its testata, so coming back the
+// parent's rows collapse to 22% and look gone). Keyed like ListRenderer's
+// lastSelectedByView so both survive the same navigation (SXADV-5544).
+type SplitState = { zone: 'form' | 'bottom' | null; manualPct: number | null };
+const splitByView = new Map<string, SplitState>();
+
 // Session ID context — used by remote combos to call the server
 export const SidContext = React.createContext<string>('S1');
 
 // View path context — used by controls to send navpath with commands
 export const PathContext = React.createContext<string | undefined>(undefined);
+
+// The tab's "row being edited" setter (Shell.handleEditRow → editNavpathRef).
+// Provided once by Shell so a deeply-embedded listEdit panel can set the edit
+// navpath on selection (so Save/reload post navpath = that row) without
+// threading the callback through every RowRenderer/renderContainerControl.
+export const EditRowContext = React.createContext<((navpath: string | null) => void) | undefined>(undefined);
 
 // Propagates the "fill available vertical space" signal down to embedded
 // lists. Set by tab content so nested grids use internal scroll instead of
@@ -119,6 +138,20 @@ function hasStructuredContent(ctl: UIControl): boolean {
   return false;
 }
 
+/** A contatti control produces output only when at least one contact carries
+ *  displayable content (a name or any phone/mobile/fax/email). The server may
+ *  emit a placeholder contact (only flagDefault set, empty name, no numbers)
+ *  which legacy rendered as nothing — treat that as empty. */
+function contattiHasContent(ctl: UIControl): boolean {
+  const contacts = (ctl as unknown as Record<string, unknown>).contacts;
+  if (!Array.isArray(contacts) || contacts.length === 0) return false;
+  return contacts.some((c) => {
+    const o = c as Record<string, unknown>;
+    return !!(o.name || o.phone || o.phone2 || o.mobile || o.mobile2
+      || o.fax || o.fax2 || o.email || o.email2);
+  });
+}
+
 /** Will this control actually produce visible output, or is it an empty
  *  shell (span with no text, etc.)? Different control families have
  *  different rules. */
@@ -126,9 +159,20 @@ function controlProducesOutput(ctl: UIControl): boolean {
   if (ctl.visible === false) return false;
   const type = ctl.type ?? '';
   if (INPUT_TYPES.has(type)) {
-    // Editable inputs always render a widget; read-only ones only when
-    // they carry a value (an empty disabled span is a wasted row).
-    return ctl.editable !== false || hasScalarContent(ctl);
+    // A field the server kept visible always renders its labeled widget —
+    // empty or not, editable or read-only — exactly as the legacy ExtJS
+    // detail did. Fields that must disappear when empty already arrive with
+    // visible:false from the server (their isVisible tests the value, e.g.
+    // documentoArchDoc.barcode / notaTestata), so a value-based gate here only
+    // wrongly swallowed read-only empty fields: on a confirmed (all read-only)
+    // document the whole Codice SDI…Tipo bollo block vanished (SXADV-5543).
+    return true;
+  }
+  if (type === 'contatti') {
+    // Legacy omits the Contatti block entirely when no contact carries real
+    // content; a placeholder contact (empty name, no phone/email) produces no
+    // output. Mirror that so an empty Contatti row doesn't linger (SXADV-5543).
+    return contattiHasContent(ctl);
   }
   if (BUTTON_TYPES.has(type)) {
     // A button is visible output only if it carries a prompt or an icon.
@@ -216,7 +260,14 @@ function flattenInlineEmbeds(rows: UIRow[]): UIRow[] {
   for (const row of rows) {
     const embed = row.cells.find((c) => Array.isArray(c.rows) && (c.scope != null || c.control == null));
     if (embed && row.cells.length === 1 && embed.rows) {
-      out.push(...flattenInlineEmbeds(embed.rows));
+      // A conditionally-hidden embedded view still ships its full template
+      // with visible:false on the container cell (hydrate() has resolved it).
+      // Lifting its inner rows regardless of that flag rendered the block
+      // anyway: e.g. documentiDetail carries two anagraficheIndirizzo embeds
+      // (indCliente + indFornitori); on a sales invoice only the first is
+      // visible, but both were lifted so the customer address showed twice
+      // (SXADV-5543). Drop the hidden one — don't lift its rows.
+      if (embed.visible !== false) out.push(...flattenInlineEmbeds(embed.rows));
       changed = true;
     } else {
       out.push(row);
@@ -248,8 +299,122 @@ function renderTabLabel(
   );
 }
 
+/**
+ * A listEdit list is rendered read-only in AG Grid; editing happens in a bottom
+ * EditPanel. INSTANT: the list ships a cacheable panel FORM template
+ * (`ui.panelTemplate`) plus per-record edit data (`row.editData`); selecting a
+ * record hydrates the panel client-side — no Post round-trip. The panel edits
+ * the record in the stable React tree, where antd controls work (unlike inside
+ * AG Grid's remounted full-width rows). Non-editable lists render the grid alone.
+ * Own component so its hooks don't sit behind ViewRenderer's early returns.
+ */
+const ListView: React.FC<ViewRendererProps> = (props) => {
+  const { ui, onAction, onChange } = props;
+  // The bottom edit panel is for single-row listEdit only. A multiEdit list does
+  // in-grid multi-row editing / record selection (all rows editable, multi-row
+  // post, listActions on the checked set) — no panel, which would restrict to the
+  // current row. The selection checkbox's content varies (selected/flagSelezione)
+  // so we don't try to distinguish "selection" from "real multi-edit": all
+  // multiEdit keep the in-grid behaviour. All multiEdit lists also set listEdit.
+  const isListEdit = !!ui.listEdit && !ui.multiEdit;
+  // From context (not props): embedded lists are rendered by renderContainerControl,
+  // which doesn't thread onEditRow through. Shell provides it once at the top.
+  const setEditRow = React.useContext(EditRowContext);
+  const [hidden, setHidden] = React.useState(false);
+  const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
+  const [records, setRecords] = React.useState<ListRecord[]>([]);
+
+  const recordPaths = React.useMemo(() => records.map((r) => r.path), [records]);
+  const editDataByPath = React.useMemo(() => {
+    const m = new Map<string, RowEditData | undefined>();
+    for (const r of records) m.set(r.path, r.editData);
+    return m;
+  }, [records]);
+
+  const onSelectRecord = React.useCallback((path: string) => {
+    setHidden(false);
+    setSelectedPath(path);
+    // Set the tab's edit navpath so Save/reload post with navpath = this row —
+    // without it the server has no edit path and drops the row's field edits
+    // (Shell.handleAction injects editNavpathRef as navpath when omitted).
+    setEditRow?.(path);
+    // INSTANT: no Post — the panel hydrates from the row's onboard editData.
+  }, [setEditRow]);
+
+  // Step to the previous/next record from the panel — pure client-side reselection.
+  const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
+  const navigateRecord = React.useCallback((delta: number) => {
+    setSelectedPath((cur) => {
+      const idx = cur ? recordPaths.indexOf(cur) : -1;
+      const next = idx >= 0 ? recordPaths[idx + delta] : undefined;
+      if (next) { setEditRow?.(next); return next; }
+      return cur;
+    });
+  }, [recordPaths, setEditRow]);
+
+  // The panel FORM template is cacheable (sid-free, keyed by panelTemplateKey).
+  // The server ships it once and omits it on later list renders (advertised via
+  // the panelKeys request param) to save payload — cache it when present, reuse
+  // the cached copy when the response carries only the key.
+  React.useEffect(() => {
+    if (ui.panelTemplate && ui.panelTemplateKey) putPanelTemplate(ui.panelTemplateKey, ui.panelTemplate);
+  }, [ui.panelTemplate, ui.panelTemplateKey]);
+
+  // Hydrate the cached panel FORM template with the selected record's edit data.
+  // scopePaths root ("") is overridden with the selected row's path so nav/reload
+  // descriptors and the wire-form composition target this record.
+  const panelTemplate = ui.panelTemplate ?? (ui.panelTemplateKey ? getPanelTemplate(ui.panelTemplateKey) : undefined);
+  const hydratedPanel = React.useMemo<UITree | null>(() => {
+    if (!panelTemplate || !selectedPath) return null;
+    const editData = editDataByPath.get(selectedPath);
+    if (!editData) return null;
+    const scopePaths = { ...(panelTemplate.scopePaths ?? {}), '': selectedPath };
+    return hydrate(
+      { rows: panelTemplate.rows } as UITree,
+      editData.values, editData.dynProps, panelTemplate.bindings, scopePaths,
+    );
+  }, [panelTemplate, selectedPath, editDataByPath]);
+
+  // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
+  // stays fully visible above it. Only wrap in the flex split when the panel
+  // actually shows — otherwise render the grid alone so its height context is
+  // unchanged. When the panel shows, the grid fills its flex slot via fillContainer.
+  const showPanel = isListEdit && !hidden && !!hydratedPanel;
+  return (
+    <>
+      <ListRenderer
+        ui={ui}
+        onAction={onAction}
+        onChange={onChange}
+        onGridChange={props.onGridChange}
+        onEditRow={props.onEditRow}
+        onSelectRecord={isListEdit ? onSelectRecord : undefined}
+        onRecordPaths={isListEdit ? setRecords : undefined}
+        embedded={props.embedded}
+        fillHeight={props.fillHeight}
+        fillContainer
+        panelShown={showPanel}
+      />
+      {showPanel && hydratedPanel && (
+        <EditPanel
+          panel={hydratedPanel}
+          listUi={ui}
+          rowPath={selectedPath ?? undefined}
+          onChange={onChange}
+          onAction={onAction}
+          onClose={() => setHidden(true)}
+          onNavigate={navigateRecord}
+          hasPrev={currentIndex > 0}
+          hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
+        />
+      )}
+    </>
+  );
+};
+
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded, fillHeight: fillHeightProp }) => {
   const fillHeightCtx = React.useContext(FillHeightContext);
+  const splitSid = React.useContext(SidContext);
   const fillHeight = fillHeightProp ?? fillHeightCtx;
   if (!ui) return null;
 
@@ -277,7 +442,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-        <ListRenderer ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} fillHeight={fillHeight} />
+        <ListView ui={ui} onAction={onAction} onChange={onChange} onGridChange={onGridChange} onEditRow={onEditRow} embedded={embedded} fillHeight={fillHeight} />
       </PathContext.Provider>
       </ViewNameContext.Provider>
       </FillHeightContext.Provider>
@@ -334,6 +499,14 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       let sum = 0;
       let isFormRow = false;
       for (const cell of row.cells) {
+        // Bars are autonomous flex-wrap containers (like grids): they take
+        // whatever width is available and wrap their items. Their declared
+        // colspan — e.g. the anagrafica links ButtonBar's size="120" — must
+        // not inflate the ruler width, or the table gets a huge minWidth and
+        // the bar (as wide as its cell) never wraps, silently pushing
+        // trailing links off-screen (5450.1C).
+        const ctlType = cell.control?.type;
+        if (ctlType === 'buttonBar' || ctlType === 'actionBar') continue;
         sum += cell.colspan || 1;
         if (cell.elementType === ELTYPE_PROMPT || cell.elementType === ELTYPE_CONTENT || cell.elementType === ELTYPE_SELECTOR) {
           isFormRow = true;
@@ -393,6 +566,24 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   const [resizing, setResizing] = React.useState(false);
   const splitContainerRef = React.useRef<HTMLDivElement | null>(null);
 
+  // The split belongs to the view, not to this fiber. When the rendered view
+  // changes under us (navigation, breadcrumb back), swap the state over to that
+  // view's remembered split — restoring what the user left, and never inheriting
+  // the previous view's. Done during render rather than in an effect so the very
+  // first paint of the restored view is already at the right ratio.
+  const splitKey = `${splitSid}|${ui.viewName ?? ui.path ?? ''}`;
+  const splitKeyRef = React.useRef(splitKey);
+  if (splitKeyRef.current !== splitKey) {
+    splitKeyRef.current = splitKey;
+    const saved = splitByView.get(splitKey);
+    focusZoneRef.current = saved?.zone ?? null;
+    setFocusZone(saved?.zone ?? null);
+    setManualPct(saved?.manualPct ?? null);
+  }
+  React.useEffect(() => {
+    splitByView.set(splitKey, { zone: focusZone, manualPct });
+  }, [splitKey, focusZone, manualPct]);
+
   // A manual drag (manualPct) wins; otherwise the focused zone sets the target.
   const formFlexBasisPct =
     manualPct != null
@@ -410,19 +601,51 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // elsewhere (action bar, toolbar, resizer) keeps the last zone. Crossing zones
   // drops any manual drag override so the auto target takes over again; staying
   // in a zone preserves a drag.
-  const activateZone = React.useCallback((target: EventTarget | null) => {
-    const t = target as HTMLElement | null;
-    if (!t) return;
-    let zone: 'form' | 'bottom' | null = null;
-    if (t.closest('.view-split-bottom')) zone = 'bottom';
-    else if (t.closest('.view-split-form')) zone = 'form';
-    if (!zone || focusZoneRef.current === zone) return;
+  const setZone = React.useCallback((zone: 'form' | 'bottom') => {
+    if (focusZoneRef.current === zone) return;
     focusZoneRef.current = zone;
     setFocusZone(zone);
     setManualPct(null);
   }, []);
+  const activateZone = React.useCallback((target: EventTarget | null) => {
+    const t = target as HTMLElement | null;
+    if (!t) return;
+    // Interactions on the tab bar must NOT drive the split resize. The tab bar
+    // sits at the top of the bottom panel; growing the bottom zone reflows it
+    // upward, out from under the cursor, before the click (pointerup) lands — so
+    // the tab click was lost and selecting a tab took two clicks. Both the
+    // pointerdown and the focus the tab receives route here, so excluding the
+    // nav here covers both. The zone is expanded *after* selection instead —
+    // see revealBottom, wired to onClickCapture and to the Tabs onChange.
+    if (t.closest('.ant-tabs-nav')) return;
+    let zone: 'form' | 'bottom' | null = null;
+    if (t.closest('.view-split-bottom')) zone = 'bottom';
+    else if (t.closest('.view-split-form')) zone = 'form';
+    if (!zone) return;
+    setZone(zone);
+  }, [setZone]);
   const onSplitFocus = React.useCallback((e: React.FocusEvent) => activateZone(e.target), [activateZone]);
   const onSplitPointerDown = React.useCallback((e: React.PointerEvent) => activateZone(e.target), [activateZone]);
+
+  // Picking a tab is a request to look at that tab's rows, so give them the room
+  // — otherwise the tab highlights while its content stays pinned at 22% and the
+  // user has to hunt for it. Unlike pointerdown/focus (which activateZone ignores
+  // over the tab bar, see above), a click has already landed, so reflowing the
+  // panel now cannot steal it. Covers re-clicking the active tab too, which fires
+  // no onChange.
+  const revealBottom = React.useCallback(() => {
+    focusZoneRef.current = 'bottom';
+    setFocusZone('bottom');
+    // Drop a manual drag only when it leaves the rows more cramped than the focus
+    // target would: a drag that already gave them more room is the user's choice.
+    setManualPct((cur) => (cur != null && cur > BOTTOM_FOCUS_PCT ? null : cur));
+  }, []);
+  const onSplitClick = React.useCallback((e: React.MouseEvent) => {
+    const t = e.target as HTMLElement | null;
+    if (!t?.closest('.ant-tabs-nav')) return;
+    if (!t.closest('.view-split-bottom')) return;
+    revealBottom();
+  }, [revealBottom]);
 
   const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -463,7 +686,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown}>
+      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
         {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
@@ -518,7 +741,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                   <div className="tab-sticky-wrapper">
                     <Tabs
                       activeKey={tabActiveTab}
-                      onChange={(key) => onAction('ChangeTab', { navpath: tabControl.navpath as string, option1: tabControl.controlName as string, option2: key })}
+                      onChange={(key) => { revealBottom(); onAction('ChangeTab', { navpath: tabControl.navpath as string, option1: tabControl.controlName as string, option2: key }); }}
                       items={(tabControl.tabs || []).map((tab) => ({
                         key: tab.name,
                         label: renderTabLabel(tab, onAction),
@@ -674,8 +897,8 @@ const CellRenderer: React.FC<{
 }> = ({ cell, companion, pageType, formCols, onAction, onChange, onGridChange }) => {
   // Two-phase pipeline: the template carries a `visible` slot for every
   // conditionally-shown cell. When `hydrate()` resolves it to false, we skip
-  // the cell entirely — matching the legacy FULL-mode behavior where
-  // hidden cells were simply omitted from the wire.
+  // the cell entirely — matching the legacy FULL-mode behavior where hidden
+  // cells were simply omitted from the wire.
   if (cell.visible === false) return null;
   // For container/section-header/filler cells, clamp colspan to formCols so
   // sub-view colspans don't inflate the auto-layout table width
@@ -704,7 +927,7 @@ const CellRenderer: React.FC<{
     case ELTYPE_PROMPT:
       return (
         <td {...tdProps} className={`prompt-cell ${cell.promptCls || ''} ${cell.cls || ''}`}
-          dangerouslySetInnerHTML={cell.prompt ? { __html: cell.prompt } : undefined}
+          dangerouslySetInnerHTML={cell.prompt ? { __html: fixServerHtml(cell.prompt) } : undefined}
         />
       );
 
@@ -858,6 +1081,20 @@ function renderContainerControl(
           footer: embeddedFooter,
           multiEdit: control.multiEdit as boolean | undefined,
           listEdit: control.listEdit as boolean | undefined,
+          inlineEdit: control.inlineEdit as boolean | undefined,
+          // Detail-view binding: drives the selector navigate column and the
+          // panel content choice (list structure vs detail form).
+          hasDetailView: control.hasDetailView as boolean | undefined,
+          detailViewName: control.detailViewName as string | undefined,
+          // Instant edit panel: the cacheable panel FORM template + key. Without
+          // these the embedded ListView can't hydrate the panel on row selection
+          // (rows already carry per-record editData via `rows` above).
+          panelTemplate: control.panelTemplate as UITree['panelTemplate'],
+          panelTemplateKey: control.panelTemplateKey as string | undefined,
+          // Server-side pagination state for the embedded grid, updated in place
+          // by the detailPageOnly slim response (Shell). When present with
+          // totalPages > 1, ListRenderer shows an interactive pager.
+          paging: control.paging as UITree['paging'],
         };
         return <ViewRenderer ui={embeddedUi} onAction={onAction} onChange={onChange} onGridChange={onGridChange} embedded />;
       }

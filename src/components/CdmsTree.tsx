@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Tree, Input, Dropdown, Modal, Button, Tooltip, message } from 'antd';
+import { Tree, Input, Dropdown, App, Button, Tooltip } from 'antd';
 import {
   FolderOutlined,
   FolderOpenOutlined,
@@ -70,6 +70,9 @@ function filterTree(nodes: DataNode[], lowerFilter: string): DataNode[] | null {
 }
 
 const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction }) => {
+  // Context-aware message/modal so they inherit the ConfigProvider CSS-var
+  // theme; the static antd imports render invisibly under it. (SXADV-5542)
+  const { message, modal } = App.useApp();
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
@@ -198,14 +201,14 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction 
   const handleNewFolder = useCallback(
     (parentNode: DataNode) => {
       let folderName = '';
-      Modal.confirm({
+      const dialog = modal.confirm({
         title: 'Nuova cartella',
         content: (
           <Input
             placeholder="Nome cartella"
             autoFocus
             onChange={(e) => { folderName = e.target.value; }}
-            onPressEnter={() => Modal.destroyAll()}
+            onPressEnter={() => dialog?.destroy()}
           />
         ),
         okText: 'Crea',
@@ -230,14 +233,14 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction 
   const handleRename = useCallback(
     (node: DataNode) => {
       let newName = String(node.title);
-      Modal.confirm({
+      const dialog = modal.confirm({
         title: 'Rinomina cartella',
         content: (
           <Input
             defaultValue={newName}
             autoFocus
             onChange={(e) => { newName = e.target.value; }}
-            onPressEnter={() => Modal.destroyAll()}
+            onPressEnter={() => dialog?.destroy()}
           />
         ),
         okText: 'Rinomina',
@@ -262,7 +265,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction 
 
   const handleDelete = useCallback(
     (node: DataNode) => {
-      Modal.confirm({
+      modal.confirm({
         title: 'Elimina cartella',
         content: `Eliminare la cartella "${node.title}"?`,
         okText: 'Elimina',

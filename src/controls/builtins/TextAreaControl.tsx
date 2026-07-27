@@ -1,23 +1,30 @@
 import { Input } from 'antd';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useCommitReload, getFieldName } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedValue } from '../helpers';
 
-const TextAreaControl: ControlComponent = ({ control, onAction, onChange }) => {
+const TextAreaControl: ControlComponent = ({ control, onChange, onAction }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
-  const fieldName = getFieldName(control);
-  const value = control.value;
+  // Controlled + re-synced from control.value, like every other text control.
+  // An uncontrolled `defaultValue` is only read at mount, and the control's
+  // React key is the field id (stable across records), so React reused the
+  // same instance on record navigation and the field kept showing the previous
+  // record's text (SXADV-5527). useSyncedValue re-applies control.value when a
+  // server round-trip (record navigation, reload) changes it.
+  const [value, setValue] = useSyncedValue(control.value);
   const minRows = control.rows || 3;
-  const contentLines = typeof value === 'string' ? value.split('\n').length : 0;
+  const contentLines = value.split('\n').length;
   const rows = Math.max(minRows, Math.min(contentLines + 1, 30));
   return (
     <Input.TextArea
-      key={control.id || fieldName}
       {...commonProps}
-      defaultValue={value as string}
+      value={value}
       rows={rows}
       style={{ width: '100%', maxHeight: '50vh', resize: 'vertical' }}
-      onChange={(e) => store(e.target.value)}
+      onChange={(e) => {
+        setValue(e.target.value);
+        store(e.target.value);
+      }}
       onBlur={commit}
     />
   );

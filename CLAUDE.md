@@ -97,7 +97,6 @@ npm run build    # Output to ../entrasp/WebContent/app/
 Build produces code-split chunks: app (~23KB), antd vendor, AG Grid vendor.
 
 ## What's Left To Do
-- [ ] Pick and integrate a rich-text editor for `htmlarea` (CKEditor / TipTap / react-quill) — currently a monospace textarea stub
 - [ ] Interactive weekly calendar grid for `consuntivazione` (currently a flat bookings list)
 - [ ] Deferred controls (not currently used in production views): Gantt, Maps (GMap/Google/LgtcMap), Tree, OlapCube
 - [ ] End-to-end testing with running server
@@ -105,6 +104,9 @@ Build produces code-split chunks: app (~23KB), antd vendor, AG Grid vendor.
 - [ ] Responsive behavior when sidebar collapses
 - [ ] Agenda sidebar panel
 - [ ] Print/export functionality
+
+### Done
+- `htmlarea` rich-text editor integrated (TipTap + StarterKit) — `HtmlAreaControl.tsx`. StarterKit covers bold/italic/underline/strike, headings, lists, quote, hr, links; `@tiptap/extension-text-align` + text-style `Color`/`BackgroundColor` round-trip the legacy CKEditor inline styles (`text-align`, `<span style="background-color/color">`) so editing an existing banner doesn't strip its formatting. Stores serialized HTML; empty doc stores `''` (SXADV-5526.1). Used by Info Banner "Testo Home Page" (banHpText).
 
 ### Done in the Apr 2026 coverage pass
 - All CORE UIControl subclasses have a `renderJSON` override (or inherit a working one); the 5 "half-ported" and 6 text-like unported controls were completed

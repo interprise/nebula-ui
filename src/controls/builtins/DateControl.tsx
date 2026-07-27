@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus } from '../helpers';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
  *  a ref without setState — controlled inputs that re-apply their `value`
@@ -31,6 +31,8 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
   const handleChange = useControlChange(control, onChange, onAction);
   const dateFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY';
   const [value, setValue] = useLocalDayjs(control.value, dateFmt);
+  const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
+  const restorePickerFocus = useRestorePickerFocus(pickerRef);
   const commit = (d: Dayjs | null, dateStr: string) => {
     setValue(d);
     handleChange(dateStr);
@@ -39,12 +41,13 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
   return (
     <DatePicker
       {...commonProps}
+      ref={pickerRef}
       value={value}
       format={dateFmt}
       placeholder=""
       style={{ minWidth: 96 }}
       preserveInvalidOnBlur
-      onChange={(d, dateStr) => commit(d, dateStr as string)}
+      onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
     />
   );
@@ -54,9 +57,12 @@ export const TimeControl: ControlComponent = ({ control, onAction, onChange }) =
   const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const [value, setValue] = useLocalDayjs(control.value, 'HH:mm');
+  const pickerRef = useRef<ComponentRef<typeof TimePicker>>(null);
+  const restorePickerFocus = useRestorePickerFocus(pickerRef);
   return (
     <TimePicker
       {...commonProps}
+      ref={pickerRef}
       value={value}
       format="HH:mm"
       placeholder=""
@@ -64,6 +70,7 @@ export const TimeControl: ControlComponent = ({ control, onAction, onChange }) =
       onChange={(t, timeStr) => {
         setValue(t);
         handleChange(timeStr);
+        restorePickerFocus();
       }}
     />
   );
@@ -74,6 +81,8 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
   const handleChange = useControlChange(control, onChange, onAction);
   const tsFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY HH:mm';
   const [value, setValue] = useLocalDayjs(control.value, tsFmt);
+  const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
+  const restorePickerFocus = useRestorePickerFocus(pickerRef);
   const commit = (d: Dayjs | null, dateStr: string) => {
     setValue(d);
     handleChange(dateStr);
@@ -82,13 +91,14 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
   return (
     <DatePicker
       {...commonProps}
+      ref={pickerRef}
       showTime
       value={value}
       format={tsFmt}
       placeholder=""
       style={{ minWidth: 170 }}
       preserveInvalidOnBlur
-      onChange={(d, dateStr) => commit(d, dateStr as string)}
+      onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
     />
   );

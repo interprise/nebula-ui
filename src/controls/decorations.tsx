@@ -86,7 +86,13 @@ export const withPostDecorations = (
         <FileSearchOutlined
           className="lookup-icon"
           title="Ricerca"
-          onClick={() => onAction(control.navigateLookupCommand!, { option1: fieldName })}
+          // option1 must be the BARE control name: NavigateLookupCommand
+          // resolves the source ViewItem via getItemByName (exact match on the
+          // bare name). control.name is the wire-form "name.viewstateId" (and for
+          // unported controls was even double-suffixed), so getItemByName missed
+          // and NavigateLookupCommand NPE'd. Use the dedicated bare controlName
+          // (falling back to name for pre-fix servers) — SXADV-5474 pattern.
+          onClick={() => onAction(control.navigateLookupCommand!, { option1: (control.controlName as string) || fieldName })}
         />
       )}
       {add && (

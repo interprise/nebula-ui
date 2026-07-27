@@ -43,6 +43,13 @@
    * ("not filtered") mark must read as neutral, distinct from the primary-blue
    * checked state, so an unset filter isn't mistaken for a valued one. */
   --app-checkbox-indeterminate: var(--app-neutral);
+
+  /* Read-only / disabled field VALUES must stay legible. A confirmed document
+   * renders every field disabled, and antd's default disabled text
+   * (rgba(0,0,0,0.25)) made amounts and values unreadable; the legacy UI showed
+   * read-only values as plain dark text (SXADV-5543). Matches the #333 the
+   * disabled input/select/picker rules already used. */
+  --app-text-readonly: #333;
 }
 
 /* -----------------------------------------------------------------------------

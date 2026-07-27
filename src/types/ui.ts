@@ -95,10 +95,42 @@ export interface UICell {
   scope?: string;
 }
 
+/** Instant edit-panel per-record data: the panel form rendered in DATA mode
+ *  against this record's BO. `values` keyed by structural path (scope.name),
+ *  `dynProps` keyed by iN (the panel catalog's disjoint slot range). The client
+ *  hydrates the cached panelTemplate with these on row selection — no round-trip. */
+export interface RowEditData {
+  values?: Record<string, unknown>;
+  dynProps?: Record<string, unknown>;
+}
+
+/** Cacheable edit-panel FORM template (bare names, ?iN placeholders) shipped on
+ *  a listEdit list. Hydrated per row with {@link RowEditData}. */
+export interface PanelTemplate {
+  rows: UIRow[];
+  templateKey?: string;
+  /** scope -> viewstate id, for wire-form field-name composition on POST. */
+  bindings?: Record<string, string>;
+  /** scope -> navpath, for nav/reload descriptors; the client overrides the
+   *  root ("") entry with the selected row's path at hydration time. */
+  scopePaths?: Record<string, string>;
+}
+
 export interface UIRow {
   id: string;
   cls?: string;
   cells: UICell[];
+  /** Instant edit-panel data for this record (emitted on the primary grid row
+   *  of a listEdit list). */
+  editData?: RowEditData;
+}
+
+/** One selectable record reported by ListRenderer to the edit panel: its
+ *  selector navpath plus onboard edit data. Lets the panel hydrate on selection
+ *  and step prev/next without a round-trip. */
+export interface ListRecord {
+  path: string;
+  editData?: RowEditData;
 }
 
 export interface ListColumn {
@@ -109,6 +141,9 @@ export interface ListColumn {
     basePath: string;
     canEdit?: boolean;
     canDelete?: boolean;
+    /** Dynamic updatable rule (updatable="?expr"): false when read-only for the
+     *  current object even though listEdit/canEdit are true. Gates the edit panel. */
+    canUpdate?: boolean;
   };
 }
 
@@ -182,6 +217,16 @@ export interface UITree {
   pageType?: number; // 0=QUERY, 1=LIST, 2=DETAIL
   multiEdit?: boolean;
   listEdit?: boolean;
+  /** listEdit rows edited as detail form (true) vs in-list cells (false). */
+  inlineEdit?: boolean;
+  /** Detail view bound to the list, when set: Add navigates to it (inlineEdit=false)
+   *  and the edit panel can host its form (inlineEdit=true). */
+  detailViewName?: string;
+  hasDetailView?: boolean;
+  /** Instant edit panel: cacheable form template + its key, shipped on a
+   *  listEdit list. The client hydrates it per selected row from row.editData. */
+  panelTemplate?: PanelTemplate;
+  panelTemplateKey?: string;
   documenting?: boolean;
   breadcrumbs?: string;
   viewName?: string;
@@ -198,6 +243,10 @@ export interface UITree {
   continuationHeaders?: ListHeader[][];
   listActions?: ListAction[];
   pageOnly?: boolean;
+  // Slim pagination update for a single embedded one-to-many detail grid.
+  // Carries `path` (the embedded child view state) + `rows` + `paging`; the
+  // client swaps that grid's page in place without re-rendering the detail form.
+  detailPageOnly?: boolean;
   rowUpdate?: boolean; // incremental: single row update, merge into existing grid
   position?: number; // row position for rowUpdate
   // Two-phase pipeline (form/detail views):
@@ -284,7 +333,8 @@ export interface LoginInfo {
   brand?: string;          // "Pandora" | "Nebula" — server-driven branding
   bkColor?: string;
   logoaz?: string;
-  dbVersion?: string;      // e.g. "Rel. 1.560.10#d" — header release indicator
+  dbVersion?: string;      // e.g. "1.560.10#d" — header release indicator (rendered with a "Rel." prefix)
+  alfa?: boolean;          // true when the server runs in the ALFA (test) environment — drives the ALFA header badge
   cdms?: boolean;
   emailSent?: boolean;
   agendaList?: boolean;
@@ -303,6 +353,12 @@ export interface Banner {
   banHomePage?: boolean;
   navigateTo?: string;     // command / menuId to navigate to on click
   notified?: boolean;      // client-side: already shown as notification
+  // Server (Utenti.getBanners) packs both file attachments AND the external
+  // links (linkEsterno1..3 + descriptions) into a single HTML string under
+  // `attachments` — it does NOT emit the linkEsterno* fields discretely. This
+  // is the "Area Link"/download area shown under the banner (SXADV-5526.2).
+  attachments?: string;
+  // Legacy discrete fields — not emitted by the current server, kept for typing.
   linkEsterno1?: string; linkEsternoDescr1?: string;
   linkEsterno2?: string; linkEsternoDescr2?: string;
   linkEsterno3?: string; linkEsternoDescr3?: string;

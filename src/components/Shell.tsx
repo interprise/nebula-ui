@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect, Suspense } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, message, ConfigProvider } from 'antd';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, App, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -20,6 +20,28 @@ import {
   ClockCircleOutlined,
   DatabaseOutlined,
   BuildOutlined,
+  SettingOutlined,
+  SafetyOutlined,
+  SafetyCertificateOutlined,
+  IdcardOutlined,
+  CalculatorOutlined,
+  ApartmentOutlined,
+  CarOutlined,
+  TagsOutlined,
+  BarChartOutlined,
+  HomeOutlined,
+  ControlOutlined,
+  ShoppingCartOutlined,
+  ShoppingOutlined,
+  SolutionOutlined,
+  MessageOutlined,
+  ContactsOutlined,
+  ProjectOutlined,
+  ScheduleOutlined,
+  InboxOutlined,
+  ToolOutlined,
+  ContainerOutlined,
+  ClusterOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -35,13 +57,15 @@ import type {
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext } from './ViewRenderer';
 import HomePanel from './HomePanel';
+import ChangePasswordModal from './ChangePasswordModal';
+import ImpersonateModal from './ImpersonateModal';
 import BannerCard from './BannerCard';
 import TopProgressBar from './TopProgressBar';
 import { ensureNotificationPermission, notify } from '../services/notifications';
 import * as api from '../services/api';
-import { putTemplate, getTemplate } from '../services/templateCache';
+import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
 import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
@@ -88,7 +112,7 @@ interface ShellProps {
   menuItems: MenuItem[];
   loginInfo: LoginInfo;
   onLogout: () => void;
-  onReloadMenu: () => void;
+  onReloadMenu: () => void | Promise<void>;
 }
 
 /**
@@ -165,6 +189,80 @@ function applyToggleItem(ui: UITree, itemId: string, included: boolean): UITree 
   return { ...ui, rows: newRows, headers: newHeaders };
 }
 
+/**
+ * Apply a `detailPageOnly` slim pagination update. Walks the cached detail-form
+ * tree, finds the embedded one-to-many grid whose child view-state `path`
+ * matches, and swaps only its page of rows + paging state — every other branch
+ * keeps referential identity so React re-renders just that grid, not the form.
+ */
+function applyDetailPage(
+  ui: UITree,
+  path: string,
+  rows: UIRow[],
+  paging: UITree['paging'],
+): UITree {
+  let changed = false;
+  // Embedded detail grid rows travel under the `rows` key, which collides with
+  // UIControl.rows (textarea row count, typed number) and UICell.rows — read it
+  // structurally and only treat it as a row array when it actually is one.
+  const getRows = (o: object): UIRow[] | undefined => {
+    const r = (o as { rows?: unknown }).rows;
+    return Array.isArray(r) ? (r as UIRow[]) : undefined;
+  };
+  const visitControl = (ctl: UIControl): UIControl => {
+    // Mirror the client's own ui.path resolution (ViewRenderer, detailView case):
+    // header.path || footer.path || control.path — the embedded list's path lives
+    // in whichever of these the server emitted (header only when a titled header
+    // is shown, footer only when an Add button is present, else on the control).
+    const ctlPath = (ctl.header as { path?: string } | undefined)?.path
+      ?? (ctl.footer as { path?: string } | undefined)?.path
+      ?? (ctl.path as string | undefined);
+    const ctlRows = getRows(ctl);
+    if (ctlPath === path && (ctlRows || ctl.contentRows)) {
+      changed = true;
+      const oldHeader = (ctl.header ?? {}) as Record<string, unknown>;
+      const base = {
+        ...ctl,
+        paging,
+        header: { ...oldHeader, position: paging?.position, recordCount: paging?.totalRows },
+      };
+      // The embedded grid's rows live under `rows` or `contentRows` depending on
+      // the render path; replace whichever this control uses.
+      return (ctlRows ? { ...base, rows } : { ...base, contentRows: rows }) as unknown as UIControl;
+    }
+    let next = ctl;
+    if (ctlRows) {
+      const r = ctlRows.map(visitRow);
+      if (r.some((nr, i) => nr !== ctlRows[i])) next = { ...next, rows: r } as unknown as UIControl;
+    }
+    if (ctl.contentRows) {
+      const r = ctl.contentRows.map(visitRow);
+      if (r.some((nr, i) => nr !== ctl.contentRows![i])) next = { ...next, contentRows: r };
+    }
+    return next;
+  };
+  const visitRow = (row: UIRow): UIRow => {
+    let rowChanged = false;
+    const newCells = row.cells.map((cell) => {
+      let newCell = cell;
+      if (cell.control) {
+        const newCtl = visitControl(cell.control);
+        if (newCtl !== cell.control) { rowChanged = true; newCell = { ...newCell, control: newCtl }; }
+      }
+      const cellRows = getRows(cell);
+      if (cellRows) {
+        const r = cellRows.map(visitRow);
+        if (r.some((nr, i) => nr !== cellRows[i])) { rowChanged = true; newCell = { ...newCell, rows: r }; }
+      }
+      return newCell;
+    });
+    return rowChanged ? { ...row, cells: newCells } : row;
+  };
+  const newRows = ui.rows.map(visitRow);
+  if (!changed) return ui;
+  return { ...ui, rows: newRows };
+}
+
 function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
   const lowerFilter = filter.toLowerCase();
   const result: MenuItem[] = [];
@@ -192,13 +290,53 @@ function collectOpenKeys(items: MenuItem[]): string[] {
   return keys;
 }
 
+// Semantic glyph per top-level Module, keyed on the bare module id (the server id
+// arrives as "menu.<id>", so we strip the prefix before lookup — see moduleIconFor).
+// Collapsed inline menus otherwise render every Module with the same fallback glyph,
+// making them indistinguishable; a distinct icon per Module restores recognizability
+// (SXADV-5454.0.b — one icon per primary menu).
+const MODULE_ICONS: Record<string, React.ReactNode> = {
+  cfg: <SettingOutlined />,              // Configurazioni
+  allianz: <SafetyOutlined />,           // Allianz (assicurazioni)
+  anag: <IdcardOutlined />,              // Anagrafiche
+  ctb: <CalculatorOutlined />,           // Contabilità
+  soci: <TeamOutlined />,                // Libro Soci
+  art: <TagsOutlined />,                 // Articoli
+  imm: <HomeOutlined />,                 // Immobiliare
+  ven: <ShoppingCartOutlined />,         // Commerciale
+  chub: <MessageOutlined />,             // Communication Hub
+  acq: <ShoppingOutlined />,             // Acquisti
+  proj: <ProjectOutlined />,             // Attività a progetto
+  rap: <ScheduleOutlined />,             // Rapportini
+  man: <ToolOutlined />,                 // Manutenzioni
+  fat: <FileTextOutlined />,             // Fatturazione
+  prod: <BuildOutlined />,               // Produzione
+  int: <ApartmentOutlined />,            // Gestione Interna
+  log: <CarOutlined />,                  // Logistica
+  olap: <BarChartOutlined />,            // Statistiche
+  util: <ControlOutlined />,             // Utilità
+  age: <SolutionOutlined />,             // Sezione Agenti
+  cli: <ContactsOutlined />,             // Sezione Clienti
+  ant: <SafetyCertificateOutlined />,    // Antiriciclaggio
+  dom: <ClusterOutlined />,              // Domino (hub anagrafiche uniche centralizzate)
+  mag: <InboxOutlined />,                // Magazzino
+  mct: <ContainerOutlined />,            // Magazzino Conto Terzi
+};
+
+function moduleIconFor(id: string): React.ReactNode {
+  const bare = id.replace(/^menu\./, '');
+  return MODULE_ICONS[bare] ?? <AppstoreOutlined />;
+}
+
 function buildMenuItems(items: MenuItem[], level = 0): NonNullable<React.ComponentProps<typeof Menu>['items']> {
   return items.map((item) => ({
     key: item.id,
     label: item.description,
     title: item.description,
-    // Tag top-level rows so CSS can render Modules distinctly from sub-functions
-    ...(level === 0 ? { className: 'menu-module' } : {}),
+    // Tag top-level rows so CSS can render Modules distinctly from sub-functions,
+    // and give each Module its own semantic glyph (unmapped Modules fall back to
+    // AppstoreOutlined, so nothing regresses).
+    ...(level === 0 ? { className: 'menu-module', icon: moduleIconFor(item.id) } : {}),
     children: item.children && item.children.length > 0 ? buildMenuItems(item.children, level + 1) : undefined,
   }));
 }
@@ -220,27 +358,58 @@ const defaultTab: TabState = {
 const CdmsTree = React.lazy(() => import('./CdmsTree'));
 
 const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadMenu }) => {
+  // Context-aware message/modal so toasts and dialogs inherit the ConfigProvider
+  // CSS-var theme; the static antd imports render invisibly under it. (SXADV-5542)
+  const { message, modal } = App.useApp();
   const [collapsed, setCollapsed] = useState(false);
+  // User-adjustable expanded sidebar width (SXADV-5454.0.a) — matches the classic
+  // client's draggable navigation column. Clamped to a sane range; ignored while
+  // collapsed (fixed 80px). Drag handle lives on the sidebar's right edge.
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const startSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      setSidebarWidth(Math.min(560, Math.max(180, startW + (ev.clientX - startX))));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }, [sidebarWidth]);
   const [tabs, setTabs] = useState<TabState[]>([defaultTab]);
   const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
   const [bannersModalOpen, setBannersModalOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
+  // Bumped on every fresh menu payload to remount the sidebar Menu. The inline
+  // Menu keeps its expanded submenus in internal state, so without a remount a
+  // reload (Azienda/Sede change, manual reload) would inherit the previously
+  // open branches. Remounting brings it back collapsed; an active text filter
+  // still re-expands to the matches via the controlled openKeys below, and
+  // filteredMenu re-derives from the new menuItems so the filter re-applies.
+  // (SXADV-5542)
+  const [menuNonce, setMenuNonce] = useState(0);
+  // True while an Azienda/Sede change is in flight (post + menu reload). Drives
+  // the busy indicator on the header selects — the reload takes a few seconds
+  // and the switch would otherwise look unresponsive. (SXADV-5542)
+  const [contextChanging, setContextChanging] = useState(false);
 
   // Reflect any in-flight controller request as a thin top progress bar.
   useEffect(() => api.subscribeInFlight((count) => setRequestActive(count > 0)), []);
 
-  const handleAziendaChange = useCallback(async (value: string) => {
-    await api.postAction2('CambioAzienda', { navpath: value });
-    onReloadMenu();
-  }, [onReloadMenu]);
-
-  const handleSedeChange = useCallback(async (value: string) => {
-    await api.postAction2('CambioSede', { navpath: value });
-    onReloadMenu();
-  }, [onReloadMenu]);
+  useEffect(() => { setMenuNonce((n) => n + 1); }, [menuItems]);
 
   const filteredMenu = menuFilter ? filterMenuTree(menuItems, menuFilter) : menuItems;
   const menuOpenKeys = menuFilter ? collectOpenKeys(filteredMenu) : undefined;
@@ -273,7 +442,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           break;
         case 'CONFIRMATION':
         case 'YESNOCANCEL':
-          Modal.confirm({
+          modal.confirm({
             content: err.message,
             onOk: () => {
               if (!err.mnemonic) return;
@@ -299,6 +468,63 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       }
     }
   }, [getActiveTabState]);
+
+  // Changing Azienda/Sede di accesso wipes the whole server session pool
+  // (CambioAziendaCommand: clearSession + sessions.clear()). The legacy client
+  // mirrored that by tearing down every open tab and landing on the home page
+  // (ui.js showMenu, lines 2606-2647). Reproduce it here: collapse the tab area
+  // back to a single fresh session tab so no stale document/session survives,
+  // and the empty tab renders HomePanel. (SXADV-5542)
+  const resetToHome = useCallback(() => {
+    tabCounter = 1;
+    formValuesRef.current = { tab_1: {} };
+    setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {} }]);
+    setActiveTab('tab_1');
+  }, []);
+
+  const changeContext = useCallback(
+    async (action: 'CambioAzienda' | 'CambioSede', value: string) => {
+      // Busy clue for the multi-second switch: a full-screen Spin overlay
+      // (rendered in-tree below, so it inherits the ConfigProvider theme —
+      // unlike the detached static `message`, which renders invisibly under the
+      // CSS-variable theme). Mirrors the legacy MessageBox.wait modal.
+      setContextChanging(true);
+      try {
+        const resp = await api.postAction2(action, { navpath: value });
+        // A dirty in-flight session makes the server reject the change
+        // (SAVE_BEFORE_NEW_ERR) without touching anything. Surface the message and
+        // leave the tabs alone; the header Select reverts on its own because it is
+        // bound to the unchanged loginInfo. (legacy ui.js 3168-3172)
+        if (resp?.errors && resp.errors.length > 0) {
+          handleErrors(resp.errors);
+          if (resp.errors.some((e) => e.type === 'ERROR')) return;
+        }
+        resetToHome();
+        // Await the reload — it is the slow part — so the busy clue stays up
+        // until the fresh menu/home is actually in place.
+        await onReloadMenu();
+      } finally {
+        setContextChanging(false);
+      }
+    },
+    [handleErrors, resetToHome, onReloadMenu]
+  );
+
+  const handleAziendaChange = useCallback(
+    (value: string) => {
+      if (value === loginInfo.customerKey) return;
+      void changeContext('CambioAzienda', value);
+    },
+    [changeContext, loginInfo.customerKey]
+  );
+
+  const handleSedeChange = useCallback(
+    (value: string) => {
+      if (value === loginInfo.sede) return;
+      void changeContext('CambioSede', value);
+    },
+    [changeContext, loginInfo.sede]
+  );
 
   // Extract values from editable form controls only — the server already has readonly values
   const extractFormValues = useCallback((ui: UITree): Record<string, string | string[]> => {
@@ -405,6 +631,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // the viewstate id the server allocated for this tab, so form posts
       // can compose wire-form keys.
       if (resp.template && resp.templateKey) {
+        // Navigating to a DIFFERENT view (e.g. a listEdit list → "Nuovo" → the
+        // record detail) leaves the inline list-edit context. Drop the stale
+        // edit-row navpath so the new view's Save/Post resolves on its own
+        // viewstate — otherwise the detail's Save injected the previous list
+        // row's navpath (S1-11) while its fields were keyed to the new record
+        // (S1-12), and the server rejected it as NoSession.
+        const prevTemplateKey = tabs.find((t) => t.key === tabKey)?.templateKey;
+        if (resp.templateKey !== prevTemplateKey) editNavpathRef.current = null;
         putTemplate(resp.templateKey, resp.template);
         const bindings = resp.bindings ?? {};
         const scopePaths = resp.scopePaths ?? {};
@@ -484,6 +718,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               rows: resp.ui.rows,
               paging: resp.ui.paging,
             };
+          }
+        } else if (resp.ui.detailPageOnly) {
+          // Embedded detail pagination: swap just the matching grid's page in the
+          // cached detail-form tree, leaving the rest of the form untouched.
+          const existingTab = tabs.find(t => t.key === tabKey);
+          if (existingTab?.ui && resp.ui.path) {
+            update.ui = applyDetailPage(existingTab.ui, resp.ui.path, resp.ui.rows, resp.ui.paging);
           }
         } else {
           update.ui = resp.ui;
@@ -624,6 +865,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     [getActiveTabState, processResponse, updateTabState, makeConfirmReplay]
   );
 
+  // After an identity change (impersonate), reload the menu and refresh the
+  // active tab's view. Lifted to component scope so ImpersonateModal can call it.
+  const refreshAfterIdentityChange = useCallback(async () => {
+    onReloadMenu();
+    const tab = getActiveTabState();
+    if (!tab) return;
+    try {
+      const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
+      processResponse(tab.key, resp);
+    } catch {
+      // View not accessible — clear the tab
+      updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
+    }
+  }, [onReloadMenu, getActiveTabState, processResponse, updateTabState]);
+
   const handleAction = useCallback(
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
@@ -648,58 +904,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         return;
       }
 
-      // After identity change, reload menu and refresh current tab view
-      const refreshAfterIdentityChange = async () => {
-        onReloadMenu();
-        try {
-          const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
-          processResponse(tab.key, resp);
-        } catch {
-          // View not accessible — clear the tab
-          updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
-        }
-      };
-
-      // Impersonate dialog: modal asking for username → controller2 → refresh
+      // Impersonate dialog: ImpersonateModal handles input + inline "user not
+      // found"; on success it calls refreshAfterIdentityChange.
       if (action === 'impersonateDialog') {
-        let usernameValue = '';
-        Modal.confirm({
-          title: 'Impersona un utente',
-          content: (
-            <Input
-              placeholder="Username"
-              autoFocus
-              style={{ marginTop: 8 }}
-              onChange={(e) => { usernameValue = e.target.value; }}
-              onPressEnter={() => {
-                Modal.destroyAll();
-                if (usernameValue.trim()) {
-                  api.postAction2('Impersonate', { username: usernameValue.trim() }).then((resp) => {
-                    const r = resp as Record<string, unknown>;
-                    if (r.errors && (r.errors as unknown[]).length > 0) {
-                      message.error('Utente non trovato');
-                    } else {
-                      refreshAfterIdentityChange();
-                    }
-                  });
-                }
-              }}
-            />
-          ),
-          okText: 'Impersona',
-          cancelText: 'Annulla',
-          onOk: () => {
-            if (!usernameValue.trim()) return;
-            return api.postAction2('Impersonate', { username: usernameValue.trim() }).then((resp) => {
-              const r = resp as Record<string, unknown>;
-              if (r.errors && (r.errors as unknown[]).length > 0) {
-                message.error('Utente non trovato');
-              } else {
-                refreshAfterIdentityChange();
-              }
-            });
-          },
-        });
+        setImpersonateOpen(true);
         return;
       }
 
@@ -731,6 +939,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // DATA-only vs METADATA+DATA based on whether the resolved view matches.
       serverParams.hasTemplate = '1';
       if (tab.templateKey) serverParams.templateKey = tab.templateKey;
+      // Advertise the instant edit-panel templates the client already holds so
+      // the server omits those (cacheable) blobs from list renders, sending only
+      // the key. Client falls back to its cache when the blob is absent.
+      const pk = panelTemplateKeysParam();
+      if (pk) serverParams.panelKeys = pk;
 
       // For listEdit: include the editing row's navpath for data-modifying actions
       // (Save, Post, etc.) so the server positions on the correct row.
@@ -926,49 +1139,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   }, [breadcrumbs]);
 
   const APPBAR_WIDTH = 48;
-  const siderWidth = collapsed ? 80 : 260;
+  const siderWidth = collapsed ? 80 : sidebarWidth;
 
-  const showChangePasswordDialog = useCallback(() => {
-    const values = { oldpwd: '', newpwd: '', newpwd2: '' };
-    Modal.confirm({
-      title: 'Cambio Password',
-      icon: null,
-      content: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
-          <Input.Password
-            placeholder="Password attuale"
-            onChange={(e) => { values.oldpwd = e.target.value; }}
-          />
-          <Input.Password
-            placeholder="Nuova password"
-            onChange={(e) => { values.newpwd = e.target.value; }}
-          />
-          <Input.Password
-            placeholder="Ripeti nuova password"
-            onChange={(e) => { values.newpwd2 = e.target.value; }}
-          />
-        </div>
-      ),
-      okText: 'Cambia Password',
-      cancelText: 'Annulla',
-      onOk: async () => {
-        if (!values.newpwd) {
-          message.error('Inserire la nuova password');
-          throw ''; // keep modal open
-        }
-        if (values.newpwd !== values.newpwd2) {
-          message.error('Le password non coincidono');
-          throw ''; // keep modal open
-        }
-        const resp = await api.postAction2('ChangePassword2', values);
-        if (resp.errors && resp.errors.length > 0) {
-          handleErrors(resp.errors);
-          const hasError = resp.errors.some(e => e.type === 'ERROR');
-          if (hasError) throw ''; // keep modal open
-        }
-      },
-    });
-  }, [handleErrors]);
+  // ChangePasswordModal owns the form + inline validation; opened on demand.
+  const showChangePasswordDialog = useCallback(() => setChangePasswordOpen(true), []);
 
   const appBarButtons: {
     key: string;
@@ -1005,6 +1179,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       {/* Global in-flight hint; suppressed while the heavy async-job overlay is up */}
       <TopProgressBar active={requestActive && !currentTab?.loading} />
+      {/* Prominent busy overlay for the multi-second Azienda/Sede switch — an
+          in-tree dimmed backdrop so it inherits the theme and can't be missed
+          (the static toast rendered invisibly under the CSS-var theme). SXADV-5542 */}
+      {contextChanging && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'rgba(0,0,0,0.45)' }}>
+          <Spin size="large" />
+          <div style={{ color: '#fff', fontSize: 16, fontWeight: 500 }}>Cambio in corso, attendere…</div>
+        </div>
+      )}
       {/* Vertical app bar */}
       <div className="app-bar">
         {appBarButtons
@@ -1034,8 +1217,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       <div
         className="sidebar"
         style={{
-          width: collapsed ? 80 : 260,
-          minWidth: collapsed ? 80 : 260,
+          width: siderWidth,
+          minWidth: siderWidth,
           height: '100vh',
           position: 'fixed',
           left: APPBAR_WIDTH,
@@ -1044,10 +1227,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           overflow: 'auto',
           background: '#fff',
           borderRight: '1px solid #e8e8e8',
+          // Don't animate width while dragging — the transition fights the drag.
           transition: 'width 0.2s',
           zIndex: 99,
         }}
       >
+        {/* Right-edge drag handle to resize the expanded sidebar (SXADV-5454.0.a) */}
+        {!collapsed && (
+          <div
+            className="sidebar-resize-handle"
+            onMouseDown={startSidebarResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Ridimensiona menu"
+            style={{ left: APPBAR_WIDTH + siderWidth - 3 }}
+          />
+        )}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', gap: 8, height: 80, boxSizing: 'border-box', padding: collapsed ? '0' : '0 12px', background: loginInfo.bkColor || '#1E4176' }}>
           {!collapsed && (
             <img src="/entrasp/images/logos/logo_dx.png" alt="Sixtema" style={{ maxHeight: 66, maxWidth: '88%', minWidth: 0, objectFit: 'contain' }} />
@@ -1077,6 +1272,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             )}
             <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#eaeef5', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
               <Menu
+                key={menuNonce}
                 mode="inline"
                 inlineCollapsed={collapsed}
                 items={buildMenuItems(filteredMenu)}
@@ -1114,21 +1310,25 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             lineHeight: 'normal',
           }}
         >
-          {/* Left: product logo, brand-driven. Pandora instances show the white
-              Pandora mark; Nebula instances keep logo_sx.png. Sized full-height
-              so the white wordmark is legible on the dark header. */}
-          <img
-            src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
-            alt={loginInfo.brand || 'Pandora'}
-            style={{ height: 64, objectFit: 'contain', flexShrink: 0 }}
-          />
+          {/* Left: product logo (brand-driven) + release + ALFA env badge.
+              Pandora instances show the white Pandora mark; Nebula instances keep
+              logo_sx.png. "Rel." sits beside the mark for topical grouping and is
+              prefixed "Rel." (SXADV-5454.2A). The ALFA badge appears only when the
+              server runs in the test environment (SXADV-5454.2B). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            <img
+              src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
+              alt={loginInfo.brand || 'Pandora'}
+              style={{ height: 64, objectFit: 'contain', flexShrink: 0 }}
+            />
+            {loginInfo.dbVersion && (
+              <Text style={{ color: '#fff', whiteSpace: 'nowrap', opacity: 0.9, fontSize: 12 }}>Rel. {loginInfo.dbVersion}</Text>
+            )}
+            {loginInfo.alfa && <span className="alfa-badge">ALFA</span>}
+          </div>
 
-          {/* Center: identity, company/site selectors, release */}
+          {/* Center: company/site selectors */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, whiteSpace: 'nowrap' }}>
-              <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
-              <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
-            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
               {loginInfo.aziende && loginInfo.aziende.length === 1 && (
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
@@ -1144,6 +1344,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     className="header-select"
                     value={loginInfo.customerKey}
                     onChange={handleAziendaChange}
+                    loading={contextChanging}
+                    disabled={contextChanging}
                     style={{ width: 240, minWidth: 0 }}
                     options={loginInfo.aziende}
                     fieldNames={{ label: 'text', value: 'value' }}
@@ -1164,6 +1366,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     className="header-select"
                     value={loginInfo.sede}
                     onChange={handleSedeChange}
+                    loading={contextChanging}
+                    disabled={contextChanging}
                     style={{ width: 240, minWidth: 0 }}
                     options={loginInfo.sedi}
                     fieldNames={{ label: 'text', value: 'value' }}
@@ -1171,12 +1375,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 </div>
               )}
             </div>
-            {loginInfo.dbVersion && (
-              <Text style={{ color: '#fff', whiteSpace: 'nowrap', opacity: 0.9 }}>{loginInfo.dbVersion}</Text>
-            )}
           </div>
 
-          {/* Right: company logo (if any) + Sixtema wordmark + user menu */}
+          {/* Right: company logo + identity block + user menu. Login/Profilo is
+              anchored here, right before the login icon (SXADV-5454.4b); its
+              background is highlighted for immediate legibility (SXADV-5454.3) and
+              the status dot is green — active login — not red (SXADV-5454.4a). */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
             {loginInfo.logoaz && !loginInfo.logoaz.endsWith('/') && !loginInfo.logoaz.includes('null') && (
               <img
@@ -1186,6 +1390,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
               />
             )}
+            <div className="login-chip">
+              <Text style={{ color: '#fff' }}>Utente: <Text strong style={{ color: '#fff' }}>{loginInfo.login}</Text></Text>
+              <Text style={{ color: '#fff' }}>Profilo: <Text strong style={{ color: '#fff' }}>{loginInfo.profile}</Text></Text>
+            </div>
             <Dropdown
               menu={{
                 items: [
@@ -1199,9 +1407,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               }}
             >
               <Space style={{ cursor: 'pointer', color: '#fff', flexShrink: 0 }}>
-                <Badge dot={!!loginInfo.notifications}>
-                  <UserOutlined style={{ fontSize: 18, color: '#fff' }} />
-                </Badge>
+                {/* No status dot here: the old red dot (notifications) read as a
+                    "login disabled" signal, and a fixed green dot carried no real
+                    information — removed rather than kept as decoration (SXADV-5454.4a). */}
+                <UserOutlined style={{ fontSize: 18, color: '#fff' }} />
               </Space>
             </Dropdown>
           </div>
@@ -1273,13 +1482,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     {!viewHasOlapCube(currentTab.ui) && (
                       <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
                     )}
-                    <ViewRenderer
-                      ui={currentTab.ui}
-                      onAction={handleAction}
-                      onChange={handleFieldChange}
-                      onGridChange={handleGridChange}
-                      onEditRow={handleEditRow}
-                    />
+                    <EditRowContext.Provider value={handleEditRow}>
+                      <ViewRenderer
+                        ui={currentTab.ui}
+                        onAction={handleAction}
+                        onChange={handleFieldChange}
+                        onGridChange={handleGridChange}
+                        onEditRow={handleEditRow}
+                      />
+                    </EditRowContext.Provider>
                   </>
                 ) : (
                   currentTab.loading ? null : (
@@ -1292,6 +1503,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           )}
         </Content>
       </Layout>
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        onServerErrors={handleErrors}
+      />
+
+      <ImpersonateModal
+        open={impersonateOpen}
+        onClose={() => setImpersonateOpen(false)}
+        onSuccess={refreshAfterIdentityChange}
+      />
 
       {/* Banners modal: shows all active banners regardless of banHomePage */}
       <Modal

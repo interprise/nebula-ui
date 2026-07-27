@@ -16,23 +16,17 @@ import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
  */
 const PLACEHOLDER = /^\?i(\d+)$/;
 
-// Control types whose full descriptor is re-emitted in DATA mode and
-// merged (not overwritten as `value`) into the cached template stub.
-const STRUCTURED_VALUE_TYPES = new Set([
-  'detailView', 'tab', 'warning', 'workflowStatus', 'actionBar', 'buttonBar',
-  // MultiSelect emits its per-render descriptor (value, selectedItems,
-  // negationValue, navpath) as a structured DATA value merged into the stub.
-  'multiselect',
-  // entrasp custom controls with fully-dynamic descriptors
-  'assegnazioni', 'partitario', 'disponibilita', 'richOffAtt',
-  'consuntivazione', 'cdmsClass', 'lgtcCalendario', 'sottoconti',
-  'reportBar', 'gestorePrivilegi', 'ruoli', 'contatti', 'varianti',
-  'array', 'allegati',
-]);
-
-function isStructuredValueType(type: string | undefined): boolean {
-  return type !== undefined && STRUCTURED_VALUE_TYPES.has(type);
-}
+// A DATA value is merged into the cached template stub (rather than set as
+// `value`) whenever it is a non-array object — i.e. the control emitted its
+// entire refreshable descriptor as a structured value. This covers:
+//  - container/dynamic controls (detailView, tab, warning, workflowStatus,
+//    actionBar, buttonBar, multiselect) and entrasp custom controls;
+//  - metadata-split combos (ListUIControl / GenericListUIControl) shipping
+//    {value, displayText/displayValue, navigateAdd} per row;
+//  - the unported-control safety net: any control not (yet) metadata-split
+//    re-emits its full renderJSON descriptor in listDataMode DATA mode.
+// Scalar values (string/number/bool/null — e.g. CodeTableUIControl's bare code)
+// fall through to `out.value` unchanged.
 
 type DynProps = Record<string, unknown>;
 type Values = Record<string, unknown>;
@@ -106,17 +100,15 @@ function hydrateControl(
   }
 
   const bareName = (out ?? src).name as string | undefined;
-  const type = (out ?? src).type as string | undefined;
   if (bareName) {
     // Value lookup uses the structural path (scope + bare name).
     const valueKey = scope ? scope + '.' + bareName : bareName;
     if (valueKey in values) {
       const v = values[valueKey];
-      // Container/dynamic controls emit their entire refreshable descriptor
-      // as a structured value — merge it into the template's descriptor so
-      // static stubs (type, name) coexist with per-render content
-      // (tabs, rows, actions, buttons, html, state, ...).
-      if (isStructuredValueType(type) && v && typeof v === 'object' && !Array.isArray(v)) {
+      // A structured DATA value (any non-array object) is the control's entire
+      // refreshable descriptor — merge it; a plain scalar sets `value` (see the
+      // note by the top-of-file type comment).
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
         if (out === null) out = { ...src };
         Object.assign(out, v as Record<string, unknown>);
       } else {
@@ -126,8 +118,14 @@ function hydrateControl(
     }
     // Compose wire-form name for form posts. Falls back to the bare name
     // when no binding is known — preserves legacy behavior on cache miss.
+    // Idempotent: unported controls (ListUIControl, …) bake the wire-form
+    // name into the template via full-mode renderJSON (getControlName =
+    // controlName + "." + viewstateId), violating the "templates carry bare
+    // names" contract. Appending unconditionally then doubled the suffix
+    // (valuta.S1-26.S1-26), corrupting form-post keys and lookup option1.
+    // Skip when the id is already present.
     const vsId = bindings[scope];
-    if (vsId) {
+    if (vsId && !bareName.endsWith('.' + vsId)) {
       if (out === null) out = { ...src };
       out.name = bareName + '.' + vsId;
     }

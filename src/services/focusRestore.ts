@@ -17,9 +17,21 @@
  */
 let pending: string | null = null;
 
-export function captureFocusBeforeReload(): void {
+/**
+ * Snapshot the element to refocus after the reload re-renders.
+ *
+ * Normally that's `document.activeElement` — for a Tab-out reload it's already
+ * the next field, for a checkbox toggle it's the checkbox itself. But when the
+ * change is fired from a widget whose popup has stolen focus (a DatePicker
+ * calendar, whose panel div carries no id, or a menu that dropped focus to
+ * <body>), `activeElement` has no id to restore. In that case fall back to
+ * `fallbackId` — the control's own DOM id — so focus lands back on the field
+ * that triggered the reload instead of being stranded on <body> (whence the
+ * next Tab jumps to the first focusable element on the page). SXADV-5680.
+ */
+export function captureFocusBeforeReload(fallbackId?: string | null): void {
   const el = document.activeElement as HTMLElement | null;
-  pending = el?.id || null;
+  pending = el?.id || fallbackId || null;
 }
 
 export function consumePendingFocus(): string | null {

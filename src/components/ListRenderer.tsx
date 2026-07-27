@@ -1,9 +1,10 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
+import { fixServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
-import { Button, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn } from '../types/ui';
+import { Button, Pagination, Typography } from 'antd';
+import { PlusOutlined, RightOutlined } from '@ant-design/icons';
+import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
 import { SidContext } from './ViewRenderer';
@@ -100,6 +101,36 @@ function parseInlineStyle(css: string): Record<string, string> {
   return out;
 }
 
+/** Minimum pixel width needed to show a header label in a padded grid cell.
+ *  Measures the real rendered width (canvas, actual grid font) instead of the
+ *  previous ~6.3px-per-char estimate: glyph metrics drift from any per-char
+ *  constant — most visibly under browser zoom, where font rasterization
+ *  changes a string's CSS-px width by a few pixels — so borderline header
+ *  labels flipped between fitting and being ellipsized depending on the zoom
+ *  level (item 5455.2, reopened). Measured width + padding + slack keeps them
+ *  visible at any zoom. */
+const HEADER_LABEL_PAD = 8;  // 4px horizontal cell padding per side
+const HEADER_LABEL_SLACK = 6; // absorbs zoom-dependent rasterization drift
+let headerMeasureCtx: CanvasRenderingContext2D | null | undefined;
+let headerMeasureFont: string | null = null;
+function headerLabelMinWidth(text: string): number {
+  if (!text) return HEADER_LABEL_PAD;
+  if (headerMeasureCtx === undefined) {
+    headerMeasureCtx = document.createElement('canvas').getContext('2d');
+  }
+  if (!headerMeasureCtx) {
+    // Canvas unavailable — fall back to the old estimate
+    return Math.round(text.length * 6.3) + 10;
+  }
+  if (!headerMeasureFont) {
+    // Headers render at 12px bold; the family (Inter stack) is shared by the
+    // grid theme and the app body, so body's computed value is authoritative.
+    headerMeasureFont = `700 12px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`;
+  }
+  headerMeasureCtx.font = headerMeasureFont;
+  return Math.ceil(headerMeasureCtx.measureText(text).width) + HEADER_LABEL_PAD + HEADER_LABEL_SLACK;
+}
+
 const gridTheme = themeAlpine.withParams({
   rowHeight: 22,
   headerHeight: 36,
@@ -111,7 +142,7 @@ const gridTheme = themeAlpine.withParams({
 const HtmlCellRenderer = (params: ICellRendererParams) => {
   const val = params.value;
   if (!val) return null;
-  return <span dangerouslySetInnerHTML={{ __html: val }} />;
+  return <span dangerouslySetInnerHTML={{ __html: fixServerHtml(val) }} />;
 };
 
 // Render a boolean column as server-decoded text (from BOOLEAN_CODE_TABLE)
@@ -129,6 +160,39 @@ const BooleanTextRenderer = (params: ICellRendererParams) => {
   if (v === true) return 'Sì';
   if (v === false) return 'No';
   return '';
+};
+
+// Record-SELECTION multiEdit boolean column: an always-interactive checkbox on
+// every EDITABLE row (per-row editability = _editable_${idx} && _prop_${dynPropKey}),
+// so many records can be checked at once and posted in a single multi-row Save.
+// Toggling updates the row value and re-pushes the whole column to formValues via
+// the grid context (onBoolToggle). Non-editable rows fall back to decoded text.
+type BoolToggleContext = {
+  onBoolToggle?: (colIdx: number, node: unknown, checked: boolean, colMeta?: Record<string, unknown>) => void;
+};
+const MultiEditCheckboxRenderer = (
+  params: ICellRendererParams & { dynPropKey?: string | null; colIdx?: number; colMeta?: Record<string, unknown> }
+) => {
+  const field = params.colDef?.field;
+  if (!field) return null;
+  const idx = field.replace('col_', '');
+  const editableFlag = !!params.data?.[`_editable_${idx}`];
+  const dynOk = params.dynPropKey ? !!params.data?.[`_prop_${params.dynPropKey}`] : true;
+  const checked = params.value === true;
+  if (!editableFlag || !dynOk) {
+    const display = params.data?.[`_display_${idx}`] as string | undefined;
+    return <>{display ?? (checked ? 'Sì' : params.value === false ? 'No' : '')}</>;
+  }
+  const ctx = params.context as BoolToggleContext;
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => ctx.onBoolToggle?.(params.colIdx ?? Number(idx), params.node, e.target.checked, params.colMeta)}
+      style={{ cursor: 'pointer', width: 16, height: 16 }}
+    />
+  );
 };
 
 // For editable columns whose value is a key (remote combos, lookups...) but
@@ -215,12 +279,42 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
  *  (ColDef width is pixels, not units). Returns offsets[u] = px from the
  *  left at unit boundary u.
  */
+/** Leftmost navigate-to-detail column for listEdit+detailView lists (the
+ *  legacy "selector"). Field click edits in the panel; this icon opens the
+ *  full detail page. Rendered only on main rows (continuation/break rows are
+ *  full-width and ignore columns). Reads onAction from a stable ref passed via
+ *  cellRendererParams so adding the column doesn't rebuild on every render. */
+const SELECTOR_NAV_WIDTH = 30;
+type SelectorNavParams = ICellRendererParams & {
+  onActionRef?: { current: (action: string, params?: Record<string, string>) => void };
+};
+const SelectorNavRenderer = (params: SelectorNavParams) => {
+  const data = params.data as Record<string, unknown> | undefined;
+  if (!data || data._isBreakRow || data._isContinuationRow) return null;
+  const path = data._selectorPath as string | undefined;
+  const command = data._selectorCommand as string | undefined;
+  if (!path || !command) return null;
+  return (
+    <span
+      className="selector-nav"
+      title="Apri dettaglio"
+      onClick={(e) => { e.stopPropagation(); params.onActionRef?.current(command, { navpath: path }); }}
+    >
+      <RightOutlined />
+    </span>
+  );
+};
+
 function computeUnitOffsets(api: GridApi, headersByField: Map<string, number>): number[] {
   const cols = api.getAllDisplayedColumns();
   const offsets: number[] = [0];
   let px = 0;
   for (const col of cols) {
     const field = col.getColDef().field;
+    // The selector column sits outside the colspan/unit model — skip it so the
+    // data columns keep their offsets starting at 0 (continuation rows align to
+    // the data area, which is padded left by the pinned selector width).
+    if (field && field.startsWith('_selnav')) continue;
     const units = (field && headersByField.get(field)) || 1;
     const width = col.getActualWidth();
     const pxPerUnit = width / units;
@@ -293,7 +387,7 @@ const ContinuationCell = ({
     }
   }
   if (cell.html) {
-    return <span style={style} dangerouslySetInnerHTML={{ __html: cell.html }} />;
+    return <span style={style} dangerouslySetInnerHTML={{ __html: fixServerHtml(cell.html) }} />;
   }
   return <span style={style}>{cell.text}</span>;
 };
@@ -310,6 +404,7 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
     onAction?: (action: string, params?: Record<string, string>) => void;
     onChange?: (name: string, value: unknown) => void;
     headersByField?: Map<string, number>;
+    selectorPad?: number;
   } | undefined;
   const hbf = ctx?.headersByField ?? new Map<string, number>();
   const offsets = params.api ? computeUnitOffsets(params.api, hbf) : null;
@@ -318,10 +413,14 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
   const rowPath = params.data?._selectorPath as string | undefined;
   const onAction = ctx?.onAction ?? (() => {});
   const onChange = ctx?.onChange ?? (() => {});
+  // Full-width rows span the whole grid (over the pinned selector column too),
+  // so their content starts at x=0 while the main data cells start after the
+  // pinned selector. Pad left by the selector width to realign.
+  const selectorPad = ctx?.selectorPad ?? 0;
 
   if (widths && totalWidth != null) {
     return (
-      <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: '22px', fontSize: 12 }}>
+      <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: '22px', fontSize: 12, paddingLeft: selectorPad }}>
         <div style={{
           display: 'flex',
           width: totalWidth,
@@ -368,13 +467,25 @@ interface ListRendererProps {
   onChange?: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
   onEditRow?: (navpath: string | null) => void;
+  /** listEdit: a record row was selected — the bottom edit panel renders it. */
+  onSelectRecord?: (navpath: string) => void;
+  /** listEdit: report the ordered record paths (main rows) so the panel can
+   *  navigate prev/next between records. */
+  onRecordPaths?: (records: ListRecord[]) => void;
   embedded?: boolean;
   /** Fill available vertical space with internal scroll instead of
    *  AG Grid's autoHeight (used for grids inside tabs). */
   fillHeight?: boolean;
+  /** listEdit grid: fill all the container height (minus the edit panel when
+   *  shown) via JS measurement, instead of shrinking to content. The layout-table
+   *  ancestor blocks CSS flex-fill, so it's measured. */
+  fillContainer?: boolean;
+  /** Whether the bottom edit panel is currently visible — re-measure the fill
+   *  height when it appears/disappears (the grid grows to reclaim its space). */
+  panelShown?: boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, onSelectRecord, onRecordPaths, embedded, fillContainer, panelShown }) => {
   const sid = useContext(SidContext);
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
@@ -390,7 +501,34 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return true; // No paging info — assume all data is local
   })();
 
+  // Normalized pagination state for the footer. Prefer the explicit `paging`
+  // object (present after a detailPageOnly slim update); otherwise derive it
+  // from the header (initial embedded render carries recordCount/pageSize/
+  // position but no paging object). Null when there's nothing to paginate.
+  const pageInfo = (() => {
+    if (ui.paging) return ui.paging;
+    if (meta?.recordCount && meta?.pageSize) {
+      return {
+        currentPage: Math.floor((meta.position ?? 0) / meta.pageSize) + 1,
+        totalPages: Math.ceil(meta.recordCount / meta.pageSize),
+        totalRows: meta.recordCount,
+        pageSize: meta.pageSize,
+        position: meta.position ?? 0,
+      };
+    }
+    return null;
+  })();
+  // An embedded detail grid with more than one server page gets an interactive
+  // pager wired to DetailPage (slim, updates just this grid). Top-level lists
+  // keep paging in their toolbar, so this is embedded-only.
+  const showDetailPager = !!embedded && !!ui.path && !!pageInfo && pageInfo.totalPages > 1;
+
   // Build editable column metadata map from ui.columns (stable across renders)
+  // Stable handle to onAction for the selector cell renderer, so injecting the
+  // selector column doesn't force the columnDefs memo to rebuild each render.
+  const onActionRef = useRef(onAction);
+  onActionRef.current = onAction;
+
   const editableColumns = useMemo(() => {
     const map = new Map<number, ListColumn['control']>();
     if ((isMultiEdit || isListEdit) && ui.columns) {
@@ -481,7 +619,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         for (const sh of chRow) {
           const span = sh.colspan || 1;
           const longest = (sh.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-          const need = Math.round(longest.length * 6.3) + 10;
+          const need = headerLabelMinWidth(longest);
           const covered = mainCols.filter(c => c.start < pos + span && (c.start + c.span) > pos);
           if (covered.length > 0) {
             const share = Math.ceil(need / covered.length);
@@ -515,9 +653,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           autoHeight = true;
         }
         const isRightAlign = rightAlignColumns.has(idx);
-        // Minimum width based on longest word in header (~6.3px per char + padding)
+        // Minimum width based on longest word in header (measured, zoom-proof)
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-        const hdrMinWidth = Math.round(longestWord.length * 6.3) + 10;
+        const hdrMinWidth = headerLabelMinWidth(longestWord);
         // Content-based min width from control.size: columns should at least
         // show their declared content width, matching form behavior. Boolean
         // (checkbox) columns are intrinsically narrow regardless of size.
@@ -567,6 +705,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         let cellEditor: ColDef['cellEditor'] = undefined;
         let cellEditorParams: ColDef['cellEditorParams'] = undefined;
         let editCellRenderer: ColDef['cellRenderer'] = undefined;
+        let dynPropKey: string | null = null;
 
         if (colMeta) {
           const ctrlType = colMeta.type as string | undefined;
@@ -575,7 +714,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // - "iN": dynamic, also check the row's evaluated property
           // - false/absent: never editable
           const colEditable = colMeta.editable as boolean | string | undefined;
-          const dynPropKey = typeof colEditable === 'string' && colEditable.match(/^i\d+$/) ? colEditable : null;
+          dynPropKey = typeof colEditable === 'string' && colEditable.match(/^i\d+$/) ? colEditable : null;
 
           const makeEditableCallback = () => (params: { data?: Record<string, unknown> }) => {
             // Row must be in edit mode (flag set by activateRow or server per-cell data)
@@ -586,9 +725,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           };
 
           if (isBooleanType(ctrlType)) {
-            // Use AG Grid's built-in checkbox cell renderer + editor
-            editable = makeEditableCallback();
-            cellEditor = 'agCheckboxCellEditor';
+            if (isMultiEdit) {
+              // Record-SELECTION multiEdit: render an always-interactive checkbox
+              // on every editable row (not AG Grid's click-to-edit single cell) so
+              // the user can check N records and post them in one multi-row Save.
+              // A checkbox is stateless, so it survives AG Grid's full-width row
+              // remounts (unlike combos/dates). No AG editor — the renderer toggles
+              // the value and re-pushes the column to formValues.
+              editCellRenderer = MultiEditCheckboxRenderer as ColDef['cellRenderer'];
+              editable = false;
+            } else {
+              // Use AG Grid's built-in checkbox cell renderer + editor
+              editable = makeEditableCallback();
+              cellEditor = 'agCheckboxCellEditor';
+            }
           } else if (isMultiEdit) {
             editable = makeEditableCallback();
             const editorName = getCellEditorForType(ctrlType);
@@ -655,7 +805,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           minWidth: Math.min(40, effectiveMinWidth),
           resizable: true,
           cellRenderer: resolvedCellRenderer,
-          cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx } : undefined,
+          cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx, dynPropKey } : undefined,
           autoHeight,
           wrapText,
           editable,
@@ -708,6 +858,21 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
         }
       });
+    }
+    // The selector's basePath is only the list's own viewstate id (e.g. "S1-11").
+    // For an EMBEDDED list that drops the parent scope prefix, so the composed row
+    // path ("S1-11.0") resolves the viewstate but fails the server's full-path
+    // isInEditPath prefix test — the clicked row never enters edit mode and its
+    // cells stay read-only. ui.path carries the FULL list path (parent chain
+    // included, ending in the list's own position), so strip its trailing ".<pos>"
+    // to recover the full row-path base. Falls back to the bare id when ui.path is
+    // absent or inconsistent (root lists, where the two already coincide).
+    if (selectorBasePath && ui.path) {
+      const dot = ui.path.lastIndexOf('.');
+      if (dot > 0) {
+        const stripped = ui.path.slice(0, dot);
+        if (stripped.endsWith(selectorBasePath)) selectorBasePath = stripped;
+      }
     }
 
     // Helper to build selector info for a row
@@ -826,6 +991,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       lastSelectorInfo = sel;
       if (sel.command) rowObj._selectorCommand = sel.command;
       if (sel.path) rowObj._selectorPath = sel.path;
+      // Instant edit panel: carry this record's edit data (values+dynProps) so
+      // the panel hydrates client-side on selection with no round-trip.
+      if (row.editData) rowObj._editData = row.editData;
 
       // Store dynamic row properties (e.g. evaluated isEditable expressions)
       const rowProps = (row as unknown as { props?: Record<string, unknown> }).props;
@@ -939,8 +1107,44 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (isLast) r._isLastContinuationRow = true;
     }
 
+    // Leftmost navigate-to-detail column (legacy selector) — only when the list
+    // both edits in place (listEdit) and binds a detail view. Field click opens
+    // the edit panel; this icon opens the full detail page.
+    if (isListEdit && ui.hasDetailView) {
+      cols.unshift({
+        field: '_selnav',
+        headerName: '',
+        width: SELECTOR_NAV_WIDTH,
+        minWidth: SELECTOR_NAV_WIDTH,
+        maxWidth: SELECTOR_NAV_WIDTH,
+        pinned: 'left',
+        resizable: false,
+        sortable: false,
+        suppressMovable: true,
+        suppressNavigable: true,
+        cellClass: 'selector-nav-cell',
+        headerClass: 'selector-nav-header',
+        cellRenderer: SelectorNavRenderer,
+        cellRendererParams: { onActionRef },
+      });
+    }
+
     return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, allDataLocal, isMultiEdit, isListEdit, editableColumns]);
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, allDataLocal, isMultiEdit, isListEdit, editableColumns]);
+
+  // Report the ordered records (main rows: path + onboard edit data) so the
+  // edit panel hydrates on selection and steps prev/next — all client-side,
+  // no round-trip. Source of truth for _selectorPath/_editData is here.
+  useEffect(() => {
+    if (!isListEdit || !onRecordPaths) return;
+    const records: ListRecord[] = rowData
+      .filter((r) => !r._isContinuationRow && !r._isBreakRow && r._selectorPath)
+      .map((r) => ({
+        path: r._selectorPath as string,
+        editData: r._editData as RowEditData | undefined,
+      }));
+    onRecordPaths(records);
+  }, [rowData, isListEdit, onRecordPaths]);
 
   // Refs and helpers for grouped hover/selection on multi-row records
   const gridApiRef = useRef<GridApi | null>(null);
@@ -977,17 +1181,33 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   // Extract selector info for building field names and determining click behavior
   const selectorInfo = useMemo(() => {
-    if (!ui.columns) return { basePath: '', canEdit: false, command: 'NavigateDetail' };
+    // canUpdate defaults to true when absent so a server that predates the flag
+    // keeps opening the panel (backward compat); a newer server sends false when
+    // the view is read-only for the current object (updatable="?expr").
+    if (!ui.columns) return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
     for (const col of ui.columns) {
       if (col.selector) return {
         basePath: col.selector.basePath || '',
         canEdit: !!col.selector.canEdit,
+        canUpdate: col.selector.canUpdate !== false,
         command: col.selector.command || 'NavigateDetail',
       };
     }
-    return { basePath: '', canEdit: false, command: 'NavigateDetail' };
+    return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
   }, [ui.columns]);
   const selectorBasePath = selectorInfo.basePath;
+
+  // Toggle a record-selection checkbox (multiEdit boolean column). setDataValue
+  // updates the cell and fires onCellValueChanged → handleCellValueChanged, which
+  // re-pushes the whole column to formValues (multi-row post). Works on a column
+  // marked editable=false because setDataValue is programmatic, not grid editing.
+  const handleBoolToggle = useCallback(
+    (colIdx: number, node: unknown, checked: boolean) => {
+      const n = node as { setDataValue?: (field: string, value: unknown) => void };
+      n.setDataValue?.(`col_${colIdx}`, checked);
+    },
+    []
+  );
 
   // Handle cell value changes from AG Grid editing
   const handleCellValueChanged = useCallback(
@@ -1047,22 +1267,49 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // viewport the grid should fill down to. Absent it (e.g. a grid inline in
     // a form), keep the 60vh fallback by leaving fillCapHeight null.
     const bound = gridEl.closest<HTMLElement>('.view-split-bottom');
-    if (!bound) return;
+    if (!bound && !fillContainer) return;
+    // The edit panel is a sibling of .list-container (both in the Fragment). When
+    // present the grid must FILL down to it.
+    const panelEl = gridEl.closest('.list-container')?.parentElement?.querySelector<HTMLElement>('.edit-panel') ?? null;
     const measure = () => {
       const el = gridContainerRef.current;
       if (!el) return;
-      // The constraining viewport is the outermost scroll container between the
-      // grid and the bottom panel — the bottom-panel tab's own .tab-content,
-      // whose height is fixed by flex (it doesn't grow to content). Fall back to
-      // the panel itself if there's no scroll container.
-      let scrollC: HTMLElement = bound;
-      for (let p = el.parentElement; p && p !== bound.parentElement; p = p.parentElement) {
+      // Panel below the grid: fill from the grid's top down to the panel top,
+      // measuring the panel height directly (the scrollHeight formula is circular
+      // with a sibling panel — it just re-derives the grid's current height).
+      if (fillContainer) {
+        let bottomRef = window.innerHeight;
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          const s = getComputedStyle(p);
+          if (s.overflowY === 'auto' || s.overflowY === 'scroll') {
+            // Fill to the scroll container's CONTENT bottom. Derive it from
+            // clientHeight (which already excludes the horizontal scrollbar and
+            // borders) so a wide grid's scrollbar doesn't push content past the
+            // fold. The -2 absorbs sub-pixel rounding.
+            const borderTop = parseFloat(s.borderTopWidth) || 0;
+            const padBottom = parseFloat(s.paddingBottom) || 0;
+            bottomRef = p.getBoundingClientRect().top + borderTop + p.clientHeight - padBottom - 2;
+            break;
+          }
+        }
+        const listCont = el.closest<HTMLElement>('.list-container');
+        const panel = listCont?.parentElement?.querySelector<HTMLElement>('.edit-panel');
+        const panelH = panel ? panel.getBoundingClientRect().height : 0;
+        // The grid is one part of .list-container (title/pagination/padding are
+        // the rest — grid-height-independent). Fill so that the panel, stacked
+        // right below .list-container, ends at the scroll container's bottom.
+        const listRect = (listCont ?? el).getBoundingClientRect();
+        const nonGridChrome = Math.max(0, listRect.height - el.getBoundingClientRect().height);
+        setFillCapHeight(Math.max(120, Math.floor(bottomRef - panelH - listRect.top - nonGridChrome)));
+        return;
+      }
+      // Dual-area (no panel): the constraining viewport is the outermost scroll
+      // container between the grid and .view-split-bottom.
+      let scrollC: HTMLElement = bound as HTMLElement;
+      for (let p = el.parentElement; p && p !== (bound as HTMLElement).parentElement; p = p.parentElement) {
         const oy = getComputedStyle(p).overflowY;
         if (oy === 'auto' || oy === 'scroll') scrollC = p; // keep last → outermost
       }
-      // Everything inside the viewport except the grid's own box (tab bars,
-      // padding, pagination, ancestor spacing) is chrome — independent of the
-      // grid's height. The grid may occupy the remainder without overflowing.
       const chrome = scrollC.scrollHeight - el.clientHeight;
       const avail = scrollC.clientHeight - chrome;
       setFillCapHeight(Math.max(120, Math.floor(avail)));
@@ -1071,14 +1318,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // AG Grid / fonts settle a frame later — re-measure once the layout is final.
     const raf = requestAnimationFrame(measure);
     const ro = new ResizeObserver(measure);
-    ro.observe(bound);
+    if (bound) ro.observe(bound);
+    if (panelEl) ro.observe(panelEl); // grid re-measures when the panel resizes
     window.addEventListener('resize', measure);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [embedded, rowData.length]);
+  }, [embedded, fillContainer, panelShown, rowData.length]);
 
   const getGridViewport = useCallback((): HTMLElement | null => {
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
@@ -1101,77 +1349,34 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // Track which row is currently in edit mode for listEdit views
   const editingRowPath = useRef<string | null>(null);
 
-  // Activate a row for editing or navigation — shared between click and Enter key
+  // Activate a row: select the record (listEdit → the bottom panel edits it) or
+  // navigate (non-editable lists). Shared between click and Enter key.
   const activateRow = useCallback((data: Record<string, unknown> | undefined) => {
     if (!data || data._isBreakRow) return;
     const path = data._selectorPath as string | undefined;
     lastSelectedPath.current = path ?? null;
     if (path) lastSelectedByView.set(selKey, path); else lastSelectedByView.delete(selKey);
     applyClassByPath(path ?? null, 'record-group-selected');
-    if (isListEdit && path && path === editingRowPath.current) return;
 
     const command = data._selectorCommand as string | undefined;
     if (!command || !path) return;
 
-    if (isListEdit && selectorInfo.canEdit && command === selectorInfo.command && command === 'NavigateDetail') {
-      const api = gridApiRef.current;
-      if (api && editingRowPath.current && editingRowPath.current !== path) {
-        api.forEachNode((node: { data?: Record<string, unknown> }) => {
-          if (node.data?._selectorPath === editingRowPath.current) {
-            for (const ci of editableColumns.keys()) {
-              delete node.data[`_editable_${ci}`];
-            }
-          }
-        });
-      }
-      const prevPath = editingRowPath.current;
-      editingRowPath.current = path;
-      onEditRow?.(path);
-      if (api) {
-        const affectedNodes: unknown[] = [];
-        if (prevPath && prevPath !== path) {
-          api.forEachNode((node: { data?: Record<string, unknown> }) => {
-            if (node.data?._selectorPath === prevPath) affectedNodes.push(node);
-          });
-        }
-        api.forEachNode((node: { data?: Record<string, unknown> }) => {
-          if (node.data?._selectorPath === path) {
-            for (const [ci, colMeta] of editableColumns.entries()) {
-              const colEditable = colMeta?.editable as boolean | string | undefined;
-              if (colEditable === true || colEditable === 'true') {
-                node.data[`_editable_${ci}`] = true;
-              } else if (typeof colEditable === 'string' && colEditable.match(/^i\d+$/)) {
-                node.data[`_editable_${ci}`] = !!node.data[`_prop_${colEditable}`];
-              }
-            }
-            affectedNodes.push(node);
-          }
-        });
-        // refreshCells updates cell content without destroying DOM (preserves focus/click state)
-        api.refreshCells({ rowNodes: affectedNodes as any[], force: true });
-        // Initialize formValues for the editing row
-        if (onChange) {
-          api.forEachNode((node: { data?: Record<string, unknown> }) => {
-            if (node.data?._selectorPath === path) {
-              for (const [ci, colMeta] of editableColumns.entries()) {
-                if (node.data[`_editable_${ci}`] && colMeta?.name) {
-                  const fieldName = `${colMeta.name}.${selectorBasePath}`;
-                  const val = node.data[`col_${ci}`];
-                  onChange(fieldName, val != null ? val : '');
-                }
-              }
-            }
-          });
-        }
-      }
-    } else {
-      if (isListEdit) {
-        editingRowPath.current = null;
-        onEditRow?.(null);
-      }
-      onAction(command, { navpath: path });
+    if (isListEdit) {
+      // Editing lives in the bottom panel, not in the grid: AG Grid remounts
+      // full-width rows and destroys any stateful control (combo/date/lookup)
+      // rendered in place. A row click selects the record; the panel edits it in
+      // the stable React tree. Only open the panel when the view is actually
+      // editable — a listEdit view can be read-only by a dynamic rule (e.g. the
+      // document isn't provisional), which the server reflects in the selector's
+      // canEdit (isEmbeddedEditable) AND canUpdate (the dynamic updatable="?expr"
+      // rule — e.g. document not provisional). Read-only → just select (highlight
+      // above), no panel, no round-trip.
+      if (selectorInfo.canEdit && selectorInfo.canUpdate) onSelectRecord?.(path);
+      return;
     }
-  }, [isListEdit, selectorInfo, editableColumns, selectorBasePath, onChange, onEditRow, onAction, applyClassByPath, selKey]);
+    // Non-editable lists: the selector navigates to the detail as before.
+    onAction(command, { navpath: path });
+  }, [isListEdit, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
 
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;
@@ -1227,15 +1432,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     const rowNode = api.getRowNode(rowId);
     if (!rowNode?.data || rowNode.data._isBreakRow) return;
     if (!rowNode.data._isContinuationRow) return;
-    const path = rowNode.data._selectorPath as string | undefined;
-    lastSelectedPath.current = path ?? null;
-    if (path) lastSelectedByView.set(selKey, path); else lastSelectedByView.delete(selKey);
-    applyClassByPath(path ?? null, 'record-group-selected');
-    const command = rowNode.data._selectorCommand;
-    if (command && path) {
-      onAction(command, { navpath: path });
-    }
-  }, [applyClassByPath, onAction, selKey]);
+    // Continuation rows (the 2nd+ line of a multi-row record) render as full-width
+    // rows and don't fire AG Grid's onRowClicked, so they're handled here. Route
+    // them through the SAME activateRow the main rows use — a click on a
+    // continuation field must edit the record (post-and-move), not navigate.
+    activateRow(rowNode.data as Record<string, unknown>);
+  }, [activateRow]);
 
   const isFullWidthRow = (params: { rowNode: { data?: Record<string, unknown> } }) =>
     !!params.rowNode.data?._isBreakRow || !!params.rowNode.data?._isContinuationRow;
@@ -1351,20 +1553,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     const offsets = api ? computeUnitOffsets(api, headersByField) : null;
     const totalWidth = offsets?.[offsets.length - 1];
 
+    const selectorPad = isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0;
     let insertAfter: Element = agHeader;
     contHeaders.forEach((rowHeaders) => {
       const wrapper = document.createElement('div');
       wrapper.className = 'continuation-header-row';
-      wrapper.style.cssText = 'width:100%;overflow:hidden;background:#fafafa;border-bottom:1px solid #f0f0f0;';
+      // flex:0 0 auto — the wrapper is a flex child of AG Grid's .ag-root
+      // column; with overflow:hidden its automatic flex minimum is 0, so any
+      // height shortfall (e.g. fractional-px rounding of the fixed container
+      // height under browser zoom) would squash the header row vertically
+      // before the body gives up a pixel (item 5455.2, reopened).
+      wrapper.style.cssText = `width:100%;flex:0 0 auto;overflow:hidden;background:#fafafa;border-bottom:1px solid #f0f0f0;padding-left:${selectorPad}px;box-sizing:border-box;`;
       const widths = offsets
         ? widthsFromOffsets(offsets, rowHeaders.map(h => h.colspan || 1))
         : null;
 
       const track = document.createElement('div');
       if (totalWidth != null) {
-        track.style.cssText = `display:flex;width:${totalWidth}px;font-size:12px;color:#888;padding:0 4px;transform:translateX(calc(var(--grid-scroll-x, 0px) * -1));`;
+        track.style.cssText = `display:flex;width:${totalWidth}px;font-size:12px;font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;transform:translateX(calc(var(--grid-scroll-x, 0px) * -1));`;
       } else {
-        track.style.cssText = 'display:flex;font-size:12px;color:#888;padding:0 4px;';
+        track.style.cssText = 'display:flex;font-size:12px;font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;';
       }
       rowHeaders.forEach((hdr, i) => {
         const cell = document.createElement('div');
@@ -1381,7 +1589,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders, headersByField]);
+  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll
@@ -1552,12 +1760,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   const footer = ui.footer;
 
-  // Compute minimum width from header colspans (similar to detail view: ~10px per column unit)
-  const totalColspan = ui.headers?.reduce((sum, h) => sum + (h.type === 'selector' ? 0 : (h.colspan || 1)), 0) || 0;
-  const minListWidth = totalColspan > 0 ? totalColspan * 10 : undefined;
-
-  const listContainerStyle: React.CSSProperties = {};
-  if (minListWidth) listContainerStyle.minWidth = minListWidth;
+  // The container never claims more than the available width: horizontal
+  // overflow is AG Grid's job (internal scroll, per-column minWidths keep the
+  // scroll width honest). The old colspan-based container minWidth pushed wide
+  // grids past the tab viewport, so the scrolling ancestor (.tab-content,
+  // overflow:auto) grew a SECOND horizontal scrollbar doing the same job as
+  // the grid's own (5450.1A), and the grid's vertical scrollbar — glued to
+  // the grid's right edge, now off-screen — only appeared after scrolling the
+  // outer bar fully right (5450.1B).
+  const listContainerStyle: React.CSSProperties = { maxWidth: '100%' };
   // Embedded grids size to content (capped); outer container shouldn't flex
   // to fill the parent — shrink to the grid's height so no empty space
   // below the last row.
@@ -1590,6 +1801,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // Top-level list page: fill the route container (has a definite height).
           if (!embedded) {
             return { width: '100%', flex: 1, minHeight: 0 };
+          }
+          // Stacked above the in-flow edit panel: FILL the space from the grid's
+          // top down to the panel (measured JS height — the layout-table ancestor
+          // blocks CSS flex-fill). The grid takes all remaining vertical space and
+          // pushes the panel to the bottom.
+          if (fillContainer) {
+            return {
+              width: '100%',
+              maxWidth: '100%',
+              height: Math.max(120, fillCapHeight ?? Math.round(window.innerHeight * 0.45)),
+              overflow: 'hidden',
+              boxSizing: 'border-box',
+            };
           }
           // Embedded grid (form/detail or tab): size to content but cap so it
           // never overflows its container. Inside a dual-area bottom panel the
@@ -1625,7 +1849,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           rowData={rowData}
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); }}
-          context={{ onAction, onChange, headersByField }}
+          context={{ onAction, onChange, headersByField, onBoolToggle: handleBoolToggle, selectorPad: isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0 }}
           onRowClicked={handleRowClicked}
           onCellKeyDown={handleCellKeyDown as any}
           onCellValueChanged={handleCellValueChanged}
@@ -1642,8 +1866,21 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         />
       </div>
 
-      {/* Pagination info */}
-      {ui.paging ? (
+      {/* Pagination */}
+      {showDetailPager ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderTop: '1px solid #e8e8e8' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{pageInfo!.totalRows} record</Text>
+          <Pagination
+            size="small"
+            simple
+            current={pageInfo!.currentPage}
+            total={pageInfo!.totalRows}
+            pageSize={pageInfo!.pageSize}
+            showSizeChanger={false}
+            onChange={(page) => onAction('DetailPage', { navpath: ui.path!, page: String(page) })}
+          />
+        </div>
+      ) : ui.paging ? (
         <div style={{ padding: '6px 8px', fontSize: 12, color: '#666', borderTop: '1px solid #e8e8e8' }}>
           <Text type="secondary">
             {ui.paging.totalRows} record &middot; Pagina {ui.paging.currentPage} di {ui.paging.totalPages}

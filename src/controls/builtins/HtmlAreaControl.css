@@ -1,0 +1,73 @@
+/* Rich-text editor for the HtmlArea control (TipTap). Chrome mirrors an antd
+ * bordered field so it sits naturally among the other form controls; colours
+ * route through the theme tokens so light/dark stay consistent. */
+.htmlarea {
+  width: 100%;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--app-surface, #fff);
+}
+.htmlarea.htmlarea-disabled {
+  background: var(--app-surface-muted);
+}
+.htmlarea:focus-within {
+  border-color: var(--app-primary);
+}
+
+.htmlarea-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-muted);
+}
+.htmlarea-toolbar button {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.htmlarea-toolbar button:hover:not(:disabled) {
+  background: var(--app-border);
+}
+.htmlarea-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.htmlarea-toolbar button.is-active {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+  color: #fff;
+}
+.htmlarea-toolbar .htmlarea-sep {
+  width: 1px;
+  margin: 2px 3px;
+  background: var(--app-border);
+}
+
+.htmlarea .ProseMirror {
+  min-height: 8em;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 8px 10px;
+  outline: none;
+}
+.htmlarea .ProseMirror > *:first-child {
+  margin-top: 0;
+}
+/* Empty-state placeholder */
+.htmlarea .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--app-neutral);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

@@ -6,7 +6,7 @@ import type { UIControl } from '../../types/ui';
 import { useCommonProps, useControlChange, getTextMaxWidth, useSelectKeys, useSyncedState, useSelectOpen, getFieldName } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
-import { SidContext } from '../../components/ViewRenderer';
+import { SidContext, PathContext } from '../../components/ViewRenderer';
 import * as api from '../../services/api';
 
 /** Remote combo (ListUIControl) — fetches options from the server as the user types. */
@@ -21,8 +21,15 @@ const RemoteCombo: React.FC<{
   rawOnChange: (name: string, value: unknown) => void;
 }> = ({ control, commonProps, value, widthStyle, onChange, rawOnChange }) => {
   const sid = useContext(SidContext);
-  const displayText = control.displayText as string | undefined;
-  const navpath = control.navpath as string;
+  // List-data mode (editable cells in a list) ships the current value's label as
+  // `displayValue`; the detail-form path ships `displayText`. Accept either so an
+  // inline combo shows "DIVISIONE UNICA", not the raw key "CMO|1".
+  const displayText = (control.displayText ?? control.displayValue) as string | undefined;
+  // The detail-form combo bakes its own navpath; an editable combo inside a list
+  // row doesn't (list-data mode omits it), so fall back to the row's path from
+  // PathContext — set by the continuation-cell renderer to this record's row.
+  const ctxPath = useContext(PathContext);
+  const navpath = (control.navpath ?? ctxPath) as string;
   const controlName = control.controlName as string || control.name || '';
 
   // Hold the selection locally. Shell writes field edits to a ref WITHOUT
@@ -117,10 +124,12 @@ const RemoteCombo: React.FC<{
       value={selected}
       open={open}
       showSearch
-      allowClear
       defaultActiveFirstOption={false}
       filterOption={false}
-      suffixIcon={<DownOutlined onMouseDown={toggleFromTrigger} />}
+      // Same as the local combo: don't clip the option popup to a narrow
+      // size-derived trigger width — let it size to its content.
+      popupMatchSelectWidth={false}
+      suffixIcon={<DownOutlined className="combo-chevron" onMouseDown={toggleFromTrigger} />}
       loading={fetching}
       notFoundContent={fetching ? 'Caricamento...' : (hasFetched ? 'Nessun risultato' : null)}
       onDropdownVisibleChange={onOpenChange}
@@ -177,7 +186,12 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
     ? { width: textMaxWidth, maxWidth: textMaxWidth, flexShrink: 0 }
     : { width: '100%', maxWidth: textMaxWidth, minWidth: 160 };
 
-  if (control.remote) {
+  // Remote (server-searched) combo: the detail form flags it with `remote`; an
+  // editable combo inside a list row (list-data mode) omits that flag but is
+  // still a server-searched List — recognise it by having a controlName and no
+  // baked-in static options.
+  const isRemote = control.remote || (!!control.controlName && !(control.options && control.options.length));
+  if (isRemote) {
     return withPostDecorations(
       <RemoteCombo
         control={control}
@@ -201,15 +215,29 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
       open={open}
       showSearch
       optionFilterProp="label"
-      allowClear
       defaultActiveFirstOption={false}
-      suffixIcon={<DownOutlined onMouseDown={toggleFromTrigger} />}
+      // The trigger honors the ViewItem `size` (e.g. size=10 → 96px), but the
+      // option text is often wider than the trigger (GenericList recoverable
+      // numbers, long code-table labels). Don't pin the popup to the narrow
+      // trigger width or options get clipped/truncated — let it size to content
+      // (antd floors it at the trigger width). SXADV-5461.1 follow-up.
+      popupMatchSelectWidth={false}
+      suffixIcon={<DownOutlined className="combo-chevron" onMouseDown={toggleFromTrigger} />}
       style={widthStyle}
       onChange={handleSelectChange}
       onKeyDown={onKeyDown}
       onSearch={() => setOpen(true)}
       onDropdownVisibleChange={onOpenChange}
-      options={(control.options || []).map((o) => ({ value: o.value, label: o.text }))}
+      options={(() => {
+        const opts = (control.options || []).map((o) => ({ value: o.value, label: o.text }));
+        // In list-data mode a local combo may ship only value + displayValue,
+        // not its full option list — seed the current value so it shows its
+        // label instead of the raw key.
+        if (selected && !opts.some((o) => o.value === selected) && control.displayValue) {
+          opts.unshift({ value: selected, label: String(control.displayValue) });
+        }
+        return opts;
+      })()}
     />,
     control,
     pageType,

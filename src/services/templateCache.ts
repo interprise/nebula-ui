@@ -1,4 +1,4 @@
-import type { UITree } from '../types/ui';
+import type { UITree, PanelTemplate } from '../types/ui';
 
 /**
  * In-memory cache of view templates keyed by the server's templateKey
@@ -26,4 +26,28 @@ export function hasTemplate(key: string): boolean {
 
 export function clearTemplates(): void {
   templates.clear();
+}
+
+/**
+ * Parallel cache for the instant edit-panel FORM templates, keyed by
+ * panelTemplateKey ("viewName:panel"). A listEdit list ships its panelTemplate
+ * once; the client caches it here and advertises the keys it holds (see
+ * panelTemplateKeys) so the server can OMIT the (cacheable, sid-free) blob on
+ * subsequent list renders, sending only the key. On a response that omits it,
+ * the client falls back to the cached copy.
+ */
+const panelTemplates = new Map<string, PanelTemplate>();
+
+export function putPanelTemplate(key: string, template: PanelTemplate): void {
+  panelTemplates.set(key, template);
+}
+
+export function getPanelTemplate(key: string): PanelTemplate | undefined {
+  return panelTemplates.get(key);
+}
+
+/** Comma-joined list of cached panel-template keys, for the `panelKeys`
+ *  request param that tells the server what it can omit. Empty string when none. */
+export function panelTemplateKeysParam(): string {
+  return [...panelTemplates.keys()].join(',');
 }

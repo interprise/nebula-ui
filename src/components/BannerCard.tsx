@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Card, Space, Tag, Button, Tooltip } from 'antd';
+import { fixServerHtml } from '../services/serverHtml';
+import { Card, Tag, Button, Tooltip } from 'antd';
 import {
   NotificationOutlined,
   CalendarOutlined,
-  LinkOutlined,
   ArrowRightOutlined,
   DownOutlined,
   UpOutlined,
@@ -34,10 +34,11 @@ const BannerCard: React.FC<BannerCardProps> = ({
 }) => {
   const [collapsed, setCollapsed] = useState(defaultCollapsed && !notCollapsible);
   const body = banner.hpText || banner.text;
-  const externalLinks: { url: string; label: string }[] = [];
-  if (banner.linkEsterno1) externalLinks.push({ url: banner.linkEsterno1, label: banner.linkEsternoDescr1 || banner.linkEsterno1 });
-  if (banner.linkEsterno2) externalLinks.push({ url: banner.linkEsterno2, label: banner.linkEsternoDescr2 || banner.linkEsterno2 });
-  if (banner.linkEsterno3) externalLinks.push({ url: banner.linkEsterno3, label: banner.linkEsternoDescr3 || banner.linkEsterno3 });
+  // Attachments + external links: the server packs both into one HTML string
+  // ("<div class='ht-content-at'>Allegati: <a>…</a> …</div>"). Render it as-is,
+  // like the legacy ExtJS line ({attachments} in ui.js). Discrete linkEsterno*
+  // fields are never sent by the server (SXADV-5526.2).
+  const attachments = banner.attachments?.trim();
 
   const isClickable = !!banner.navigateTo && !!onNavigate;
   const preview = toPreview(body, 100);
@@ -123,27 +124,19 @@ const BannerCard: React.FC<BannerCardProps> = ({
                   color: '#262626',
                   wordBreak: 'break-word',
                 }}
-                dangerouslySetInnerHTML={{ __html: body }}
+                dangerouslySetInnerHTML={{ __html: fixServerHtml(body) }}
               />
 
-              {/* External links */}
-              {externalLinks.length > 0 && (
-                <Space wrap style={{ marginTop: 10 }}>
-                  {externalLinks.map((link, i) => (
-                    <Button
-                      key={i}
-                      size="small"
-                      icon={<LinkOutlined />}
-                      type="default"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(link.url, '_blank', 'noopener,noreferrer');
-                      }}
-                    >
-                      {link.label}
-                    </Button>
-                  ))}
-                </Space>
+              {/* Attachments + external links ("Area Link" / download area).
+                  Server-built HTML; stop click-through so opening a link/file
+                  doesn't also trigger the card's navigate action. */}
+              {attachments && (
+                <div
+                  className="banner-attachments"
+                  style={{ marginTop: 10, fontSize: 13, lineHeight: 1.6 }}
+                  onClick={(e) => e.stopPropagation()}
+                  dangerouslySetInnerHTML={{ __html: fixServerHtml(attachments) }}
+                />
               )}
 
               {/* Call-to-action footer */}

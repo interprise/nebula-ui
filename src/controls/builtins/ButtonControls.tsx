@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Button, Upload, message } from 'antd';
+import { Button, Upload, App } from 'antd';
 import { SearchOutlined, PlusOutlined, UploadOutlined, DownloadOutlined, LinkOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { triggerDownload, uploadFile } from '../../services/api';
@@ -85,7 +85,12 @@ export const NavigateViewControl: ControlComponent = ({ control, onAction }) => 
   <span
     id={control.id}
     className="navigate-view-link"
-    style={{ cursor: 'pointer', color: '#1677ff', whiteSpace: 'nowrap', marginRight: 12 }}
+    // white-space lives in CSS (global.css): nowrap by default, but relaxed to
+    // wrap inside form layout cells — a nowrap link in a fixed-width cell gets
+    // hard-clipped by overflow:hidden when zoom shrinks the viewport, silently
+    // hiding trailing links ("Storico Ordini" etc., 5450.1C). Legacy rendered
+    // them as plain <a> in table cells, which wrapped.
+    style={{ cursor: 'pointer', color: '#1677ff', marginRight: 12 }}
     title={control.hint}
     onClick={() => control.action && onAction(control.action, {
       navpath: control.navpath as string,
@@ -122,6 +127,9 @@ export const AddControl: ControlComponent = ({ control, onAction }) => {
 };
 
 export const UploadControl: ControlComponent = ({ control, onAction }) => {
+  // Context-aware message so toasts inherit the ConfigProvider CSS-var theme;
+  // the static `message` import renders invisibly under it. (SXADV-5542)
+  const { message } = App.useApp();
   const sid = useContext(SidContext);
   const isDisabled = !!control.disabled || control.editable === false;
   const followUp = (control.command ?? control.action) as string | undefined;
