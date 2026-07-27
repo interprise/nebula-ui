@@ -58,7 +58,9 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
   const handleListClick = useCallback(() => {
     if (info.count === 1 && info.single) {
       api
-        .triggerDownload('DocDownload', { key: info.single.key }, sid, info.single.fileName)
+        // DocDownload extends Command2 → /controller2. On /controller the
+        // dispatcher finds the class and fails casting it to Command.
+        .triggerDownload('DocDownload', { key: info.single.key }, sid, info.single.fileName, true)
         .catch((e) => message.error((e as Error).message || 'Download fallito'));
       return;
     }

@@ -92,7 +92,8 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
   const handleDownload = useCallback(
     (row: AttachmentMeta) => {
       api
-        .triggerDownload('DocDownload', { key: row.key }, sid, row.fileName)
+        // DocDownload extends Command2 → /controller2 (same as AttachmentsBar).
+        .triggerDownload('DocDownload', { key: row.key }, sid, row.fileName, true)
         .catch((e) => message.error((e as Error).message || 'Download fallito'));
     },
     [sid],
