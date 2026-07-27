@@ -240,6 +240,10 @@ export interface UITree {
   panelTemplate?: PanelTemplate;
   panelTemplateKey?: string;
   documenting?: boolean;
+  /** The record on screen is an unsaved new one (server insert state). The
+   *  split layout opens with the testata expanded so the fields to fill in are
+   *  visible without a click (SXADV-5691). */
+  newRecord?: boolean;
   breadcrumbs?: string;
   viewName?: string;
   viewType?: string;
@@ -410,6 +414,9 @@ export interface ServerResponse {
   // Same pattern as breadcrumbs: per-record, not part of the cached
   // template. Server emits at response root; client merges into ui.
   attachmentsInfo?: AttachmentsInfo | null;
+  // Per-record too: the detail on screen is an unsaved new record (insert
+  // state). Drives the initial testata/tabs split (SXADV-5691).
+  newRecord?: boolean;
   path?: string;
   toolbar?: ToolbarItem[];
   currField?: string;

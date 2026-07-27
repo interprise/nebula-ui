@@ -740,6 +740,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (resp.attachmentsInfo !== undefined && update.ui) {
         update.ui = { ...update.ui, attachmentsInfo: resp.attachmentsInfo };
       }
+      // Same for the insert-state flag: per-record, emitted at response root on
+      // the two-phase flows (on `ui` itself in the legacy full render, which the
+      // branches above keep as-is). ViewRenderer opens a new record with the
+      // testata expanded (SXADV-5691).
+      if (resp.newRecord && update.ui) {
+        update.ui = { ...update.ui, newRecord: true };
+      }
       if (resp.toolbar) update.toolbar = resp.toolbar;
       if (resp.uiData) {
         update.uiData = resp.uiData;

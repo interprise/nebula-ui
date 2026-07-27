@@ -584,6 +584,29 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     splitByView.set(splitKey, { zone: focusZone, manualPct });
   }, [splitKey, focusZone, manualPct]);
 
+  // A brand-new record (server insert state) opens with the testata expanded.
+  // At the neutral 50/50 the header fields — the very ones the user came here to
+  // fill in — sit half-hidden under the tab panel until a click expands them;
+  // that click is pure ceremony, since focusing any header field expands the
+  // area anyway. Do it up front instead (SXADV-5691).
+  //
+  // Applied once per new record, keyed on (insert state + viewstate path): a
+  // data-only reload of the same record must not undo a tab the user has since
+  // opened, while "Nuovo" on a view whose viewstate is reused (path unchanged,
+  // insert state flipping false -> true) still triggers it.
+  const newRecordKey = ui.newRecord ? `${splitSid}|${ui.path ?? ''}` : null;
+  // Seeded with `undefined` (not the current key) so a tab that mounts straight
+  // onto a new record — the common "Nuovo" case — still applies it.
+  const newRecordKeyRef = React.useRef<string | null | undefined>(undefined);
+  if (newRecordKeyRef.current !== newRecordKey) {
+    newRecordKeyRef.current = newRecordKey;
+    if (newRecordKey) {
+      focusZoneRef.current = 'form';
+      setFocusZone('form');
+      setManualPct(null);
+    }
+  }
+
   // A manual drag (manualPct) wins; otherwise the focused zone sets the target.
   const formFlexBasisPct =
     manualPct != null
