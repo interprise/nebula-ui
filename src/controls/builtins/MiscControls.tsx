@@ -4,7 +4,6 @@ import {
   LinkOutlined,
   EditOutlined,
   DeleteOutlined,
-  DownloadOutlined,
 } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { triggerDownload } from '../../services/api';
@@ -146,16 +145,6 @@ export const PopupUrlControl: ControlComponent = ({ control }) => {
   );
 };
 
-export const UploadButtonControl: ControlComponent = ({ control, onAction }) => {
-  const cmd = (control.command ?? control.action) as string | undefined;
-  return (
-    <Button
-      id={control.id}
-      icon={<DownloadOutlined style={{ transform: 'rotate(180deg)' }} />}
-      onClick={() => cmd && onAction(cmd)}
-      title={control.hint}
-    >
-      {(control.prompt as string | undefined) ?? 'Upload'}
-    </Button>
-  );
-};
+// UploadButtonControl moved to ButtonControls.tsx: it is a file picker, not a
+// plain action button — legacy mapped both FileUpload and UploadButton to the
+// same ExtJS FileUploadField (SXADV-5672).

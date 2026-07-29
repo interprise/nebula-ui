@@ -145,6 +145,16 @@ html, body {
   text-align: left;
 }
 
+/* Name of the file just picked by an upload control, echoed next to the
+   chooser button (the row prompt is "Nome File:"). */
+.upload-file-name {
+  font-style: italic;
+  color: var(--app-neutral);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Section headers */
 .section-header {
   background: linear-gradient(to bottom, #dae6f4 0%, #c2d6eb 100%);

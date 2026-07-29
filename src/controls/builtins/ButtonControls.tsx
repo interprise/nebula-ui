@@ -1,4 +1,4 @@
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
 import { Button, Upload, App } from 'antd';
 import { SearchOutlined, PlusOutlined, UploadOutlined, DownloadOutlined, LinkOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
@@ -126,36 +126,93 @@ export const AddControl: ControlComponent = ({ control, onAction }) => {
   );
 };
 
-export const UploadControl: ControlComponent = ({ control, onAction }) => {
+/** Shared file-picker behaviour for `upload` (FileUploadUIControl) and
+ *  `uploadButton` (UploadButtonUIControl). Both mapped to the same legacy
+ *  ExtJS component (`Ext.ux.form.FileUploadField`, ui.js `"upload"`), which
+ *  on `fileselected` did:
+ *    1. POST the file alone, multipart, to `ctl.action || 'FileUpload'`
+ *       (doUpload) — the command parks it on the Session (uploadedFiles);
+ *    2. on success re-dispatch the current view with `action=Post`
+ *       (cleanUpload -> ajaxDo), which is what runs
+ *       Command.checkForUpload -> UploadSupport.performUpload() and actually
+ *       imports the file. `uiData.cdmsKey` redirects that follow-up to
+ *       CdmsEdit instead (CdmsUploadCommand).
+ *  Step 2 was missing: the file landed on the session and nothing consumed
+ *  it, so "carica da file" appeared to do nothing (SXADV-5672). */
+function useFilePicker(
+  control: Parameters<ControlComponent>[0]['control'],
+  onAction: (action: string, params?: Record<string, string>) => void,
+) {
   // Context-aware message so toasts inherit the ConfigProvider CSS-var theme;
   // the static `message` import renders invisibly under it. (SXADV-5542)
   const { message } = App.useApp();
   const sid = useContext(SidContext);
-  const isDisabled = !!control.disabled || control.editable === false;
-  const followUp = (control.command ?? control.action) as string | undefined;
+  const uploadAction = (control.uploadAction as string | undefined) ?? 'FileUpload';
+  const [fileName, setFileName] = useState<string | null>(null);
   const handleFile = async (file: File) => {
     try {
-      const resp = await uploadFile(file, sid);
+      const extra: Record<string, string> = {};
+      if (control.controlName) extra.option1 = control.controlName as string;
+      if (control.navpath) extra.navpath = control.navpath as string;
+      const resp = await uploadFile(file, sid, extra, uploadAction);
       if (resp.errors && resp.errors.length > 0) {
         message.error(resp.errors[0].message);
         return false;
       }
-      if (followUp) onAction(followUp);
-      else message.success(`${file.name} caricato`);
+      setFileName(file.name);
+      const cdmsKey = (resp.uiData as Record<string, unknown> | undefined)?.cdmsKey as string | undefined;
+      if (cdmsKey) onAction('CdmsEdit', { navpath: cdmsKey });
+      else onAction('Post');
     } catch (e) {
       message.error(e instanceof Error ? e.message : 'Upload fallito');
     }
     return false; // prevent antd's built-in xhr upload
   };
+  return { handleFile, fileName };
+}
+
+export const UploadControl: ControlComponent = ({ control, onAction }) => {
+  const isDisabled = !!control.disabled || control.editable === false;
+  const { handleFile, fileName } = useFilePicker(control, onAction);
   return (
-    <Upload
-      beforeUpload={handleFile}
-      maxCount={1}
-      disabled={isDisabled}
-      showUploadList={false}
-    >
-      <Button icon={<UploadOutlined />} disabled={isDisabled}>
-        {(control.prompt as string | undefined) ?? 'Upload'}
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <Upload
+        beforeUpload={handleFile}
+        maxCount={1}
+        disabled={isDisabled}
+        showUploadList={false}
+      >
+        <Button icon={<UploadOutlined />} disabled={isDisabled} title={control.hint}>
+          {(control.prompt as string | undefined) ?? 'Scegli File'}
+        </Button>
+      </Upload>
+      {fileName && <span className="upload-file-name">{fileName}</span>}
+    </span>
+  );
+};
+
+/** UploadButton: the icon-only variant (legacy arrow_up.png image button).
+ *  Same file-picker flow, no filename echo — it sits inline next to other
+ *  fields (cdmsRisorseDetail). */
+export const UploadButtonControl: ControlComponent = (props) => {
+  if (props.control.visible === false) return null;
+  return <UploadButtonInner {...props} />;
+};
+
+const UploadButtonInner: ControlComponent = ({ control, onAction }) => {
+  const isDisabled = !!control.disabled || control.editable === false;
+  const { handleFile } = useFilePicker(control, onAction);
+  return (
+    <Upload beforeUpload={handleFile} maxCount={1} disabled={isDisabled} showUploadList={false}>
+      <Button
+        id={control.id}
+        disabled={isDisabled}
+        title={control.hint}
+        icon={control.icon
+          ? <img src={`/entrasp/images/${control.icon}`} width={16} height={16} />
+          : <UploadOutlined />}
+      >
+        {control.prompt as string | undefined}
       </Button>
     </Upload>
   );

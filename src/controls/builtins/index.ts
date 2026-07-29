@@ -18,6 +18,7 @@ import {
   NavigateViewControl,
   AddControl,
   UploadControl,
+  UploadButtonControl,
   DownloadControl,
 } from './ButtonControls';
 import {
@@ -39,7 +40,6 @@ import {
   NavigateViewButtonControl,
   PathControl,
   PopupUrlControl,
-  UploadButtonControl,
 } from './MiscControls';
 // NOTE: entrasp custom controls (allegati, array, assegnazioni, cdmsClass,
 // consuntivazione, contatti, disponibilita, gestorePrivilegi, lgtcCalendario,

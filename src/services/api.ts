@@ -240,24 +240,35 @@ export async function triggerDownload(
   saveBlob(await resp.blob(), filename);
 }
 
+/** Multipart POST of a single file. `action` defaults to the CORE
+ *  FileUploadCommand, but a view can route the upload to its own command via
+ *  ViewItem commandName (e.g. CdmsUpload) — the server emits it as
+ *  `control.uploadAction`. The command parks the file on the Session; the
+ *  caller then dispatches the follow-up (Post) that consumes it. */
 export async function uploadFile(
   file: File,
   sid: string = 'S1',
-  extraParams: Record<string, string> = {}
+  extraParams: Record<string, string> = {},
+  action: string = 'FileUpload'
 ): Promise<ServerResponse> {
   const formData = new FormData();
-  formData.append('action', 'FileUpload');
+  formData.append('action', action);
   formData.append('sid', sid);
   for (const [k, v] of Object.entries(extraParams)) {
     formData.append(k, v);
   }
   formData.append('file', file);
-  const resp = await fetch(CMD_URL, {
-    method: 'POST',
-    body: formData,
-    credentials: 'same-origin',
-  });
-  return parseResponse(resp);
+  setInFlight(1);
+  try {
+    const resp = await fetch(CMD_URL, {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+    });
+    return await parseResponse(resp);
+  } finally {
+    setInFlight(-1);
+  }
 }
 
 export async function reloadMenu(extra: Record<string, string> = {}): Promise<ServerResponse> {

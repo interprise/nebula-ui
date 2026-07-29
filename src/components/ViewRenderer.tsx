@@ -95,13 +95,21 @@ const INPUT_TYPES = new Set<string>([
   'barcode', 'expbuilder',
   'alternateKey', 'colorPalette',
   'toggleVisibilityFilter', 'visibilityFilter',
+  // File pickers (FileUploadUIControl / UploadButtonUIControl) are form
+  // inputs, not buttons: they render their own chooser button and carry no
+  // `prompt` on the descriptor — the label ("Nome File:") lives in the
+  // sibling PROMPT cell, since both controls have hasPrompt()==true. Under
+  // the BUTTON_TYPES rule (prompt-or-icon required) they produced "no
+  // output", so isRowVisible() suppressed the whole row and every
+  // "carica da file" screen lost its file chooser (SXADV-5672.1).
+  'upload', 'uploadButton',
 ]);
 
 /** Button-like widgets that render their prompt/icon regardless of value. */
 const BUTTON_TYPES = new Set<string>([
   'button', 'action', 'windowButton',
   'navigateView', 'navigateViewButton',
-  'add', 'lookup', 'download', 'upload', 'uploadButton',
+  'add', 'lookup', 'download',
 ]);
 
 /** Structural composites that always render their scaffolding. */
