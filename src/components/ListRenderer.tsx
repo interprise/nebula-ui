@@ -1803,7 +1803,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               </Button>
             )}
             {gridActions.xlsCommand && (
-              <Tooltip title="Esporta in Excel">
+              <Tooltip title="Esporta in Excel" placement="bottom">
                 <Button
                   size="small"
                   icon={<FileExcelOutlined />}
@@ -1813,7 +1813,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               </Tooltip>
             )}
             {gridActions.printCommand && (
-              <Tooltip title="Stampa">
+              <Tooltip title="Stampa" placement="bottom">
                 <Button
                   size="small"
                   icon={<PrinterOutlined />}

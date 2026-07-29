@@ -1448,8 +1448,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 )}
                 {currentTab.ui ? (
                   <>
+                    {/* marginBottom keeps the breadcrumb ("« Ritorno un passo indietro")
+                        clear of the action toolbar below it, so a slightly-off click
+                        doesn't land on a button (SXADV-5685.2). */}
                     {(parsedBreadcrumbs.length > 0 || currentTab.ui?.attachmentsInfo) && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px', marginBottom: 8 }}>
                         {parsedBreadcrumbs.length > 0 ? (
                           <Breadcrumb
                             style={{ padding: '6px 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
@@ -1503,6 +1506,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   currentTab.loading ? null : (
                     <HomePanel loginInfo={loginInfo} onBannerClick={handleBannerClick} />
                   )
+                )}
+                {/* Copyright: last child of the scrolling .tab-content, mirroring
+                    the legacy .ftl templates that closed every page with it. */}
+                {loginInfo.copyright && (
+                  <div className="view-copyright">&copy; {loginInfo.copyright}</div>
                 )}
               </div>
             </FormValuesContext.Provider>

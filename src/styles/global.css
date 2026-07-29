@@ -450,6 +450,20 @@ html, body {
   overflow: auto;
 }
 
+/* Copyright line closing every page — the legacy .ftl equivalent separated it
+   from the content with a run of <br/>; margin-top:auto does the same job and
+   also parks it at the bottom of the tab when the view is shorter than the
+   viewport. flex-shrink:0 keeps it from being squeezed away by tall content. */
+.view-copyright {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: 12px 0 4px;
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+  color: #8c8c8c;
+}
+
 /* Grid-only tab panels: keep the grid inside the visible tab width so AG Grid
    scrolls internally with a SINGLE bar, instead of the grid running to its full
    natural column width and forcing the scrolling ancestor (.tab-content) to grow

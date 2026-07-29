@@ -267,9 +267,12 @@ function renderToolbarItem(
     </Button>
   );
 
+  // Tooltips open downwards: the toolbar sits right under the breadcrumb row,
+  // and a top-placed tooltip covered the "« Ritorno un passo indietro" link,
+  // making it unclickable until the mouse moved away (SXADV-5685.1).
   if (iconOnly || tooltipText) {
     return (
-      <Tooltip key={item.id || idx} title={tooltipText}>
+      <Tooltip key={item.id || idx} title={tooltipText} placement="bottom">
         {btn}
       </Tooltip>
     );

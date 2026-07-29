@@ -352,6 +352,7 @@ export interface LoginInfo {
   logoaz?: string;
   dbVersion?: string;      // e.g. "1.560.10#d" — header release indicator (rendered with a "Rel." prefix)
   alfa?: boolean;          // true when the server runs in the ALFA (test) environment — drives the ALFA header badge
+  copyright?: string;      // utilita.copyright — e.g. "Sixtema Spa", rendered as "© <copyright>" at the bottom of the view
   cdms?: boolean;
   emailSent?: boolean;
   agendaList?: boolean;
