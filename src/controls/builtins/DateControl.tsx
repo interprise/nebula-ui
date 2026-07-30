@@ -3,6 +3,7 @@ import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus } from '../helpers';
+import { withPostDecorations } from '../decorations';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
  *  a ref without setState — controlled inputs that re-apply their `value`
@@ -26,7 +27,7 @@ function useLocalDayjs(controlValue: unknown, fmt: string): [Dayjs | null, (v: D
   return [local, setLocal];
 }
 
-export const DateControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const DateControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const dateFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY';
@@ -38,7 +39,7 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
     handleChange(dateStr);
   };
   const onBlur = useFlexibleDateBlur(dateFmt, commit, value);
-  return (
+  return withPostDecorations(
     <DatePicker
       {...commonProps}
       ref={pickerRef}
@@ -49,17 +50,21 @@ export const DateControl: ControlComponent = ({ control, onAction, onChange }) =
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 
-export const TimeControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const TimeControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const [value, setValue] = useLocalDayjs(control.value, 'HH:mm');
   const pickerRef = useRef<ComponentRef<typeof TimePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
-  return (
+  return withPostDecorations(
     <TimePicker
       {...commonProps}
       ref={pickerRef}
@@ -72,11 +77,15 @@ export const TimeControl: ControlComponent = ({ control, onAction, onChange }) =
         handleChange(timeStr);
         restorePickerFocus();
       }}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 
-export const TimestampControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const TimestampControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const tsFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY HH:mm';
@@ -88,7 +97,7 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
     handleChange(dateStr);
   };
   const onBlur = useFlexibleDateBlur(tsFmt, commit, value);
-  return (
+  return withPostDecorations(
     <DatePicker
       {...commonProps}
       ref={pickerRef}
@@ -100,15 +109,19 @@ export const TimestampControl: ControlComponent = ({ control, onAction, onChange
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 
-export const DurataControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const DurataControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   const [value, setValue] = useSyncedValue(control.value);
-  return (
+  return withPostDecorations(
     <Input
       {...commonProps}
       value={value}
@@ -116,6 +129,10 @@ export const DurataControl: ControlComponent = ({ control, onAction, onChange })
       onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
       onBlur={commit}
       onPressEnter={commit}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };

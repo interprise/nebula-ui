@@ -1,8 +1,9 @@
 import { Input } from 'antd';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedValue } from '../helpers';
+import { withPostDecorations } from '../decorations';
 
-const TextAreaControl: ControlComponent = ({ control, onChange, onAction }) => {
+const TextAreaControl: ControlComponent = ({ control, pageType, onChange, onAction }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   // Controlled + re-synced from control.value, like every other text control.
@@ -15,7 +16,7 @@ const TextAreaControl: ControlComponent = ({ control, onChange, onAction }) => {
   const minRows = control.rows || 3;
   const contentLines = value.split('\n').length;
   const rows = Math.max(minRows, Math.min(contentLines + 1, 30));
-  return (
+  return withPostDecorations(
     <Input.TextArea
       {...commonProps}
       value={value}
@@ -26,7 +27,11 @@ const TextAreaControl: ControlComponent = ({ control, onChange, onAction }) => {
         store(e.target.value);
       }}
       onBlur={commit}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 

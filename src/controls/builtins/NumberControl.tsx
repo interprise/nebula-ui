@@ -3,6 +3,7 @@ import { InputNumber } from 'antd';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedState, decodeHtmlEntities } from '../helpers';
 import type { CommonInputProps } from '../helpers';
+import { withPostDecorations } from '../decorations';
 
 /** The server sends `decimals` (total decimal places parsed from the format
  *  mask) plus the raw `format`. antd InputNumber's `precision` PADS to a fixed
@@ -96,10 +97,10 @@ const MoneyInput: React.FC<{
   );
 };
 
-export const NumberControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const NumberControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
-  return (
+  return withPostDecorations(
     <MoneyInput
       commonProps={commonProps}
       value={control.value}
@@ -108,14 +109,18 @@ export const NumberControl: ControlComponent = ({ control, onAction, onChange })
       width={control.size ? control.size * 9 + 34 : 125}
       store={store}
       commit={commit}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 
-export const MoneyControl: ControlComponent = ({ control, onAction, onChange }) => {
+export const MoneyControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
-  return (
+  return withPostDecorations(
     <MoneyInput
       commonProps={commonProps}
       value={control.value}
@@ -125,6 +130,10 @@ export const MoneyControl: ControlComponent = ({ control, onAction, onChange }) 
       width={control.size ? control.size * 9 + 34 : 125}
       store={store}
       commit={commit}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };

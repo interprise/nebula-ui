@@ -698,10 +698,15 @@ tr.breakRow td {
   padding-top: 6px;
 }
 
-/* Mandatory field indicator */
+/* Mandatory field indicator. Dates, timestamps and numbers carry the cue too
+   (legacy tagged every editable mandatory input with `nb-md`, not just text
+   and combos), so the picker/number wrappers need the same override — their
+   own `.layout-table` rules would otherwise win over antd's error border. */
 .ant-input-status-error,
-.ant-select-status-error .ant-select-selector {
-  border-color: #ff4d4f !important;
+.ant-select-status-error .ant-select-selector,
+.ant-picker-status-error,
+.ant-input-number-status-error {
+  border-color: var(--app-error) !important;
 }
 
 /* Vertical app bar (general operations) */

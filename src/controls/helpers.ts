@@ -307,13 +307,23 @@ export interface CommonInputProps {
 }
 
 export function useCommonProps(control: UIControl): CommonInputProps {
-  const { id, hint, mandatory, value, disabled, editable } = control;
+  const { id, hint, mandatory, value, disabled, editable, type } = control;
   const isDisabled = !!disabled || editable === false;
+  // Legacy gated the red border (the `nb-md` marker class) on
+  // `isMandatoryUI(...) && editable`: a mandatory field the user cannot fill
+  // must not be flagged, and booleans — mandatory by construction — were
+  // excluded outright. Mirror both here, matching withPostDecorations' star
+  // gating. Previously the metadata render path shipped `mandatory` for
+  // almost nothing, so an ungated check went unnoticed; now that derived
+  // mandatory fields resolve correctly, read-only ones would light up red
+  // (e.g. a non-nullable "Id Batch" carrying isEditable="false"). (SXADV-5663)
+  const showMandatory = !!mandatory && !isDisabled
+    && type !== 'boolean' && type !== 'checkbox';
   return {
     id,
     title: hint,
     disabled: isDisabled,
-    status: mandatory && !value ? 'error' as const : undefined,
+    status: showMandatory && !value ? 'error' as const : undefined,
   };
 }
 

@@ -1,13 +1,14 @@
 import { Input } from 'antd';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedValue, getTextMaxWidth } from '../helpers';
+import { withPostDecorations } from '../decorations';
 
-const PasswordControl: ControlComponent = ({ control, onAction, onChange }) => {
+const PasswordControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   const [value, setValue] = useSyncedValue(control.value);
   const textMaxWidth = getTextMaxWidth(control);
-  return (
+  return withPostDecorations(
     <Input.Password
       {...commonProps}
       value={value}
@@ -15,7 +16,11 @@ const PasswordControl: ControlComponent = ({ control, onAction, onChange }) => {
       onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
       onBlur={commit}
       onPressEnter={commit}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 
