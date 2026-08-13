@@ -460,14 +460,18 @@ html, body {
   overflow: auto;
 }
 
-/* Copyright line closing every page — the legacy .ftl equivalent separated it
-   from the content with a run of <br/>; margin-top:auto does the same job and
-   also parks it at the bottom of the tab when the view is shorter than the
-   viewport. flex-shrink:0 keeps it from being squeezed away by tall content. */
+/* Copyright line closing every page. Out of flow on purpose: as a flex item it
+   shortened every view by its own height, and a grid that fills the tab has
+   better uses for those pixels (SXADV-5688.2). Shell renders it only when the
+   view's content leaves room at the foot, so it never lands on top of anything
+   — the legacy .ftl templates had the same net effect, closing the page with a
+   run of <br/> that pushed the label past the fold on a full screen. */
 .view-copyright {
-  flex-shrink: 0;
-  margin-top: auto;
-  padding: 12px 0 4px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 0 2px;
   text-align: center;
   font-size: 11px;
   font-style: italic;

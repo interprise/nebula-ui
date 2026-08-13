@@ -1196,6 +1196,67 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     return items;
   }, [breadcrumbs]);
 
+  // Copyright line: shown only when the view leaves room for it at the foot of
+  // the tab. It is positioned out of flow (see .view-copyright), so it never
+  // shortens the view — a grid sized to fill the tab keeps the full height and
+  // the label simply doesn't appear, which is what the legacy UI effectively
+  // did: the .ftl templates closed the page with <br/><br/>… + the label, so it
+  // sat past the fold and only surfaced on short pages (SXADV-5688.2).
+  const tabContentRef = useRef<HTMLDivElement | null>(null);
+  const [copyrightFits, setCopyrightFits] = useState(false);
+  const measureCopyrightRoom = useCallback(() => {
+    const tc = tabContentRef.current;
+    if (!tc) return;
+    const COPYRIGHT_H = 26; // label box + the gap that keeps it off the content
+    const tcRect = tc.getBoundingClientRect();
+    const limit = tcRect.bottom - (parseFloat(getComputedStyle(tc).paddingBottom) || 0) - COPYRIGHT_H;
+    // Deepest bottom edge actually painted by the view. Elements that scroll
+    // internally, and grids (JS-sized to fill their panel), own their whole box
+    // — recursing into them says nothing about free space. Everything else is
+    // measured through its children, so a container stretched by flex but
+    // holding a short form reports the form's bottom, not its own.
+    const contentBottom = (el: HTMLElement, depth: number): number => {
+      if (el.scrollHeight > el.clientHeight + 1) return el.getBoundingClientRect().bottom;
+      if (el.classList.contains('ag-root-wrapper')) return el.getBoundingClientRect().bottom;
+      let max = -Infinity;
+      if (depth < 24) {
+        for (const child of Array.from(el.children) as HTMLElement[]) {
+          if (child.classList.contains('view-copyright')) continue;
+          const cs = getComputedStyle(child);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.position === 'absolute' || cs.position === 'fixed') continue;
+          max = Math.max(max, contentBottom(child, depth + 1));
+          if (max > limit) return max; // already out of room — stop descending
+        }
+      }
+      // A leaf occupies its own box (nothing inside to measure it by).
+      return max === -Infinity ? el.getBoundingClientRect().bottom : max;
+    };
+    setCopyrightFits(contentBottom(tc, 0) <= limit);
+  }, []);
+  useEffect(() => {
+    measureCopyrightRoom();
+    // Grids and fonts settle a frame (and a beat) later — re-measure after both.
+    const raf = requestAnimationFrame(measureCopyrightRoom);
+    const timer = window.setTimeout(measureCopyrightRoom, 350);
+    const tc = tabContentRef.current;
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measureCopyrightRoom) : null;
+    if (tc && ro) {
+      ro.observe(tc);
+      // The tab keeps its size while its inside is rearranged — dragging the
+      // form/panel splitter, a grid settling on its measured height. Watch the
+      // regions that do change so the label follows the room they leave.
+      tc.querySelectorAll<HTMLElement>('.view-container, .view-body, .view-split-form, .view-split-bottom, .list-container')
+        .forEach((el) => ro.observe(el));
+    }
+    window.addEventListener('resize', measureCopyrightRoom);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+      ro?.disconnect();
+      window.removeEventListener('resize', measureCopyrightRoom);
+    };
+  }, [measureCopyrightRoom, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth]);
+
   const APPBAR_WIDTH = 48;
   const siderWidth = collapsed ? 80 : sidebarWidth;
 
@@ -1489,7 +1550,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           {currentTab && (
             <SidContext.Provider value={currentTab.sid}>
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
-              <div className="tab-content" style={{ position: 'relative' }}>
+              <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
                 {currentTab.loading && (
                   <div className="loading-overlay">
                     <Spin size="large" tip={currentTab.progressPct != null ? `${currentTab.progressPct}%` : undefined}>
@@ -1567,9 +1628,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     <HomePanel loginInfo={loginInfo} onBannerClick={handleBannerClick} />
                   )
                 )}
-                {/* Copyright: last child of the scrolling .tab-content, mirroring
-                    the legacy .ftl templates that closed every page with it. */}
-                {loginInfo.copyright && (
+                {/* Copyright: out of flow at the foot of the tab, and only when
+                    the view leaves room for it — see measureCopyrightRoom. */}
+                {loginInfo.copyright && copyrightFits && (
                   <div className="view-copyright">&copy; {loginInfo.copyright}</div>
                 )}
               </div>
