@@ -58,6 +58,7 @@ import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
 import ViewRenderer, { SidContext, FormValuesContext, EditRowContext } from './ViewRenderer';
+import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
 import ImpersonateModal from './ImpersonateModal';
@@ -106,6 +107,11 @@ interface TabState {
   // Per-tab scope-path manifest: structural scope path -> navpath.
   // Used by hydrate() to populate navigateView/navigateAdd.navpath.
   scopePaths?: Record<string, string>;
+  // Bumped every time a response re-renders this tab's form data (see
+  // DataVersionContext). Lets controls tell a server refresh from a plain
+  // React re-render, so a payload that re-sends an unchanged value still
+  // overrides the user's local edit (SXADV-5014.1).
+  dataVersion?: number;
 }
 
 interface ShellProps {
@@ -393,6 +399,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
+  // Monotonic counter behind TabState.dataVersion / DataVersionContext. Bumped
+  // once per response that re-renders a tab's form data; controls only compare
+  // it for change, so one counter shared by all tabs is enough.
+  const dataVersionRef = useRef(0);
   // Breadcrumb-back is resolved client-side (SXADV-5659). The server never
   // re-emits the trail on the DATA-only response a BackTo produces, and it
   // doesn't need to: a successful BackTo onto crumb #i leaves exactly the
@@ -691,6 +701,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         const newFormValues = extractFormValues(hydrated);
         formValuesRef.current[tabKey] = newFormValues;
         update.formValues = newFormValues;
+        update.dataVersion = ++dataVersionRef.current;
       }
       // Two-phase pipeline — DATA-only: reuse the cached template and the
       // tab's existing bindings. Cache miss (tab drift, first render after
@@ -723,6 +734,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           const newFormValues = extractFormValues(hydrated);
           formValuesRef.current[tabKey] = newFormValues;
           update.formValues = newFormValues;
+          update.dataVersion = ++dataVersionRef.current;
         } else {
           console.warn('[template-cache] missed key', resp.ui.templateKey, '— server emitted DATA-only but client has no template');
         }
@@ -737,6 +749,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           const newFormValues = extractFormValues(resp.ui);
           formValuesRef.current[tabKey] = newFormValues;
           update.formValues = newFormValues;
+          update.dataVersion = ++dataVersionRef.current;
         } else if (resp.ui.rowUpdate) {
           // Incremental row update: merge single row into existing grid data
           const existingTab = tabs.find(t => t.key === tabKey);
@@ -775,6 +788,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           formValuesRef.current[tabKey] = newFormValues;
           // Also update the tab state's formValues
           update.formValues = newFormValues;
+          update.dataVersion = ++dataVersionRef.current;
         }
       }
       // attachmentsInfo is per-record and emitted at response root (not
@@ -1614,13 +1628,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                       <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
-                      <ViewRenderer
-                        ui={currentTab.ui}
-                        onAction={handleAction}
-                        onChange={handleFieldChange}
-                        onGridChange={handleGridChange}
-                        onEditRow={handleEditRow}
-                      />
+                      <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
+                        <ViewRenderer
+                          ui={currentTab.ui}
+                          onAction={handleAction}
+                          onChange={handleFieldChange}
+                          onGridChange={handleGridChange}
+                          onEditRow={handleEditRow}
+                        />
+                      </DataVersionContext.Provider>
                     </EditRowContext.Provider>
                   </>
                 ) : (

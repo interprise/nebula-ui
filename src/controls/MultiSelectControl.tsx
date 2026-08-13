@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { Tag, Button, Tooltip, Drawer, Input, Checkbox, Spin, Empty, Space, Typography } from 'antd';
 import {
   CloseOutlined,
@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
 import { SidContext } from '../components/ViewRenderer';
+import { useSyncedState } from './helpers';
 import * as api from '../services/api';
 
 interface SelItem {
@@ -68,10 +69,9 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
 
   // Local state tracks selection — synced from prop value, but user edits
   // update it immediately so chips refresh without waiting for a server round-trip.
-  const [localValue, setLocalValue] = useState<string>(() => parseKeys(value).join(','));
-  useEffect(() => {
-    setLocalValue(parseKeys(value).join(','));
-  }, [value]);
+  // useSyncedState so a server payload that re-sends the same selection still
+  // overrides a local edit (SXADV-5014.1).
+  const [localValue, setLocalValue] = useSyncedState<string>(parseKeys(value).join(','));
 
   const selectedKeys = useMemo(() => parseKeys(localValue), [localValue]);
 

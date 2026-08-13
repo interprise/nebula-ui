@@ -14,6 +14,7 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
+import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
 import TreeRenderer from './TreeRenderer';
@@ -382,6 +383,11 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
       editData.values, editData.dynProps, panelTemplate.bindings, scopePaths,
     );
   }, [panelTemplate, selectedPath, editDataByPath]);
+  // The panel is hydrated client-side, so the tab's dataVersion doesn't move
+  // when the user picks another record: compose it with the panel tree's own
+  // version so the panel's fields adopt the newly selected record's values
+  // even where they match what the user had typed on the previous one.
+  const panelDataVersion = useNestedDataVersion(hydratedPanel);
 
   // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
   // stays fully visible above it. Only wrap in the flex split when the panel
@@ -404,6 +410,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         panelShown={showPanel}
       />
       {showPanel && hydratedPanel && (
+        <DataVersionContext.Provider value={panelDataVersion}>
         <EditPanel
           panel={hydratedPanel}
           listUi={ui}
@@ -415,6 +422,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
         />
+        </DataVersionContext.Provider>
       )}
     </>
   );

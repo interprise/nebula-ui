@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Checkbox } from 'antd';
 import type { ControlComponent } from '../types';
 import type { UIControl } from '../../types/ui';
-import { useControlChange } from '../helpers';
+import { useControlChange, useSyncedState } from '../helpers';
 
 /** Boolean/checkbox needs local state because Shell's handleFieldChange only
  *  mutates a ref (no re-render). On QUERY pages non-mandatory booleans are tri-state. */
@@ -16,8 +16,9 @@ const BooleanInner: React.FC<{
   const toBool = (v: unknown) => v === true || v === 'true' || v === '1';
   const toNull = (v: unknown) => v === null || v === undefined || v === '';
 
-  const [localVal, setLocalVal] = useState(serverVal);
-  useEffect(() => { setLocalVal(serverVal); }, [serverVal]);
+  // useSyncedState (not a bare useState + effect) so a server payload that
+  // re-sends the same value still overrides a local toggle (SXADV-5014.1).
+  const [localVal, setLocalVal] = useSyncedState<unknown>(serverVal);
 
   const boolVal = toBool(localVal);
   const isNull = toNull(localVal);

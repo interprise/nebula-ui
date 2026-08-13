@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, RefObject, SetStateAction } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
+import { DataVersionContext } from './dataVersion';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to a
  *  ref WITHOUT setState. A plain controlled `<Input value={control.value}>`
@@ -12,16 +13,24 @@ import { captureFocusBeforeReload } from '../services/focusRestore';
  *  then undefined, making the input effectively uncontrolled.) We hold the
  *  typed text in local state and re-sync only when the upstream
  *  `control.value` actually changes via a server round-trip — the same
- *  approach DateControl's `useLocalDayjs` uses. */
+ *  approach DateControl's `useLocalDayjs` uses.
+ *
+ *  A changed value is not the only reason to re-sync: a server payload that
+ *  puts the SAME value back on a field the user has edited is still a refresh
+ *  and must win over the local text (a brand-new record after "Salva+" is all
+ *  nulls, exactly like the template the user typed into — SXADV-5014.1). So we
+ *  also re-sync whenever the enclosing `DataVersionContext` changes, i.e. when
+ *  the form was re-rendered from a server payload rather than by React. */
 export function useSyncedState<T>(controlValue: T): [T, (v: T) => void] {
+  const dataVersion = useContext(DataVersionContext);
   const [local, setLocal] = useState<T>(controlValue);
-  const lastSeenRef = useRef<T>(controlValue);
+  const lastSeenRef = useRef<{ value: T; version: number }>({ value: controlValue, version: dataVersion });
   useEffect(() => {
-    if (controlValue !== lastSeenRef.current) {
-      lastSeenRef.current = controlValue;
+    if (controlValue !== lastSeenRef.current.value || dataVersion !== lastSeenRef.current.version) {
+      lastSeenRef.current = { value: controlValue, version: dataVersion };
       setLocal(controlValue);
     }
-  }, [controlValue]);
+  }, [controlValue, dataVersion]);
   return [local, setLocal];
 }
 
