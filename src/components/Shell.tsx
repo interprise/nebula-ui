@@ -393,6 +393,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
+  // Breadcrumb-back is resolved client-side (SXADV-5659). The server never
+  // re-emits the trail on the DATA-only response a BackTo produces, and it
+  // doesn't need to: a successful BackTo onto crumb #i leaves exactly the
+  // crumbs before it. Armed on click with the already-truncated HTML, consumed
+  // by processResponseInner once the navigation is known to have gone through.
+  const pendingBreadcrumbsRef = useRef<{ tabKey: string; html: string } | null>(null);
   // Bumped on every fresh menu payload to remount the sidebar Menu. The inline
   // Menu keeps its expanded submenus in internal state, so without a remount a
   // reload (Azienda/Sede change, manual reload) would inherit the previously
@@ -444,6 +450,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         case 'YESNOCANCEL':
           modal.confirm({
             content: err.message,
+            // Refusing the prompt aborts the guarded action, so a breadcrumb-back
+            // waiting on this answer never happens — un-arm it (SXADV-5659).
+            onCancel: () => { pendingBreadcrumbsRef.current = null; },
             onOk: () => {
               if (!err.mnemonic) return;
               // Answer token per CORE's message grammar (Session.addConfirmation):
@@ -625,12 +634,39 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // replay raised, so a menu click can't leave the tab spinning (or the
       // HomePanel showing behind a dialog) — SXADV-5470.0.
       const update: Partial<TabState> = { loading: false, progressPct: undefined };
+      // Resolve a pending breadcrumb-back (armed by the crumb's onClick).
+      // BackTo can refuse to move — dirty transaction, stale viewstate id —
+      // and then the server re-renders the CURRENT view, so the trail must
+      // stay as it is. A confirmation prompt is not an outcome yet: the
+      // answer replays the same request, so keep the arming for that response.
+      let backTrail: string | undefined;
+      const pendingBack = pendingBreadcrumbsRef.current;
+      if (pendingBack && pendingBack.tabKey === tabKey) {
+        const errs = resp.errors ?? [];
+        if (!errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) {
+          pendingBreadcrumbsRef.current = null;
+          if (!errs.some((e) => e.type === 'ERROR')) backTrail = pendingBack.html;
+        }
+      }
       // Two-phase pipeline — METADATA+DATA: cache the stable template and
       // render the initial hydrated tree. The binding manifest is per-tab
       // (not cached with the template) — it maps each structural scope to
       // the viewstate id the server allocated for this tab, so form posts
       // can compose wire-form keys.
-      if (resp.template && resp.templateKey) {
+      //
+      // The server omits the template blob (mode "MC") when this tab already
+      // advertised its key: a NEW page — its own history entry, its own
+      // breadcrumb and viewstate, so a DATA-only response won't do — laid out
+      // by a template that's already on screen (opening a second record from
+      // the same list, chain-link between records of one view). Everything
+      // else travels as usual; the layout comes from the cache.
+      const metaTemplate = resp.templateKey
+        ? resp.template ?? getTemplate(resp.templateKey)
+        : undefined;
+      if (resp.templateKey && !metaTemplate) {
+        console.warn('[template-cache] missed key', resp.templateKey, '— server omitted the template but the client has none');
+      }
+      if (metaTemplate && resp.templateKey) {
         // Navigating to a DIFFERENT view (e.g. a listEdit list → "Nuovo" → the
         // record detail) leaves the inline list-edit context. Drop the stale
         // edit-row navpath so the new view's Save/Post resolves on its own
@@ -638,11 +674,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         // row's navpath (S1-11) while its fields were keyed to the new record
         // (S1-12), and the server rejected it as NoSession.
         const prevTemplateKey = tabs.find((t) => t.key === tabKey)?.templateKey;
-        if (resp.templateKey !== prevTemplateKey) editNavpathRef.current = null;
-        putTemplate(resp.templateKey, resp.template);
+        // ...and so does a new page that happens to reuse the layout on screen
+        // (mode "MC" — key advertised, template omitted): same key, different
+        // page, so the key comparison alone wouldn't catch it.
+        if (resp.templateKey !== prevTemplateKey || !resp.template) editNavpathRef.current = null;
+        if (resp.template) putTemplate(resp.templateKey, resp.template);
         const bindings = resp.bindings ?? {};
         const scopePaths = resp.scopePaths ?? {};
-        const hydrated = hydrate(resp.template, resp.values, resp.dynProps, bindings, scopePaths);
+        const hydrated = hydrate(metaTemplate, resp.values, resp.dynProps, bindings, scopePaths);
         // Breadcrumbs vary per navigation and are NOT cached in the template
         // -- merge them in from the response root.
         update.ui = resp.breadcrumbs !== undefined ? { ...hydrated, breadcrumbs: resp.breadcrumbs } : hydrated;
@@ -674,8 +713,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           update.scopePaths = scopePaths;
           // DATA-only is a reload on the same view: carry the breadcrumbs
           // forward from the existing tab state (the template doesn't cache
-          // them and the server doesn't re-emit them on reloads).
-          const carried = existingTab?.ui?.breadcrumbs;
+          // them and the server doesn't re-emit them on reloads). The one
+          // exception is a breadcrumb-back that landed on an already-cached
+          // template — it comes back DATA-only too, but the trail has to
+          // shrink to the crumbs before the one clicked (SXADV-5659).
+          const carried = backTrail ?? existingTab?.ui?.breadcrumbs;
           update.ui = carried !== undefined ? { ...hydrated, breadcrumbs: carried } : hydrated;
           update.templateKey = resp.ui.templateKey;
           const newFormValues = extractFormValues(hydrated);
@@ -826,6 +868,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           .then((resp) => processResponse(tabKey, resp, sid, replay))
           .catch((e) => {
             updateTabState(tabKey, { loading: false, progressPct: undefined });
+            pendingBreadcrumbsRef.current = null;
             message.error(`Error: ${e}`);
           })
           .finally(() => { document.body.style.cursor = ''; });
@@ -977,6 +1020,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        // A request that never produced a response leaves no navigation to
+        // account for — drop any armed breadcrumb-back so it can't be applied
+        // to some later, unrelated response on this tab.
+        pendingBreadcrumbsRef.current = null;
         message.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
@@ -1121,7 +1168,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // Parse HTML breadcrumbs into structured items
   const parsedBreadcrumbs = useMemo(() => {
     if (!breadcrumbs) return [];
-    const items: { title: string; action?: string; navpath?: string; option1?: string; isBack?: boolean }[] = [];
+    // `html` is the crumb's own markup, kept so a breadcrumb-back can rebuild
+    // the shortened trail by re-joining the crumbs that survive it — no
+    // re-parse, and the indexes can't drift from what's on screen.
+    const items: { title: string; html: string; action?: string; navpath?: string; option1?: string; isBack?: boolean }[] = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<div>${breadcrumbs}</div>`, 'text/html');
     doc.querySelectorAll('.breadcrumbElement, [onclick]').forEach((el) => {
@@ -1135,6 +1185,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       if (title) {
         items.push({
           title,
+          html: el.outerHTML,
           action: m?.[1],
           navpath: m?.[2],
           option1: m?.[3],
@@ -1456,7 +1507,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                         {parsedBreadcrumbs.length > 0 ? (
                           <Breadcrumb
                             style={{ padding: '6px 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
-                            items={parsedBreadcrumbs.map((b) => ({
+                            items={parsedBreadcrumbs.map((b, i) => ({
                               title: b.action ? (
                                 <a
                                   title={b.title}
@@ -1466,6 +1517,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                                     const params: Record<string, string> = {};
                                     if (b.navpath) params.navpath = b.navpath;
                                     if (b.option1) params.option1 = b.option1;
+                                    // Going back to crumb #i leaves the trail that
+                                    // precedes it (the view landed on is the last
+                                    // history entry, and the trail omits it). Arm the
+                                    // shortened trail; processResponseInner applies it
+                                    // if the navigation actually happened (SXADV-5659).
+                                    pendingBreadcrumbsRef.current = {
+                                      tabKey: currentTab.key,
+                                      html: parsedBreadcrumbs.slice(0, i).map((c) => c.html).join(''),
+                                    };
                                     handleAction(b.action!, Object.keys(params).length > 0 ? params : undefined);
                                   }}
                                 >{b.isBack ? '« ' : ''}{b.title}</a>
