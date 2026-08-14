@@ -817,6 +817,19 @@ tr.breakRow td {
   background: rgba(255, 255, 255, 0.12) !important;
 }
 
+/* Click feedback on the dark app bar (SXADV-5784.1): the hover tint alone left
+   no trace of what had been clicked. Pressed = a brighter flash; the button
+   whose function is currently open keeps a permanent tint + left accent bar. */
+.app-bar-btn:active {
+  background: var(--app-appbar-pressed-bg) !important;
+}
+.app-bar-btn.app-bar-btn-active,
+.app-bar-btn.app-bar-btn-active:hover {
+  color: #fff !important;
+  background: var(--app-appbar-active-bg) !important;
+  box-shadow: inset 3px 0 0 #fff;
+}
+
 /* Header company/site selectors: slightly smaller text inside (SXADV-5454) */
 .header-select .ant-select-selection-item,
 .header-select .ant-select-selection-placeholder {
@@ -878,6 +891,37 @@ tr.breakRow td {
    (subMenuItemBg in the Menu theme tints the items; this covers the container.) */
 .sidebar .ant-menu-sub.ant-menu-inline {
   background: #eaeef5;
+}
+
+/* Selection feedback in the sidebar menu (SXADV-5784.2).
+   antd only tints the selected leaf; on click the highlight was invisible when
+   the menu is collapsed (the leaf lives in a flyout that closes) or when the
+   selected item is inside a closed module. Mark the ancestor Module too, and
+   give every row a pressed state so the click itself reads immediately. */
+.sidebar .ant-menu-item:active,
+.sidebar .ant-menu-submenu-title:active {
+  background: var(--app-menu-pressed-bg) !important;
+}
+
+/* Module containing the open function: accent bar + tint. Applies in both
+   modes; collapsed, this is the ONLY visible trace of the selection. */
+.sidebar .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  background: var(--app-menu-selected-bg);
+  box-shadow: inset 3px 0 0 var(--app-menu-selected-accent);
+}
+.sidebar .ant-menu-inline-collapsed .ant-menu-submenu-selected > .ant-menu-submenu-title,
+.sidebar .ant-menu-inline-collapsed .ant-menu-item-selected {
+  background: var(--app-menu-selected-bg);
+  box-shadow: inset 3px 0 0 var(--app-menu-selected-accent);
+}
+.sidebar .ant-menu-inline-collapsed .ant-menu-submenu-selected > .ant-menu-submenu-title .anticon,
+.sidebar .ant-menu-inline-collapsed .ant-menu-item-selected .anticon {
+  color: var(--app-menu-selected-accent);
+}
+/* Selected leaf (expanded mode): the theme's itemSelectedBg plus the same
+   accent bar, so menu and app bar speak the same visual language. */
+.sidebar .ant-menu-item-selected {
+  box-shadow: inset 3px 0 0 var(--app-menu-selected-accent);
 }
 
 /* Controls inside a continuation row (SXADV-5742). antd's "small" Select/Button

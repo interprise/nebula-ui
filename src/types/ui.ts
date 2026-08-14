@@ -362,7 +362,12 @@ export interface LoginInfo {
   dbVersion?: string;      // e.g. "1.560.10#d" — header release indicator (rendered with a "Rel." prefix)
   alfa?: boolean;          // true when the server runs in the ALFA (test) environment — drives the ALFA header badge
   copyright?: string;      // utilita.copyright — e.g. "Sixtema Spa", rendered as "© <copyright>" at the bottom of the view
+  // False when an external IdP (SSO) owns the credentials: the change-password
+  // function is not offered at all. Absent means "supported" (local login).
+  changePassword?: boolean;
   cdms?: boolean;
+  cdmsAdmin?: boolean;     // documentale administrator — gates nuovo albero / profili / utenti in the documentale app bar
+  wikiUrl?: string;         // documentation wiki (run property wiki.url.<runMode>); absent when not configured
   emailSent?: boolean;
   agendaList?: boolean;
   avvisi?: boolean;

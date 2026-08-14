@@ -42,6 +42,9 @@ import {
   ToolOutlined,
   ContainerOutlined,
   ClusterOutlined,
+  FolderAddOutlined,
+  DeleteOutlined,
+  ReadOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -88,6 +91,10 @@ interface TabState {
   key: string;
   label: string;
   sid: string;
+  // Menu item this tab was opened from. Drives the persistent selection
+  // highlight in the sidebar menu and in the app bar (SXADV-5784), so the user
+  // keeps seeing which function is open — hover alone gave no lasting clue.
+  menuId?: string;
   ui?: UITree;
   toolbar?: ToolbarItem[];
   uiData?: UIData;
@@ -442,6 +449,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     },
     []
   );
+
+  // Append a session tab (own sid, own form values) and make it active.
+  // Returns it synchronously so the caller can fire a request on it without
+  // waiting for the state update — `tabs` is still the pre-append array here.
+  const addTab = useCallback((label?: string): TabState => {
+    tabCounter++;
+    const key = `tab_${tabCounter}`;
+    const fv: Record<string, string | string[]> = {};
+    formValuesRef.current[key] = fv;
+    const tab: TabState = { key, label: label || `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTab(key);
+    return tab;
+  }, []);
 
   const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
     for (const err of errors) {
@@ -908,7 +929,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // the confirm dialog when the navigation hit an "unsaved changes" prompt
       // (SXADV-5470.0 / .1). processResponse installs the new view (and clears
       // loading) once it arrives.
-      updateTabState(tab.key, { label: menuLabel, loading: true, progressPct: undefined, formValues: tab.formValues });
+      updateTabState(tab.key, { label: menuLabel, menuId, loading: true, progressPct: undefined, formValues: tab.formValues });
 
       document.body.style.cursor = 'wait';
       // If the navigation raises a confirmation ("annullare TUTTE le modifiche?"),
@@ -1046,33 +1067,80 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu, makeConfirmReplay]
   );
 
-  // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
-  const handleCdmsFolderClick = useCallback(
-    async (cdmsId: string, folderName: string) => {
-      const tab = getActiveTabState();
-      if (!tab || tab.loading) return;
-      // Extract UUID from cdmsId (part after last |)
-      const uuid = cdmsId.substring(cdmsId.lastIndexOf('|') + 1);
-      const filter = `exists(nodi[idNodoClass = '${uuid}'])`;
-      tab.formValues = {};
-      formValuesRef.current[tab.key] = tab.formValues;
+  // CDMS: open one of the documentale views (ricerca, document list, cestino,
+  // gestione profili/utenti) in a given tab. Not menu items — these views live
+  // in the cdms module and are reached only from the documentale sidebar/app bar.
+  // Takes the tab explicitly so it can also target a tab that was just appended,
+  // before `tabs` has caught up with it.
+  const openCdmsViewInTab = useCallback(
+    async (
+      tab: Pick<TabState, 'key' | 'sid'>,
+      opts: { viewName: string; title: string; action?: string; filter?: string; orderBy?: string },
+    ) => {
+      const fv: Record<string, string | string[]> = {};
+      formValuesRef.current[tab.key] = fv;
       editNavpathRef.current = null;
-      updateTabState(tab.key, { label: folderName, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: tab.formValues });
+      updateTabState(tab.key, { label: opts.title, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
       document.body.style.cursor = 'wait';
       try {
-        const resp = await api.postAction('ListPage', {
-          viewName: 'cdmsRisorseList',
-          filter,
-          title: folderName,
-        }, undefined, tab.sid);
+        const params: Record<string, string> = { viewName: opts.viewName, title: opts.title };
+        if (opts.filter) params.filter = opts.filter;
+        if (opts.orderBy) params.orderBy = opts.orderBy;
+        const resp = await api.postAction(opts.action || 'ListPage', params, undefined, tab.sid);
         processResponse(tab.key, resp);
       } catch (e) {
+        updateTabState(tab.key, { loading: false });
         message.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, updateTabState, processResponse],
+    [updateTabState, processResponse],
+  );
+
+  const openCdmsView = useCallback(
+    (viewName: string, title: string, filter?: string) => {
+      const tab = getActiveTabState();
+      if (!tab || tab.loading) return;
+      openCdmsViewInTab(tab, { viewName, title, filter });
+    },
+    [getActiveTabState, openCdmsViewInTab],
+  );
+
+  // Tabs holding the documentale pair, so re-entering the documentale activates
+  // them instead of opening a new pair every time.
+  const cdmsSessionTabsRef = useRef<{ search: string; recent: string } | null>(null);
+
+  // Entering the documentale opens its two working sessions, as the legacy
+  // client did in setupPanels(): "Ricerca" (query view) and "Documenti recenti"
+  // (documents by last revision). Unlike the legacy client this does not wipe
+  // the open tabs — the documentale lives inside the gestionale here, so the
+  // pair is added, reusing the current tab only when it is still empty
+  // (SXADV-5789).
+  const enterDocumentale = useCallback(() => {
+    setSidebarMode('cdms');
+    const open = cdmsSessionTabsRef.current;
+    if (open && tabs.some((t) => t.key === open.search) && tabs.some((t) => t.key === open.recent)) {
+      setActiveTab(open.search);
+      return;
+    }
+    const active = getActiveTabState();
+    const searchTab = active && !active.ui && !active.loading ? active : addTab();
+    const recentTab = addTab();
+    cdmsSessionTabsRef.current = { search: searchTab.key, recent: recentTab.key };
+    openCdmsViewInTab(searchTab, { viewName: 'cdmsRisorseQuery', title: 'Ricerca', action: 'QueryPage' });
+    openCdmsViewInTab(recentTab, { viewName: 'cdmsRisorseList', title: 'Documenti recenti', orderBy: 'dataUltimaRevisione desc' });
+    setActiveTab(searchTab.key);
+  }, [tabs, getActiveTabState, addTab, openCdmsViewInTab]);
+
+  // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
+  const handleCdmsFolderClick = useCallback(
+    (cdmsId: string, folderName: string) => {
+      // Extract UUID from cdmsId (part after last |)
+      const uuid = cdmsId.substring(cdmsId.lastIndexOf('|') + 1);
+      openCdmsView('cdmsRisorseList', folderName, `exists(nodi[idNodoClass = '${uuid}'])`);
+    },
+    [openCdmsView],
   );
 
   const handleFieldChange = useCallback(
@@ -1144,11 +1212,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     action: 'add' | 'remove'
   ) => {
     if (action === 'add') {
-      tabCounter++;
-      const fv = {};
-      formValuesRef.current[`tab_${tabCounter}`] = fv;
-      setTabs(prev => [...prev, { key: `tab_${tabCounter}`, label: `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv }]);
-      setActiveTab(`tab_${tabCounter}`);
+      addTab();
     } else if (action === 'remove') {
       const key = typeof targetKey === 'string' ? targetKey : '';
       setTabs((prev) => {
@@ -1287,7 +1351,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // ChangePasswordModal owns the form + inline validation; opened on demand.
   const showChangePasswordDialog = useCallback(() => setChangePasswordOpen(true), []);
 
-  const appBarButtons: {
+  type AppBarButton = {
     key: string;
     icon: React.ReactNode;
     tooltip: string;
@@ -1296,27 +1360,63 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     badge?: boolean;
     badgeCount?: number;
     danger?: boolean;
-  }[] = [
+    // Persistent "this is what you are looking at" highlight (SXADV-5784.1).
+    // Only buttons that open something durable set it; one-shot actions
+    // (logout, cambio password, modali) get the press feedback only.
+    active?: boolean;
+  };
+
+  // The menu function the active tab is showing, if it was opened from the menu
+  // or from one of the app-bar shortcuts.
+  const activeMenuId = currentTab?.menuId;
+
+  // Session-level functions, kept in both sidebar modes together with the
+  // menu/documentale toggle itself.
+  const commonBarButtons: AppBarButton[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Esci', onClick: onLogout, visible: true, danger: true },
-    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => setSidebarMode((m) => m === 'cdms' ? 'menu' : 'cdms'), visible: !!loginInfo.cdms },
-    { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: true },
-    { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent },
-    { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: !!loginInfo.agendaList },
-    { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => handleMenuClick('menu.cdmsRisorseDocAreaList', 'Area Documenti'), visible: !!loginInfo.areaDocumenti },
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' },
+    // Hidden when the credentials live in an external IdP (SSO): there the
+    // password is not ours to change.
+    { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: loginInfo.changePassword !== false },
+  ];
+
+  const appBarButtons: AppBarButton[] = [
+    ...commonBarButtons,
+    { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent, active: activeMenuId === 'menu.emailSent' },
+    // Agenda nascosta per ora: il pannello agenda non è ancora portato sul
+    // client React. Per riattivarla: visible: !!loginInfo.agendaList
+    { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: false },
+    { key: 'areaDoc', icon: <PrinterOutlined />, tooltip: 'Area Documenti', onClick: () => handleMenuClick('menu.cdmsRisorseDocAreaList', 'Area Documenti'), visible: !!loginInfo.areaDocumenti, active: activeMenuId === 'menu.cdmsRisorseDocAreaList' },
     // newSession moved to tab bar add button
     { key: 'help', icon: <QuestionCircleOutlined />, tooltip: 'Aiuto', onClick: () => {
       const fw = (window as unknown as Record<string, unknown>).FreshworksWidget as ((...args: unknown[]) => void) | undefined;
       if (fw) fw('open');
     }, visible: !!loginInfo.assistenza },
     // cdms moved to top of list
-    { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi },
-    { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true },
+    { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi, active: activeMenuId === 'menu.avvisi' },
+    { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true, active: activeMenuId === 'menu.notifications' },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Avvisi e notifiche', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
     { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => handleAction('ProfileManager', { navpath: 'menu' }), visible: true },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleAction('CommStats'), visible: true },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleAction('JDBCStats'), visible: true },
-    { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true },
+    { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true, active: activeMenuId === 'menu.expBuilderList' },
   ];
+
+  // Documentale mode swaps the gestionale functions for the documentale ones —
+  // the toolbar of the legacy documentale client (newdocs.js): gestione profili
+  // e utenti (admin), aggiungi albero (admin), cestino, wiki. Its "Gestionale"
+  // button has no counterpart: the documentale is integrated here, and the
+  // toggle above already goes back to the menu (SXADV-5790).
+  const cdmsBarButtons: AppBarButton[] = [
+    ...commonBarButtons,
+    { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsView('cdmsProfiliList', 'Gestione Profili'), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsView('cdmsUtentiList', 'Gestione Utenti'), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => handleAction('AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsTrash', icon: <DeleteOutlined />, tooltip: 'Cestino', onClick: () => openCdmsView('cdmsRisorseListCestino', 'Cestino'), visible: true },
+    { key: 'cdmsWiki', icon: <ReadOutlined />, tooltip: 'Aiuto', onClick: () => window.open(loginInfo.wikiUrl, '_blank', 'noopener'), visible: !!loginInfo.wikiUrl },
+  ];
+
+  const visibleBarButtons = (sidebarMode === 'cdms' ? cdmsBarButtons : appBarButtons).filter((b) => b.visible);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -1333,8 +1433,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       )}
       {/* Vertical app bar */}
       <div className="app-bar">
-        {appBarButtons
-          .filter((b) => b.visible)
+        {visibleBarButtons
           .map((b) => (
             <Tooltip key={b.key} title={b.tooltip} placement="right">
               <Badge
@@ -1349,7 +1448,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   danger={b.danger}
                   icon={b.icon}
                   onClick={b.onClick}
-                  className="app-bar-btn"
+                  className={b.active ? 'app-bar-btn app-bar-btn-active' : 'app-bar-btn'}
+                  aria-current={b.active ? 'true' : undefined}
                 />
               </Badge>
             </Tooltip>
@@ -1434,6 +1534,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 mode="inline"
                 inlineCollapsed={collapsed}
                 items={buildMenuItems(filteredMenu)}
+                // Controlled selection: the internal (uncontrolled) one is lost on
+                // every remount (menuNonce) and is per-Menu, not per-tab. Keying it
+                // off the active tab keeps the open function highlighted and makes
+                // the highlight follow tab switches (SXADV-5784.2).
+                selectedKeys={currentTab?.menuId ? [currentTab.menuId] : []}
                 {...(menuOpenKeys !== undefined ? { openKeys: menuOpenKeys } : {})}
                 onClick={({ key }) => {
                   const label = findMenuLabel(menuItems, key) || key;
@@ -1447,7 +1552,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             <CdmsTree
               collapsed={collapsed}
               onFolderClick={handleCdmsFolderClick}
-              onAction={handleAction}
             />
           </Suspense>
         )}
@@ -1707,11 +1811,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         </Content>
       </Layout>
 
-      <ChangePasswordModal
-        open={changePasswordOpen}
-        onClose={() => setChangePasswordOpen(false)}
-        onServerErrors={handleErrors}
-      />
+      {loginInfo.changePassword !== false && (
+        <ChangePasswordModal
+          open={changePasswordOpen}
+          onClose={() => setChangePasswordOpen(false)}
+          onServerErrors={handleErrors}
+        />
+      )}
 
       <ImpersonateModal
         open={impersonateOpen}

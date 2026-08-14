@@ -51,6 +51,17 @@
    * disabled input/select/picker rules already used. */
   --app-text-readonly: #333;
 
+  /* Navigation "you are here" marks (SXADV-5784). Hover alone gave no lasting
+   * clue of what had been clicked, so the open function keeps a persistent
+   * highlight: in the sidebar menu (item and, when collapsed, its module icon)
+   * and in the dark app bar. Kept in sync with the antd Menu itemSelectedBg /
+   * itemSelectedColor set in Shell's ConfigProvider. */
+  --app-menu-selected-bg: #e6f4ff;
+  --app-menu-selected-accent: var(--app-primary);
+  --app-menu-pressed-bg: #cfe6ff;
+  --app-appbar-active-bg: rgba(255, 255, 255, 0.22);
+  --app-appbar-pressed-bg: rgba(255, 255, 255, 0.3);
+
   /* --- Vertical density (SXADV-5742) -------------------------------------
    * Every horizontal band stacked above the editing area — header, session
    * tabs, breadcrumb, toolbar, view title — used to carry its own hardcoded

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Tree, Input, Dropdown, App, Button, Tooltip } from 'antd';
+import { Tree, Input, Dropdown, App } from 'antd';
 import {
   FolderOutlined,
   FolderOpenOutlined,
@@ -15,7 +15,6 @@ import type { CdmsNode } from '../services/api';
 interface CdmsTreeProps {
   collapsed: boolean;
   onFolderClick: (cdmsId: string, folderName: string) => void;
-  onAction: (action: string, params?: Record<string, string>) => void;
 }
 
 /** Convert server CdmsNode to Ant Design DataNode */
@@ -69,7 +68,7 @@ function filterTree(nodes: DataNode[], lowerFilter: string): DataNode[] | null {
   return anyMatch ? filtered : null;
 }
 
-const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction }) => {
+const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
   // Context-aware message/modal so they inherit the ConfigProvider CSS-var
   // theme; the static antd imports render invisibly under it. (SXADV-5542)
   const { message, modal } = App.useApp();
@@ -311,6 +310,8 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction 
 
   return (
     <div className="cdms-tree-container">
+      {/* "Aggiungi Albero" is not here but in the documentale app bar, next to
+          the other documentale functions, as in the legacy client (SXADV-5790). */}
       <div style={{ padding: '0 12px 8px', display: 'flex', gap: 4 }}>
         <Input
           placeholder="Cerca cartelle..."
@@ -321,15 +322,6 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick, onAction 
           size="small"
           style={{ flex: 1 }}
         />
-        {isAdmin && (
-          <Tooltip title="Nuovo albero">
-            <Button
-              size="small"
-              icon={<PlusOutlined />}
-              onClick={() => onAction('AddPage', { viewName: 'cdmsNodiClassificazioneDetail' })}
-            />
-          </Tooltip>
-        )}
       </div>
       <div className="cdms-tree-content">
         <Tree
