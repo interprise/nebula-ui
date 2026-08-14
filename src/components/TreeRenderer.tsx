@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect, useContext } 
 import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
-import { SidContext } from './ViewRenderer';
+import { SidContext, TitleInBreadcrumbContext } from './ViewRenderer';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 
@@ -45,6 +45,8 @@ function collectNonLeafKeys(nodes: TreeNode[]): string[] {
 }
 
 const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) => {
+  // Page title already shown as the closing breadcrumb (SXADV-5742).
+  const titleInBreadcrumb = useContext(TitleInBreadcrumbContext);
   const sid = useContext(SidContext);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [searchText, setSearchText] = useState('');
@@ -242,7 +244,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 0 }}>
       {/* Left pane: tree */}
       <div style={{ display: 'flex', flexDirection: 'column', width: detailUi ? 300 : '100%', minWidth: 250, borderRight: detailUi ? '1px solid #e8e8e8' : undefined, transition: 'width 0.2s' }}>
-        {ui.title && <div className="view-title">{ui.title}</div>}
+        {ui.title && !titleInBreadcrumb && <div className="view-title">{ui.title}</div>}
         <div style={{ padding: '8px 8px 4px' }}>
           <Input
             placeholder="Cerca nell'albero..."

@@ -37,6 +37,44 @@ function useEdgeScrollReveal() {
   return { ref, onMouseMove, onMouseLeave };
 }
 
+/* Layout-table ruler sizing (SXADV-5742.1) ---------------------------------- */
+
+/** One server grid column, when the ruler can't be fitted to the visible width
+ *  (no measurement yet, or a table without a label band). Legacy HTML billed a
+ *  column at ~charWidth * gridSize — typically 24–30px. */
+const DEFAULT_COL_WIDTH = 24;
+/** Below this per-column width the table stops shrinking and scrolls instead.
+ *  Not a taste value: compressing further clips the *content* of narrow cells —
+ *  measured on Fatture, a colspan-7 date cell needs ~17.7px/column before
+ *  "28/07/2026" starts being cut off by the picker's own suffix icon. 19 leaves a
+ *  little margin under that while still recovering ~20% of the old uniform 24px.
+ *  A very wide view (80+ server columns) therefore still scrolls horizontally —
+ *  which is the accepted outcome, rather than squeezing fields into illegibility. */
+const MIN_CONTENT_COL = 19;
+/** The prompt cell's own horizontal padding (`.prompt-cell`: 4px each side) plus
+ *  a couple of pixels of air, so the longest label still fits on one line. */
+const PROMPT_CELL_PADDING = 10;
+/** Kept free so a table sized to the host doesn't itself trigger the scrollbar. */
+const RULER_GUTTER = 8;
+
+/** Width of a prompt's text at the layout table's own font. Uses a canvas so it
+ *  can run inside a useMemo — no DOM node, no reflow. The font mirrors
+ *  `.layout-table` (13px) and App.tsx's ConfigProvider fontFamily; a mismatch
+ *  only costs a few pixels, which PROMPT_BAND_SLACK absorbs, and the prompt cell
+ *  wraps rather than clipping if it ever came out short. */
+const measurePromptWidth = (() => {
+  const FONT = "13px Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+  let ctx: CanvasRenderingContext2D | null | undefined;
+  return (promptHtml: string): number => {
+    const text = promptHtml.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
+    if (!text) return 0;
+    if (ctx === undefined) ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return text.length * 7;
+    ctx.font = FONT;
+    return ctx.measureText(text).width;
+  };
+})();
+
 interface ViewRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
@@ -75,6 +113,15 @@ export const EditRowContext = React.createContext<((navpath: string | null) => v
 // lists. Set by tab content so nested grids use internal scroll instead of
 // AG Grid's autoHeight.
 export const FillHeightContext = React.createContext<boolean>(false);
+
+// The Shell is already showing the current view's title as the closing
+// (non-clickable) breadcrumb, so the view itself must not repeat it as a heading
+// row — that duplicate cost a full row of the editing area (SXADV-5742). A
+// context rather than a prop because three different renderers emit the heading
+// (ViewRenderer, ListRenderer, TreeRenderer) at varying depths. EMBEDDED views
+// ignore it: their title names a section inside the page ("Righe fattura"), not
+// the page, so it is not the thing the breadcrumb is showing.
+export const TitleInBreadcrumbContext = React.createContext<boolean>(false);
 
 // View name context — used only for diagnostics (e.g. unknown-control-type warnings)
 export const ViewNameContext = React.createContext<string | undefined>(undefined);
@@ -429,6 +476,9 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
 };
 
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded, fillHeight: fillHeightProp }) => {
+  // Suppressed only for the page-level view: an embedded view's title names a
+  // section, which the breadcrumb is not showing (see TitleInBreadcrumbContext).
+  const titleInBreadcrumb = React.useContext(TitleInBreadcrumbContext) && !embedded;
   const fillHeightCtx = React.useContext(FillHeightContext);
   const splitSid = React.useContext(SidContext);
   const fillHeight = fillHeightProp ?? fillHeightCtx;
@@ -533,32 +583,94 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     return max || undefined;
   })();
 
-  // The layout-table sizes to the form fields' declared width — grids
-  // (detailView/embeddedView containers) don't contribute to this width
-  // because they are autonomous: they take whatever horizontal space is
-  // available and scroll internally. We derive the width from formCols
-  // (form rows only) rather than ui.totalWidth (which the server computes
-  // including grid contributions and is therefore inflated).
-  //
-  // Each formCol is one server grid column (~charWidth * gridSize px on
-  // the legacy HTML layout — typically 24–30px). Using a multiplier in
-  // that range keeps form fields at the width their controls expect.
-  const formWidth = formCols ? formCols * 24 : (ui.totalWidth || 0);
-  const tableWidth = formWidth;
+  // Ruler columns. Use formCols (form rows only) not ui.totalCols — grids render
+  // outside the table and don't constrain the ruler.
+  const totalCols = formCols || ui.totalCols || 0;
+
+  // Width the table has to live in, tracked so the ruler follows window resize,
+  // browser zoom and sidebar drags.
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const [hostWidth, setHostWidth] = React.useState(0);
+  const hasBottomPanel = bottomRows.length > 0;
+  React.useEffect(() => {
+    const host = tableRef.current?.parentElement;
+    if (!host || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setHostWidth(host.clientWidth));
+    ro.observe(host);
+    setHostWidth(host.clientWidth);
+    return () => ro.disconnect();
+  }, [hasBottomPanel]);
+
+  // The label band is the run of leading columns every prompt cell shares. Its
+  // width is a property of the LONGEST LABEL, not of the server's column count:
+  // billed at the uniform 24px/column it came out ~240px wide against ~180px of
+  // actual text, and since prompts are right-aligned all that slack piled up on
+  // the left as dead space while the fields it pushed rightwards ran off the
+  // edge of the screen (SXADV-5742.1).
+  const promptBandCols = React.useMemo(() => {
+    let n = 0;
+    for (const row of ui.rows) {
+      const first = row.cells[0];
+      if (first && first.elementType === ELTYPE_PROMPT) n = Math.max(n, first.colspan || 1);
+    }
+    return n;
+  }, [ui.rows]);
+
+  // Sized PER COLUMN, not per band: prompt cells don't all span the same number
+  // of columns, so a band merely wide enough for the longest label leaves the
+  // rows with a shorter colspan too narrow and wraps them anyway. What every row
+  // shares is the column, so the requirement each label imposes is
+  // (its width / its colspan) and the band is the largest of those, times the
+  // widest prompt colspan in the view.
+  const promptBandWidth = React.useMemo(() => {
+    if (!promptBandCols) return 0;
+    let perCol = 0;
+    for (const row of ui.rows) {
+      const first = row.cells[0];
+      if (!first || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
+      const span = first.colspan || 1;
+      perCol = Math.max(perCol, (measurePromptWidth(first.prompt) + PROMPT_CELL_PADDING) / span);
+    }
+    return perCol ? Math.ceil(perCol * promptBandCols) : 0;
+  }, [ui.rows, promptBandCols]);
+
+  // What's left of the visible width goes to the content columns, in the
+  // proportions the server declared (colspans), so the form fills the editing
+  // area instead of overflowing it. MIN_CONTENT_COL is the floor: past it the
+  // table stops shrinking and the horizontal scrollbar appears, which is the
+  // wanted behaviour at high zoom / low resolution rather than squeezing every
+  // field into illegibility.
+  const contentCols = totalCols - promptBandCols;
+  const fitRuler = hostWidth > 0 && promptBandWidth > 0 && contentCols > 0;
+  const contentColWidth = fitRuler
+    ? Math.max(MIN_CONTENT_COL, (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols)
+    : DEFAULT_COL_WIDTH;
+
+  // Fallback (no measurement yet, or a table with no prompt band): the previous
+  // uniform grid. Each formCol is one server grid column, ~charWidth * gridSize
+  // px on the legacy HTML layout — typically 24–30px.
+  const uniformWidth = formCols ? formCols * DEFAULT_COL_WIDTH : (ui.totalWidth || 0);
+  const tableWidth = fitRuler
+    ? Math.round(promptBandWidth + contentCols * contentColWidth)
+    : uniformWidth;
   const tableStyle: React.CSSProperties = embedded
     ? { width: '100%' }
     : { minWidth: tableWidth || '100%' };
 
-  // Ruler row: hidden row defining the grid columns with fixed widths,
-  // so colspans in subsequent rows distribute space correctly (mirrors
-  // old HTML ruler). Use formCols (form rows only) not ui.totalCols —
-  // grids render outside the table and don't constrain the ruler.
-  const totalCols = formCols || ui.totalCols || 0;
-  const colWidth = totalCols && tableWidth ? tableWidth / totalCols : 0;
-  const rulerRow = totalCols > 0 && colWidth > 0 ? (
+  const rulerRow = totalCols > 0 && tableWidth > 0 ? (
     <tr style={{ height: 0, lineHeight: 0, fontSize: 0 }}>
       {Array.from({ length: totalCols }, (_, i) => (
-        <td key={i} style={{ width: colWidth, padding: 0, border: 'none', height: 0 }} />
+        <td
+          key={i}
+          style={{
+            width: fitRuler
+              ? (i < promptBandCols ? promptBandWidth / promptBandCols : contentColWidth)
+              : tableWidth / totalCols,
+            padding: 0,
+            border: 'none',
+            height: 0,
+          }}
+        />
       ))}
     </tr>
   ) : null;
@@ -726,7 +838,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
+        {ui.title && !hasOlapCube && !titleInBreadcrumb && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
             {actionBarRows.map((row, ri) => (
@@ -743,7 +855,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
               onMouseLeave={edgeScroll.onMouseLeave}
               style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
             >
-              <table className="layout-table" style={tableStyle}>
+              <table ref={tableRef} className="layout-table" style={tableStyle}>
                 <tbody>
                   {rulerRow}
                   {formRows.map((row, ri) => (
@@ -833,9 +945,9 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
-      {ui.title && !hasOlapCube && <div className="view-title">{ui.title}</div>}
+      {ui.title && !hasOlapCube && !titleInBreadcrumb && <div className="view-title">{ui.title}</div>}
       <div {...bodyProps}>
-        <table className="layout-table" style={tableStyle}>
+        <table ref={tableRef} className="layout-table" style={tableStyle}>
           <tbody>
             {rulerRow}
             {ui.rows.map((row, ri) => (

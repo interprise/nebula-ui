@@ -7,7 +7,7 @@ import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined } from 
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
-import { SidContext } from './ViewRenderer';
+import { SidContext, TitleInBreadcrumbContext } from './ViewRenderer';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -131,9 +131,43 @@ function headerLabelMinWidth(text: string): number {
   return Math.ceil(headerMeasureCtx.measureText(text).width) + HEADER_LABEL_PAD + HEADER_LABEL_SLACK;
 }
 
+/* Grid vertical density (SXADV-5742) --------------------------------------
+ * A record that wraps costs main row + one continuation row, so every pixel
+ * here is paid TWICE per record — which is why lists of wrapped records felt
+ * so much emptier than the legacy ones. Kept as named constants because the
+ * three heights have to agree: the continuation renderer and getRowHeight set
+ * their own heights outside AG Grid's theme.
+ *
+ * 19px at 12px/16px text is the floor before descenders start touching the row
+ * border; the AG Grid theme param alone doesn't get there, because AG Grid's own
+ * stylesheet sizes `.ag-cell` at 14px regardless of --ag-font-size (see the
+ * `.ag-cell` rule in global.css). */
+// Main rows: AG Grid floors normal (non-full-width) rows at 22px here. Measured
+// — the theme param, the `rowHeight` grid option and a `getRowHeight` returning
+// 19 all get clamped back up to 22, so 22 is what this is worth asking for.
+// Full-width rows are NOT clamped, which is why the continuation row (the one a
+// wrapped record pays a second time) is where the height was actually won.
+const GRID_ROW_HEIGHT = 22;
+const GRID_CONTINUATION_ROW_HEIGHT = 18;
+/** Continuation rows holding an interactive control need to fit it — at 18px an
+ *  antd small Select (24px) bled over the row below, and on lists where EVERY
+ *  record carries such a control (Fatture: the "Stampa" selector) that row is
+ *  the whole record's height. The `.ag-full-width-row` rules in global.css take
+ *  those controls down to 18px so 20 is enough. */
+const GRID_CONTINUATION_CONTROL_ROW_HEIGHT = 20;
+const GRID_HEADER_HEIGHT = 28;
+
+/* Adaptive page size (SXADV-5742). Bounds mirror SetPageSizeCommand's, which is
+ * the authority — these only keep the client from asking for something the
+ * server would clamp anyway. */
+const MIN_ADAPTIVE_PAGE_SIZE = 20;   // ToolView.STD_PAGE_SIZE
+const MAX_ADAPTIVE_PAGE_SIZE = 100;  // server caps at 200; stay well under it
+/** Rows of difference below which a resize isn't worth a round-trip. */
+const ADAPTIVE_PAGE_SIZE_HYSTERESIS = 3;
+
 const gridTheme = themeAlpine.withParams({
-  rowHeight: 22,
-  headerHeight: 36,
+  rowHeight: GRID_ROW_HEIGHT,
+  headerHeight: GRID_HEADER_HEIGHT,
   fontSize: 12,
   cellHorizontalPadding: 4,
 });
@@ -420,7 +454,7 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
 
   if (widths && totalWidth != null) {
     return (
-      <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: '22px', fontSize: 12, paddingLeft: selectorPad }}>
+      <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: `${GRID_CONTINUATION_ROW_HEIGHT}px`, fontSize: 12, paddingLeft: selectorPad }}>
         <div style={{
           display: 'flex',
           width: totalWidth,
@@ -486,6 +520,11 @@ interface ListRendererProps {
 }
 
 const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, onSelectRecord, onRecordPaths, embedded, fillContainer, panelShown }) => {
+  // The page title is already the closing breadcrumb, so a page-level list must
+  // not repeat it as a heading (SXADV-5742). Embedded grids keep their title —
+  // it names the section, not the page. The subtitle (applied filters, 5484) is
+  // unaffected: it says something the breadcrumb doesn't.
+  const titleInBreadcrumb = useContext(TitleInBreadcrumbContext) && !embedded;
   const sid = useContext(SidContext);
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
@@ -1332,6 +1371,93 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
   }, []);
 
+  /* Adaptive page size (SXADV-5742) ---------------------------------------
+   * The server can't know how many rows fit: that depends on the window size,
+   * the browser zoom and — once a record can be shown wrapped or flat — on the
+   * row density the user picked. The client is the only party that knows, so it
+   * measures and tells the server (SetPageSizeCommand); the page size lives in
+   * the ViewState, so the choice is per session.
+   *
+   * Without this the page size is a fixed 20 and the mismatch is visible today:
+   * on a 1265px-tall window 22 wrapped records fit and 20 are loaded, so every
+   * list ends in a band of empty grid. */
+  const requestedPageSizeRef = useRef<number | null>(null);
+
+  /** Vertical pitch of one RECORD — main row plus its continuation rows. Measured
+   *  from the rendered rows rather than computed from the height constants, so it
+   *  stays right whatever a given view's records are made of. */
+  const measureRecordPitch = useCallback((): number | null => {
+    const host = gridContainerRef.current;
+    if (!host) return null;
+    const tops = Array.from(host.querySelectorAll('.ag-center-cols-container .ag-row'))
+      .map(r => (r as HTMLElement).getBoundingClientRect().top)
+      .sort((a, b) => a - b);
+    // Smallest positive gap between consecutive main rows: the pitch is uniform,
+    // and taking the minimum is immune to a row being absent from the DOM
+    // (AG Grid virtualises) or to DOM order not matching visual order.
+    let pitch = Infinity;
+    for (let i = 1; i < tops.length; i++) {
+      const d = tops[i] - tops[i - 1];
+      if (d > 0 && d < pitch) pitch = d;
+    }
+    if (pitch !== Infinity) return pitch;
+    // Fewer than two rows on screen — fall back to the configured heights.
+    const bands = ui.continuationHeaders?.length ?? 0;
+    return GRID_ROW_HEIGHT + bands * GRID_CONTINUATION_ROW_HEIGHT;
+  }, [ui.continuationHeaders]);
+
+  useEffect(() => {
+    // Top-level, server-paged lists only. Embedded grids size to their content
+    // and are paged by DetailPageCommand against a different view state.
+    if (embedded) return;
+    // Server-advertised: absent both on views that declare their own pageSize and
+    // on a server that predates SetPageSizeCommand, so the client never calls an
+    // action that isn't there. Read from BOTH carriers: a FULL render (opening
+    // the list) puts its paging numbers in the list header and emits no `paging`
+    // object, which is exactly when this has to work.
+    if (!(ui.paging?.adaptivePageSize ?? ui.header?.adaptivePageSize)) return;
+    const currentPageSize = ui.paging?.pageSize ?? ui.header?.pageSize;
+    if (!currentPageSize) return;
+
+    let timer: number | undefined;
+    const measure = () => {
+      const viewport = getGridViewport();
+      if (!viewport) return;
+      const avail = viewport.clientHeight;
+      const pitch = measureRecordPitch();
+      if (!pitch || avail < pitch) return;
+      const fits = Math.floor(avail / pitch);
+      const want = Math.max(MIN_ADAPTIVE_PAGE_SIZE, Math.min(MAX_ADAPTIVE_PAGE_SIZE, fits));
+      if (want === currentPageSize) return;
+      // The server clamps and may refuse (a view that declares its own pageSize),
+      // in which case the response comes back with the old size — remembering what
+      // we asked for stops us asking again on every resize.
+      const lastAsked = requestedPageSizeRef.current;
+      if (want === lastAsked) return;
+      // Hysteresis applies to RESIZES, not to the first fit: the gap between the
+      // fixed default and what fits is usually small (20 vs the 22 that fit on a
+      // 1265px window) and that gap is the whole point — measuring it against a
+      // threshold meant for damping a window drag would silently do nothing.
+      // Once we've adapted, a couple of rows is no longer worth a round-trip and
+      // a renumbered pager.
+      if (lastAsked !== null && Math.abs(want - lastAsked) < ADAPTIVE_PAGE_SIZE_HYSTERESIS) return;
+      requestedPageSizeRef.current = want;
+      onAction('SetPageSize', { option1: String(want) });
+    };
+
+    timer = window.setTimeout(measure, 200);
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(measure, 400);
+    });
+    const host = gridContainerRef.current;
+    if (host) ro.observe(host);
+    return () => {
+      window.clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, [embedded, ui.paging?.adaptivePageSize, ui.paging?.pageSize, ui.header?.adaptivePageSize, ui.header?.pageSize, getGridViewport, measureRecordPitch, onAction]);
+
   /** Apply a CSS class to all rows sharing the same _selectorPath */
   const applyClassByPath = useCallback((path: string | null, cls: string) => {
     const api = gridApiRef.current;
@@ -1462,7 +1588,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   const getRowHeight = (params: { data?: Record<string, unknown> }): number | undefined => {
     if (params.data?._isContinuationRow) {
-      const cells = params.data._continuationCells as Array<{ html?: string; text?: string }> | undefined;
+      const cells = params.data._continuationCells as Array<{ html?: string; text?: string; control?: UIControl }> | undefined;
       if (cells?.some(c => c.html && /<br\s*\/?>/i.test(c.html))) {
         let maxBreaks = 0;
         for (const c of cells) {
@@ -1471,8 +1597,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             if (breaks > maxBreaks) maxBreaks = breaks;
           }
         }
-        return Math.max(22, (maxBreaks + 1) * 22);
+        return (maxBreaks + 1) * GRID_CONTINUATION_ROW_HEIGHT;
       }
+      // An interactive control is taller than a line of text and would otherwise
+      // bleed over the row below (it already overlapped by 2px at the old 22px).
+      if (cells?.some(c => c.control && c.control.type && isCellRenderable(c.control.type))) {
+        return GRID_CONTINUATION_CONTROL_ROW_HEIGHT;
+      }
+      // Otherwise: one line of 12px text. This is the row a wrapped record pays
+      // a second time for, so it is where the density is worth buying.
+      return GRID_CONTINUATION_ROW_HEIGHT;
     }
     return undefined;
   };
@@ -1578,9 +1712,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const cell = document.createElement('div');
         const w = widths?.[i];
         if (w != null) {
-          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:3px 4px;overflow:hidden;text-overflow:ellipsis;`;
+          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:1px 4px;overflow:hidden;text-overflow:ellipsis;`;
         } else {
-          cell.style.cssText = `flex:${hdr.colspan || 1};padding:3px 4px;`;
+          cell.style.cssText = `flex:${hdr.colspan || 1};padding:1px 4px;`;
         }
         cell.textContent = hdr.text || '';
         track.appendChild(cell);
@@ -1782,7 +1916,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   return (
     <div className="list-container" style={listContainerStyle}>
-      {meta?.title && <div className="view-title">{meta.title}</div>}
+      {meta?.title && !titleInBreadcrumb && <div className="view-title">{meta.title}</div>}
       {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
 
       {/* Embedded-list action bar, above the grid and styled like the primary
@@ -1901,6 +2035,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={fullWidthCellRenderer}
           getRowClass={getRowClass}
+          rowHeight={GRID_ROW_HEIGHT}
           getRowHeight={getRowHeight}
           suppressRowClickSelection
           suppressCellFocus={!isMultiEdit && !isListEdit}

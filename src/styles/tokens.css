@@ -50,6 +50,27 @@
    * read-only values as plain dark text (SXADV-5543). Matches the #333 the
    * disabled input/select/picker rules already used. */
   --app-text-readonly: #333;
+
+  /* --- Vertical density (SXADV-5742) -------------------------------------
+   * Every horizontal band stacked above the editing area — header, session
+   * tabs, breadcrumb, toolbar, view title — used to carry its own hardcoded
+   * padding, and together they ate ~255px before the first field (a quarter
+   * of a 1080p screen at 100%), against a far tighter legacy chrome.
+   *
+   * The bands now derive their spacing from this one scale, so "how much air
+   * does the app breathe" is a single decision instead of a dozen scattered
+   * literals. Keep new chrome spacing on these tokens rather than adding
+   * fresh literals — that is the whole point of the layer. */
+  --app-chrome-gap-xs: 2px;    /* between tightly-coupled bands            */
+  --app-chrome-gap-sm: 4px;    /* default separation inside the chrome     */
+  --app-chrome-pad-x: 12px;    /* horizontal breathing room of the content */
+  --app-chrome-band-pad-y: 3px;/* vertical padding of a single chrome band */
+
+  /* Header: the logo drives the height, so the two move together. 40px keeps
+   * both the Pandora mark and the taller Nebula logo legible while the band
+   * itself costs 56px instead of 80px. */
+  --app-header-h: 56px;
+  --app-header-logo-h: 40px;
 }
 
 /* -----------------------------------------------------------------------------

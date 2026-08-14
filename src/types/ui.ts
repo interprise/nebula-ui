@@ -173,6 +173,10 @@ export interface ListMeta {
   recordCount?: number;
   position?: number;
   pageSize?: number;
+  /** See `paging.adaptivePageSize`. Emitted here too because a FULL render — the
+   *  one that opens the list — carries its paging numbers in this header and has
+   *  no `paging` object at all (SXADV-5742). */
+  adaptivePageSize?: boolean;
   addCommand?: string;
   addLabel?: string;
 }
@@ -282,6 +286,11 @@ export interface UITree {
     totalRows: number;
     position: number;
     pageSize: number;
+    /** The server allows this list's page size to follow the number of rows that
+     *  fit on screen (SXADV-5742). Absent on views that declare their own
+     *  pageSize — and on any server older than the SetPageSize command, which is
+     *  what keeps the client from calling an action that isn't there. */
+    adaptivePageSize?: boolean;
   };
 }
 

@@ -80,9 +80,17 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
   const actionPath = control.path as string;
   const bpmSteps = control.bpm as BpmStep[] | undefined;
   if (!actions?.length && !wfState && !bpmSteps?.length) return null;
-  // Pill stays on the left, vertically centered, and never wraps. Buttons
-  // are in their own flex-wrap group so when they overflow they wrap
-  // aligned after the pill (not under it).
+  // Pill stays on the left, vertically centered, and never wraps. Actions are
+  // in their own flex-wrap group so when they overflow they wrap aligned after
+  // the pill (not under it).
+  //
+  // Vertical density (SXADV-5742): full `default` buttons cost ~24px + an 8px
+  // gap per row, so a workflow with three rows of actions burned ~90px of the
+  // editing area against ~55px for the same three rows of legacy links. Only
+  // the highlighted action — the one the workflow is steering the user towards
+  // — keeps a filled button; the rest render as links, which is both what the
+  // legacy UI did and roughly half the height. The `action-link` / `action-btn`
+  // classes carry the compaction (see global.css) so a row wraps to ~20px.
   const hasWorkflowRow = !!wfState || !!actions?.length;
   return (
     <div className="action-bar-wrap">
@@ -94,12 +102,13 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
             </div>
           )}
           {actions?.length ? (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', columnGap: 6, rowGap: 2, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
               {actions.map((act) => (
                 <Button
                   key={act.index}
                   size="small"
-                  type={act.highlight ? 'primary' : 'default'}
+                  className={act.highlight ? 'action-btn' : 'action-link'}
+                  type={act.highlight ? 'primary' : 'link'}
                   title={act.hint}
                   onClick={() => onAction('workflow.Action', { navpath: actionPath, option1: String(act.index) })}
                 >

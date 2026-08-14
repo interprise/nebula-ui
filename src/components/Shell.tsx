@@ -57,7 +57,7 @@ import type {
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, TitleInBreadcrumbContext } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1210,6 +1210,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     return items;
   }, [breadcrumbs]);
 
+  // The view's own title closes the breadcrumb trail instead of occupying a
+  // heading row of its own (SXADV-5742): the trail already names where the user
+  // is ("Fatture - Interrogazione › Fatture - Nuovo Record"), so the separate
+  // `.view-title` line under the toolbar was saying it twice and costing a full
+  // row of the editing area. Only when a trail exists — a top-level view has no
+  // crumbs and keeps its own title, which is then the only thing naming it.
+  const titleIsLastCrumb = parsedBreadcrumbs.length > 0
+    && !!currentTab?.ui?.title
+    && !viewHasOlapCube(currentTab?.ui);
+
   // Copyright line: shown only when the view leaves room for it at the foot of
   // the tab. It is positioned out of flow (see .view-copyright), so it never
   // shortens the view — a grid sized to fill the tab keeps the full height and
@@ -1376,10 +1386,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             style={{ left: APPBAR_WIDTH + siderWidth - 3 }}
           />
         )}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', gap: 8, height: 80, boxSizing: 'border-box', padding: collapsed ? '0' : '0 12px', background: loginInfo.bkColor || '#1E4176' }}>
-          {!collapsed && (
-            <img src="/entrasp/images/logos/logo_dx.png" alt="Sixtema" style={{ maxHeight: 66, maxWidth: '88%', minWidth: 0, objectFit: 'contain' }} />
-          )}
+        {/* The sidebar's coloured band must stay exactly as tall as the main
+            header — they read as one continuous strip across the top of the app,
+            and any difference shows up as a step at the sidebar edge. Both derive
+            from --app-header-h (SXADV-5742). */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end', gap: 8, height: 'var(--app-header-h)', boxSizing: 'border-box', padding: collapsed ? '0' : '0 8px', background: loginInfo.bkColor || '#1E4176' }}>
           <Tooltip title={collapsed ? 'Espandi menu' : 'Comprimi menu'} placement="right">
             <Button
               type="text"
@@ -1390,6 +1401,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             />
           </Tooltip>
         </div>
+        {/* Vendor mark, on white rather than on the coloured band. logo_dx is a
+            dark-navy wordmark on transparency: over the brand background it had
+            almost no contrast, and shrinking the band to header height (5742)
+            made it unreadable. Below the band it sits on white at a legible size
+            and costs the editing area nothing — the sidebar is not where the
+            vertical budget is tight. */}
+        {!collapsed && (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 12px 6px' }}>
+            {/* The asset is 386×128 with generous transparent margins, so the
+                wordmark itself is much smaller than the box — it needs a
+                generous height to read at all. */}
+            <img src="/entrasp/images/logos/logo_dx.png" alt="Sixtema" style={{ maxHeight: 58, maxWidth: '85%', minWidth: 0, objectFit: 'contain' }} />
+          </div>
+        )}
         {sidebarMode === 'menu' ? (
           <>
             {!collapsed && (
@@ -1438,8 +1463,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 16,
-            height: 80,
-            minHeight: 80,
+            // Vertical density (SXADV-5742): the header is the single largest
+            // fixed band above the editing area. Height and logo size come from
+            // the chrome scale in tokens.css so the whole band can be retuned in
+            // one place instead of here and in the <img> below.
+            height: 'var(--app-header-h)',
+            minHeight: 'var(--app-header-h)',
             lineHeight: 'normal',
           }}
         >
@@ -1452,7 +1481,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             <img
               src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
               alt={loginInfo.brand || 'Pandora'}
-              style={{ height: 64, objectFit: 'contain', flexShrink: 0 }}
+              style={{ height: 'var(--app-header-logo-h)', objectFit: 'contain', flexShrink: 0 }}
             />
             {loginInfo.dbVersion && (
               <Text style={{ color: '#fff', whiteSpace: 'nowrap', opacity: 0.9, fontSize: 12 }}>Rel. {loginInfo.dbVersion}</Text>
@@ -1519,7 +1548,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               <img
                 src={`/entrasp/${loginInfo.logoaz}`}
                 alt="Azienda"
-                style={{ height: 48, maxWidth: 160, objectFit: 'contain' }}
+                style={{ height: 'var(--app-header-logo-h)', maxWidth: 160, objectFit: 'contain' }}
                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
               />
             )}
@@ -1549,9 +1578,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           </div>
         </Header>
 
-        <Content style={{ padding: '8px 16px', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+        <Content style={{ padding: 'var(--app-chrome-gap-sm) var(--app-chrome-pad-x)', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+          {/* Session tabs. `size="small"` + the .session-tabs rules trim the card
+              tabs to roughly the legacy tab-link height (SXADV-5742.2), and
+              tabBarStyle kills antd's 16px nav margin, which was the entire gap
+              between the tab strip and the editing area (SXADV-5742.3). */}
           <Tabs
+            className="session-tabs"
             type="editable-card"
+            size="small"
+            tabBarStyle={{ margin: 0 }}
             activeKey={activeTab}
             onChange={handleTabChange}
             onEdit={handleTabEdit}
@@ -1576,12 +1612,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                   <>
                     {/* marginBottom keeps the breadcrumb ("« Ritorno un passo indietro")
                         clear of the action toolbar below it, so a slightly-off click
-                        doesn't land on a button (SXADV-5685.2). */}
+                        doesn't land on a button (SXADV-5685.2) — kept, but on the
+                        chrome scale: the band's own padding carries most of the
+                        separation, so the margin no longer has to be 8px on top of
+                        it (SXADV-5742). */}
                     {(parsedBreadcrumbs.length > 0 || currentTab.ui?.attachmentsInfo) && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px', marginBottom: 'var(--app-chrome-gap-sm)' }}>
                         {parsedBreadcrumbs.length > 0 ? (
                           <Breadcrumb
-                            style={{ padding: '6px 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
+                            style={{ padding: 'var(--app-chrome-band-pad-y) 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
                             items={parsedBreadcrumbs.map((b, i) => ({
                               title: b.action ? (
                                 <a
@@ -1610,7 +1649,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                                   style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
                                 >{b.title}</span>
                               ),
-                            }))}
+                            })).concat(titleIsLastCrumb ? [{
+                              // Closing crumb: where the user IS. Not a link and
+                              // weighted like a heading, since it replaces the
+                              // view's own title row (SXADV-5742).
+                              title: (
+                                <span
+                                  className="breadcrumb-current"
+                                  title={currentTab.ui!.title}
+                                >{currentTab.ui!.title}</span>
+                              ),
+                            }] : [])}
                           />
                         ) : <span style={{ flex: 1 }} />}
                         {currentTab.ui?.attachmentsInfo && (
@@ -1629,13 +1678,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
                       <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
-                        <ViewRenderer
-                          ui={currentTab.ui}
-                          onAction={handleAction}
-                          onChange={handleFieldChange}
-                          onGridChange={handleGridChange}
-                          onEditRow={handleEditRow}
-                        />
+                        <TitleInBreadcrumbContext.Provider value={titleIsLastCrumb}>
+                          <ViewRenderer
+                            ui={currentTab.ui}
+                            onAction={handleAction}
+                            onChange={handleFieldChange}
+                            onGridChange={handleGridChange}
+                            onEditRow={handleEditRow}
+                          />
+                        </TitleInBreadcrumbContext.Provider>
                       </DataVersionContext.Provider>
                     </EditRowContext.Provider>
                   </>

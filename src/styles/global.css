@@ -315,11 +315,11 @@ html, body {
 }
 
 .view-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  padding: 6px 0;
+  padding: var(--app-chrome-band-pad-y) 0;
   border-bottom: 1px solid #e8e8e8;
-  margin-bottom: 4px;
+  margin-bottom: var(--app-chrome-gap-xs);
 }
 
 /* Applied-filter description under the list title (SXADV-5484), mirroring the
@@ -422,11 +422,13 @@ html, body {
   flex-direction: column;
 }
 
-/* Toolbar */
+/* Toolbar. The rule below already carries a bottom border, which separates it
+   from the form on its own — the extra padding+margin around it was doubling
+   that separation in pixels (SXADV-5742). */
 .toolbar {
-  padding: 4px 0;
+  padding: var(--app-chrome-band-pad-y) 0;
   border-bottom: 1px solid #e8e8e8;
-  margin-bottom: 4px;
+  margin-bottom: var(--app-chrome-gap-xs);
 }
 
 /* List container */
@@ -444,6 +446,35 @@ html, body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* Session tabs — the "Sessione 1 / 2 / 3" strip between the header and the
+   editing area (SXADV-5742.2 / .3).
+
+   Two antd defaults were paying for themselves in vertical pixels here:
+   full-size card tabs (~40px against the ~20px of a legacy tab link), and the
+   16px `.ant-tabs-nav` bottom margin, which WAS the whole visible gap between
+   the grey session strip and the white editing area. `size="small"` +
+   `tabBarStyle={{margin:0}}` on the component handle both; these rules take the
+   card padding down the rest of the way, since antd's small card padding is
+   still tuned for a page-level tab strip rather than a persistent chrome band. */
+.session-tabs .ant-tabs-nav {
+  margin: 0;
+}
+.session-tabs .ant-tabs-tab {
+  padding: 2px 10px !important;
+  font-size: 13px;
+  line-height: 18px;
+}
+.session-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 2px;
+}
+/* The "+" (new session) affordance is sized off the tab height; without this it
+   keeps its default box and re-inflates the strip it sits in. */
+.session-tabs .ant-tabs-nav-add {
+  padding: 0 8px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
 }
 
 /* Tab content area */
@@ -610,13 +641,45 @@ html, body {
 .action-bar-sticky {
   flex-shrink: 0;
   background: #f0f2f5;
-  padding: 4px;
+  padding: var(--app-chrome-gap-xs) var(--app-chrome-gap-sm);
   border-bottom: 1px solid #d9d9d9;
 }
 
 /* Action/button bar */
 .action-bar, .button-bar {
   padding: 2px 0;
+}
+
+/* Workflow actions rendered as links (SXADV-5742): antd sizes every button —
+   link ones included — off controlHeightSM (24px), which is taller than the
+   text it contains. These sit in a bar that can wrap to three rows, so the
+   surplus is multiplied; pinning them to the text's own line box is where the
+   vertical saving actually comes from. The highlighted action keeps its filled
+   background but the same height, so the row reads as one band. */
+.action-bar .ant-btn.action-link,
+.action-bar .ant-btn.action-btn {
+  height: 20px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.action-bar .ant-btn.action-link {
+  padding: 0 2px;
+}
+.action-bar .ant-btn.action-btn {
+  padding: 0 8px;
+}
+/* Links in a wrapping row need a visible boundary between adjacent labels;
+   underline-on-hover alone doesn't tell you where one action ends. */
+.action-bar .ant-btn.action-link::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 3px;
+  bottom: 3px;
+  border-right: 1px solid var(--app-border);
+}
+.action-bar .ant-btn.action-link:last-child::after {
+  border-right: none;
 }
 
 /* BPM bar — open process steps for the current object. Sits below the
@@ -726,7 +789,11 @@ tr.breakRow td {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 72px 0 8px;
+  /* Top padding clears the header/sidebar-logo strip the bar runs alongside;
+     derived from --app-header-h so the three stay aligned when the chrome
+     density is retuned (SXADV-5742) — it used to be a bare 72px matched by eye
+     to the old 80px header. */
+  padding: calc(var(--app-header-h) + 8px) 0 8px;
   gap: 2px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -813,10 +880,44 @@ tr.breakRow td {
   background: #eaeef5;
 }
 
+/* Controls inside a continuation row (SXADV-5742). antd's "small" Select/Button
+   is 24px — taller than the line of text the row exists to show, and on lists
+   where every record carries one (Fatture: the "Stampa" selector) that single
+   control sets the height of half of every record. Taken to 18px so the row can
+   be 20px; these are read-mostly grid rows, not a form. */
+.ag-full-width-row .ant-select-sm,
+.ag-full-width-row .ant-select-sm .ant-select-selector {
+  height: 18px !important;
+  min-height: 18px !important;
+  font-size: 11px !important;
+}
+.ag-full-width-row .ant-select-sm .ant-select-selection-item,
+.ag-full-width-row .ant-select-sm .ant-select-selection-placeholder {
+  line-height: 16px !important;
+}
+.ag-full-width-row .ant-btn-sm {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+/* Grid cell text (SXADV-5742). AG Grid's own stylesheet sizes `.ag-cell` at
+   14px/17px whatever `--ag-font-size` says, so the theme param alone can't buy
+   the row height back: at 19px rows the 17px line box leaves no room for
+   descenders. 12px/16px matches the header and the continuation rows, so a
+   wrapped record reads as one block instead of two differently-sized ones. */
+.ag-cell {
+  font-size: 12px;
+  line-height: 16px;
+}
+
 /* AG Grid sizing */
 .ag-theme-alpine {
+  /* 22px is AG Grid's floor for normal rows, not a preference — see
+     GRID_ROW_HEIGHT in ListRenderer.tsx. Kept in step with it so the two don't
+     tell different stories. */
   --ag-row-height: 22px;
-  --ag-header-height: 36px;
+  --ag-header-height: 28px;
   --ag-font-size: 12px;
   --ag-cell-horizontal-padding: 4px;
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -912,6 +1013,20 @@ tr.breakRow td {
 
 /* Breadcrumb links: make clickable steps (incl. the "« back one step" link)
    read clearly as actions rather than greyed inactive text (item 5455.0). */
+/* Closing crumb — the current view's own title, folded into the trail so it no
+   longer needs a heading row of its own (SXADV-5742). Carries the weight the
+   `.view-title` had, so the trail still reads as "path › YOU ARE HERE". */
+.breadcrumb-current {
+  font-weight: 600;
+  color: #1f1f1f;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
 .breadcrumb-link,
 .breadcrumb-back-link {
   color: #1677ff !important;
