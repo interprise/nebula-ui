@@ -93,6 +93,13 @@ export interface UICell {
   // lookups use the scope-prefixed key and control.name is composed from
   // the per-tab binding manifest.
   scope?: string;
+  // Binding key emitted by embedded views, sibling to `scope`. Keys the
+  // per-tab `bindings` / `scopePaths` manifests. Kept separate because the
+  // data scope is NOT unique per embedded view — a content="this" embedding
+  // adds nothing to it, and sibling embeddings on the same relationship
+  // repeat it — so using `scope` picked up another viewstate's id and every
+  // edit inside such a block was dropped on Save (SXADV-5800).
+  bind?: string;
 }
 
 /** Instant edit-panel per-record data: the panel form rendered in DATA mode

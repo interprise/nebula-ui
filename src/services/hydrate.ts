@@ -9,8 +9,17 @@ import type { UITree, UIRow, UICell, UIControl } from '../types/ui';
  *   - placeholders like `"?iN"` replaced with `dynProps[iN]`
  *   - `value` overlaid from `values[scope.controlName]`
  *   - `name` composed to the wire form `controlName.viewstateId` using
- *     the current scope's binding, so downstream form-post code keys
+ *     the current BIND key's binding, so downstream form-post code keys
  *     form data exactly as the server's PostItemVisitor expects.
+ *
+ * Scope and bind key are tracked separately. `scope` is the DATA path and
+ * namespaces value lookups; it is deliberately not unique per embedded view
+ * (a content="this" embedding adds nothing to it, and sibling embeddings on
+ * one relationship repeat it). `bind` identifies the embedded VIEW and is
+ * what the bindings/scopePaths manifests are keyed by — using `scope` there
+ * handed those blocks another viewstate's id, so the server never found
+ * their parameters and Save reported "Nessuna modifica da salvare"
+ * (SXADV-5800).
  * The output tree has the same shape as a legacy FULL-mode `ui` tree, so
  * ViewRenderer / ControlRenderer consume it unchanged.
  */
@@ -48,6 +57,7 @@ function hydrateControl(
   bindings: Bindings,
   scopePaths: ScopePaths,
   scope: string,
+  bindScope: string,
 ): UIControl {
   const src = control as unknown as Record<string, unknown>;
   let out: Record<string, unknown> | null = null;
@@ -64,7 +74,7 @@ function hydrateControl(
   // Inject navpath into nav/add descriptors + reload-on-change info from
   // the per-tab scopePaths manifest. The server emits these structurally
   // (navpath-free) so templates stay cross-tab cacheable.
-  const navpath = scopePaths[scope];
+  const navpath = scopePaths[bindScope];
   if (navpath) {
     const srcNav = src.navigateView as Record<string, unknown> | undefined;
     if (srcNav && !srcNav.navpath) {
@@ -124,7 +134,7 @@ function hydrateControl(
     // names" contract. Appending unconditionally then doubled the suffix
     // (valuta.S1-26.S1-26), corrupting form-post keys and lookup option1.
     // Skip when the id is already present.
-    const vsId = bindings[scope];
+    const vsId = bindings[bindScope];
     if (vsId && !bareName.endsWith('.' + vsId)) {
       if (out === null) out = { ...src };
       out.name = bareName + '.' + vsId;
@@ -141,6 +151,7 @@ function hydrateCell(
   bindings: Bindings,
   scopePaths: ScopePaths,
   scope: string,
+  bindScope: string,
 ): UICell {
   let out: UICell | null = null;
 
@@ -152,7 +163,7 @@ function hydrateCell(
   }
 
   if (cell.control) {
-    const hc = hydrateControl(cell.control, values, dynProps, bindings, scopePaths, scope);
+    const hc = hydrateControl(cell.control, values, dynProps, bindings, scopePaths, scope, bindScope);
     if (hc !== cell.control) {
       out = out ?? { ...cell };
       out.control = hc;
@@ -161,7 +172,11 @@ function hydrateCell(
 
   if (cell.rows) {
     const innerScope = cell.scope != null ? cell.scope : scope;
-    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps, bindings, scopePaths, innerScope));
+    // `bind` is emitted by every embedded view, including the ones that carry
+    // no `scope` (content="this"). Fall back to `scope` for templates from a
+    // server that predates the split, then to the inherited key.
+    const innerBind = cell.bind != null ? cell.bind : cell.scope != null ? cell.scope : bindScope;
+    const nested = cell.rows.map((r) => hydrateRow(r, values, dynProps, bindings, scopePaths, innerScope, innerBind));
     if (nested.some((r, i) => r !== cell.rows![i])) {
       out = out ?? { ...cell };
       out.rows = nested;
@@ -178,8 +193,9 @@ function hydrateRow(
   bindings: Bindings,
   scopePaths: ScopePaths,
   scope: string,
+  bindScope: string,
 ): UIRow {
-  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps, bindings, scopePaths, scope));
+  const cells = row.cells.map((c) => hydrateCell(c, values, dynProps, bindings, scopePaths, scope, bindScope));
   if (cells.some((c, i) => c !== row.cells[i])) return { ...row, cells };
   return row;
 }
@@ -189,9 +205,9 @@ function hydrateRow(
  * @param template    sid-free UI tree (cacheable across tabs/sessions).
  * @param values      field values keyed by structural path (scope.name).
  * @param dynProps    evaluated dynamic expression slots (iN).
- * @param bindings    per-tab scope → viewstate-id map for wire-form name
+ * @param bindings    per-tab bind-key → viewstate-id map for wire-form name
  *                    composition. Empty map leaves names bare (cache miss).
- * @param scopePaths  per-tab scope → navpath map. Injects navpath into
+ * @param scopePaths  per-tab bind-key → navpath map. Injects navpath into
  *                    navigateView/navigateAdd descriptors at render time.
  */
 export function hydrate(
@@ -209,7 +225,7 @@ export function hydrate(
       && Object.keys(b).length === 0 && Object.keys(sp).length === 0) {
     return template;
   }
-  const rows = template.rows.map((r) => hydrateRow(r, v, d, b, sp, ''));
+  const rows = template.rows.map((r) => hydrateRow(r, v, d, b, sp, '', ''));
   if (rows.some((r, i) => r !== template.rows[i])) {
     return { ...template, rows };
   }
