@@ -156,6 +156,12 @@ export interface ListRow {
 
 export interface ListHeader {
   text: string;
+  /** `content` del ViewItem — identità della colonna, per riferirla per nome in
+   *  `pinnedCols`. A volte è un'espressione: per quello c'è anche `tag`. */
+  name?: string;
+  /** `tag` del ViewItem, la scorciatoia comoda quando il content è
+   *  un'espressione. `pinnedCols` accetta l'uno o l'altro. */
+  tag?: string;
   sortExpression?: string;
   sortDir?: 'asc' | 'desc';
   sortPosition?: number;
@@ -177,6 +183,12 @@ export interface ListMeta {
    *  one that opens the list — carries its paging numbers in this header and has
    *  no `paging` object at all (SXADV-5742). */
   adaptivePageSize?: boolean;
+  /** Colonne da bloccare a sinistra nella modalità un-record-per-riga. Due
+   *  sintassi: un numero (`pinnedCols="3"`, 0 = nessun blocco) oppure un elenco
+   *  di `content`/`tag` separati da virgola (`pinnedCols="codice,descrizione"`),
+   *  che è l'unico modo di bloccare una colonna che sta in una riga di
+   *  continuazione. Default lato server: 2. */
+  pinnedCols?: number | string;
   addCommand?: string;
   addLabel?: string;
 }
@@ -291,6 +303,9 @@ export interface UITree {
      *  pageSize — and on any server older than the SetPageSize command, which is
      *  what keeps the client from calling an action that isn't there. */
     adaptivePageSize?: boolean;
+    /** Vedi `header.pinnedCols`: ripetuto qui perché i due oggetti vivono su
+     *  percorsi di render diversi. */
+    pinnedCols?: number | string;
   };
 }
 
@@ -303,7 +318,10 @@ export interface ToolbarItem {
   disabled?: boolean;
   pressed?: boolean; // toggle button state
   menu?: ToolbarItem[] | { items: ToolbarItem[] };
-  keys?: string;
+  /** Acceleratore da tastiera. `Toolbar.graphicButton` (CORE) lo emette come
+   *  array JSON di keyCode in stile ExtJS — qui era dichiarato `string`, e il
+   *  tooltip ci finiva dentro il numero grezzo. Vedi `toolbarKeys.ts`. */
+  keys?: number[] | number | string;
   shift?: boolean;
 }
 

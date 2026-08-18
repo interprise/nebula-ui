@@ -45,6 +45,8 @@ import {
   FolderAddOutlined,
   DeleteOutlined,
   ReadOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -73,6 +75,8 @@ import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/te
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
 import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
+import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
+import { useHotkey } from '../hooks/hotkeys';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -375,6 +379,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // CSS-var theme; the static antd imports render invisibly under it. (SXADV-5542)
   const { message, modal } = App.useApp();
   const [collapsed, setCollapsed] = useState(false);
+  // Modalità immersiva: letta anche dalle misure più in basso (la banda del
+  // copyright), quindi dichiarata qui in alto. Gli attuatori stanno più sotto,
+  // accanto agli altri comandi della app bar.
+  const { immersive, setImmersive } = useUiMode();
   // User-adjustable expanded sidebar width (SXADV-5454.0.a) — matches the classic
   // client's draggable navigation column. Clamped to a sane range; ignored while
   // collapsed (fixed 80px). Drag handle lives on the sidebar's right edge.
@@ -1343,13 +1351,98 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       ro?.disconnect();
       window.removeEventListener('resize', measureCopyrightRoom);
     };
-  }, [measureCopyrightRoom, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth]);
+  }, [measureCopyrightRoom, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth, immersive]);
 
   const APPBAR_WIDTH = 48;
   const siderWidth = collapsed ? 80 : sidebarWidth;
 
   // ChangePasswordModal owns the form + inline validation; opened on demand.
   const showChangePasswordDialog = useCallback(() => setChangePasswordOpen(true), []);
+
+  /* Modalità immersiva — vedi docs/planned/20260817_immersive_zoom_hotkeys_spec.md.
+     Nasconde app bar, sidebar, header e strip sessioni: ~86px verticali e ~310
+     orizzontali. La toolbar del record NON sparisce: sta nel content ed è ciò
+     che serve mentre si lavora.
+
+     Ci si accompagna il fullscreen del browser, unico modo di recuperare anche
+     i ~90px della sua chrome. Va chiesto dentro il gesto dell'utente (click o
+     tasto), non da un effect, altrimenti il browser lo rifiuta. */
+  // Il fullscreen si spegne solo se l'abbiamo acceso noi: l'utente può esserci
+  // già arrivato per conto suo, e non è cosa nostra da disfare.
+  const ownsFullscreenRef = useRef(false);
+
+  const enterImmersive = useCallback(() => {
+    setImmersive(true);
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen) {
+      el.requestFullscreen().then(() => { ownsFullscreenRef.current = true; }).catch(() => {});
+    }
+  }, [setImmersive]);
+
+  const exitImmersive = useCallback(() => setImmersive(false), [setImmersive]);
+
+  // L'uscita arriva da tre parti — Esc (registrata dal provider), il pulsante
+  // flottante, F11 — quindi il fullscreen si chiude di conseguenza qui, una
+  // volta sola, invece che su ognuna delle tre.
+  useEffect(() => {
+    if (immersive) return;
+    if (ownsFullscreenRef.current && document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    ownsFullscreenRef.current = false;
+  }, [immersive]);
+
+  // A schermo intero Esc è del browser, non nostro: la pagina non vede il tasto,
+  // e senza questo riallineamento si uscirebbe dal fullscreen restando immersivi
+  // — chrome del browser tornata, header dell'applicazione ancora nascosto.
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement && ownsFullscreenRef.current) {
+        ownsFullscreenRef.current = false;
+        setImmersive(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, [setImmersive]);
+
+  // La modalità non sopravvive alla Shell: al logout si torna alla schermata di
+  // login, che non ha né chrome da nascondere né un modo per uscirne.
+  useEffect(() => () => {
+    setImmersive(false);
+    if (ownsFullscreenRef.current && document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    ownsFullscreenRef.current = false;
+  }, [setImmersive]);
+
+  /* Ambito dello zoom griglia: sessione + vista. Chi zooma i righi lo fa per
+     lavorare su più record — apre il dettaglio di un rigo, torna, apre il
+     successivo — quindi il ritorno deve ritrovare lo schermo com'era. Con lo
+     zoom memorizzato per ambito non c'è niente da azzerare alla navigazione: la
+     vista di dettaglio nuova non ha una voce e si vede intera, al ritorno la
+     griglia si rizooma da sé. Calcolato in render, non in un effect, o la vista
+     nuova si dipingerebbe per un frame con lo zoom di quella vecchia. */
+  const zoomScope = `${activeTab}|${currentTab?.ui?.viewName ?? ''}`;
+
+  /* Tasto della modalità immersiva.
+
+     F11 **deliberatamente non è legata**: il keydown arriva alla pagina e
+     `preventDefault` ferma davvero il fullscreen nativo — verificato — ma è
+     proprio questo il problema, l'applicazione si approprierebbe di una
+     funzione del browser che l'utente si aspetta di trovare dov'è sempre stata.
+     Shift+F11 resta nella stessa famiglia di tasti, non è rivendicata da nessun
+     browser, e lascia F11 al suo mestiere.
+
+     `allowWhileTyping`: è un tasto funzione, non digita niente, e passare a
+     schermo intero mentre si compila un campo è legittimo. Senza, la
+     scorciatoia sembra rotta ogni volta che il fuoco è dentro un input — che
+     durante la compilazione di una testata è la condizione normale. */
+  const toggleImmersive = useCallback(
+    () => (immersive ? exitImmersive() : enterImmersive()),
+    [immersive, exitImmersive, enterImmersive],
+  );
+  useHotkey('Shift+F11', toggleImmersive, { allowWhileTyping: true });
 
   type AppBarButton = {
     key: string;
@@ -1378,6 +1471,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     // Hidden when the credentials live in an external IdP (SSO): there the
     // password is not ours to change.
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: loginInfo.changePassword !== false },
+    // Solo l'ingresso: in immersiva questa barra non c'è più, si esce con Esc o
+    // col pulsante flottante.
+    { key: 'immersive', icon: <FullscreenOutlined />, tooltip: 'Schermo intero (Shift+F11)', onClick: enterImmersive, visible: true },
   ];
 
   const appBarButtons: AppBarButton[] = [
@@ -1431,7 +1527,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           <div style={{ color: '#fff', fontSize: 16, fontWeight: 500 }}>Cambio in corso, attendere…</div>
         </div>
       )}
+      {/* Uscita dalla modalità immersiva: senza header spariscono anche utente,
+          profilo e sede, quindi una via d'uscita deve restare sempre visibile
+          (Esc da sola non si scopre). */}
+      {immersive && (
+        <Tooltip title="Esci da schermo intero (Esc)" placement="left">
+          <Button
+            className="immersive-exit"
+            type="text"
+            icon={<FullscreenExitOutlined />}
+            onClick={exitImmersive}
+            aria-label="Esci da schermo intero"
+          />
+        </Tooltip>
+      )}
       {/* Vertical app bar */}
+      {!immersive && (
       <div className="app-bar">
         {visibleBarButtons
           .map((b) => (
@@ -1455,8 +1566,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             </Tooltip>
           ))}
       </div>
+      )}
 
       {/* Sidebar with menu */}
+      {!immersive && (
       <div
         className="sidebar"
         style={{
@@ -1556,9 +1669,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           </Suspense>
         )}
       </div>
+      )}
 
-      {/* Main content */}
-      <Layout style={{ marginLeft: APPBAR_WIDTH + siderWidth, transition: 'margin-left 0.2s', minWidth: 0, maxWidth: `calc(100vw - ${APPBAR_WIDTH + siderWidth}px)`, height: '100vh', overflow: 'hidden' }}>
+      {/* Main content. In immersiva l'area riprende i margini della chrome
+          nascosta e occupa tutta la finestra. */}
+      <Layout style={{ marginLeft: immersive ? 0 : APPBAR_WIDTH + siderWidth, transition: 'margin-left 0.2s', minWidth: 0, maxWidth: immersive ? '100vw' : `calc(100vw - ${APPBAR_WIDTH + siderWidth}px)`, height: '100vh', overflow: 'hidden' }}>
+        {!immersive && (
         <Header
           style={{
             padding: '0 16px',
@@ -1681,12 +1797,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             </Dropdown>
           </div>
         </Header>
+        )}
 
-        <Content style={{ padding: 'var(--app-chrome-gap-sm) var(--app-chrome-pad-x)', margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+        {/* In immersiva il margine destro fa posto al pulsante di uscita, che è
+            flottante: senza, si sovrappone ai comandi allineati a destra della
+            toolbar e li rende non cliccabili. */}
+        <Content style={{ padding: 'var(--app-chrome-gap-sm) var(--app-chrome-pad-x)', paddingRight: immersive ? 'calc(var(--app-chrome-pad-x) + 30px)' : undefined, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
           {/* Session tabs. `size="small"` + the .session-tabs rules trim the card
               tabs to roughly the legacy tab-link height (SXADV-5742.2), and
               tabBarStyle kills antd's 16px nav margin, which was the entire gap
               between the tab strip and the editing area (SXADV-5742.3). */}
+          {/* Nascosta in immersiva insieme al resto della chrome: si perde il
+              cambio sessione finché si è dentro, ed è il motivo per cui l'uscita
+              deve costare un tasto solo. */}
+          {!immersive && (
           <Tabs
             className="session-tabs"
             type="editable-card"
@@ -1701,7 +1825,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               closable: tabs.length > 1,
             }))}
           />
+          )}
           {currentTab && (
+            <ZoomScopeContext.Provider value={zoomScope}>
             <SidContext.Provider value={currentTab.sid}>
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
@@ -1807,6 +1933,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               </div>
             </FormValuesContext.Provider>
             </SidContext.Provider>
+            </ZoomScopeContext.Provider>
           )}
         </Content>
       </Layout>

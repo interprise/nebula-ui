@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { fixServerHtml } from '../services/serverHtml';
 import { Button, Dropdown, Space, Tooltip, App } from 'antd';
 import {
@@ -35,6 +35,8 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import type { ToolbarItem } from '../types/ui';
+import { comboFromToolbarKeys, comboLabel } from './toolbarKeys';
+import { HotkeyPriority, useHotkeys, type HotkeyBinding } from '../hooks/hotkeys';
 
 const iconMap: Record<string, React.ReactNode> = {
   'control_repeat_blue.png': <ReloadOutlined />,
@@ -252,7 +254,14 @@ function renderToolbarItem(
   }
 
   const iconOnly = !item.text && item.icon;
-  const tooltipText = item.tooltip || (item.keys ? `${item.shift ? 'Shift+' : ''}${item.keys}` : undefined);
+  // Il tasto acceleratore si affianca al tooltip invece di sostituirlo solo
+  // quando manca: è l'unico posto in cui l'utente può scoprirlo, e prima ci
+  // finiva comunque il keyCode grezzo ("120" al posto di "F9").
+  const combo = comboFromToolbarKeys(item.keys, item.shift);
+  const keyHint = combo && !item.disabled ? comboLabel(combo) : undefined;
+  const tooltipText = item.tooltip
+    ? (keyHint ? `${item.tooltip} (${keyHint})` : item.tooltip)
+    : keyHint;
 
   const btn = (
     <Button
@@ -285,6 +294,33 @@ const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) 
   // the static antd import renders invisibly under it. Called before the early
   // return so the hook order stays stable. (SXADV-5542)
   const { modal } = App.useApp();
+
+  /* Acceleratori. I tasti li dichiara il server sui bottoni (`keys` + `shift`),
+     quindi non c'è nessuna scorciatoia inventata qui: si esegue lo stesso
+     handler del click. I bottoni disabilitati non si legano — CORE già omette
+     `keys` quando il bottone è disabilitato, ma il controllo è ripetuto perché
+     un accorciatoia che "non fa niente" è peggio di una che non esiste.
+     Registrato prima del return anticipato per non alterare l'ordine dei hook. */
+  const bindings = useMemo<HotkeyBinding[]>(() => {
+    const out: HotkeyBinding[] = [];
+    for (const raw of (items || []) as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const item = raw as ToolbarItem;
+      if (item.disabled || !item.handler) continue;
+      const combo = comboFromToolbarKeys(item.keys, item.shift);
+      if (!combo) continue;
+      const handler = item.handler;
+      out.push({ combo, handler: () => { void invokeHandler(handler, onAction, modal); } });
+    }
+    return out;
+  }, [items, onAction, modal]);
+  /* `allowWhileTyping`: gli acceleratori sono tasti funzione (F9 Salva, F10
+     Salva+) che non digitano nulla, e nel data entry il fuoco è quasi sempre
+     dentro un campo — bloccarli lì li farebbe sembrare rotti. È sicuro perché
+     i control scrivono in formValues a ogni battuta (`useCommitReload.store`),
+     non al blur: il valore appena digitato parte insieme al comando. */
+  useHotkeys(bindings, { priority: HotkeyPriority.toolbar, allowWhileTyping: true });
+
   if (!items || items.length === 0) return null;
 
   const rawItems = items as unknown[];

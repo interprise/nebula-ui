@@ -3,11 +3,13 @@ import { fixServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
-import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined } from '@ant-design/icons';
+import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
-import { SidContext, TitleInBreadcrumbContext } from './ViewRenderer';
+import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, useIsTabLabelEcho } from './ViewRenderer';
+import { useUiMode } from '../hooks/uiMode';
+import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -156,6 +158,28 @@ const GRID_CONTINUATION_ROW_HEIGHT = 18;
  *  those controls down to 18px so 20 is enough. */
 const GRID_CONTINUATION_CONTROL_ROW_HEIGHT = 20;
 const GRID_HEADER_HEIGHT = 28;
+
+/** Column header labels wrap instead of being cut with an ellipsis, and the
+ *  header row grows to fit the tallest of them — what the legacy HTML `<th>`
+ *  did, and what a two-word label like "Importo Spese R" needs in a column
+ *  sized for its longest WORD (see headerLabelMinWidth, which is the minimum
+ *  the widths are fitted to). AG Grid keeps the configured 28px as the floor,
+ *  so single-line headers are unchanged (SXADV-5770.1A/1B). */
+const WRAPPING_HEADER_COLDEF: Pick<ColDef, 'wrapHeaderText' | 'autoHeaderHeight'> = {
+  wrapHeaderText: true,
+  autoHeaderHeight: true,
+};
+
+/** Cell content that must NOT wrap: values that are a single token in a column
+ *  already sized to fit them (numbers, dates, flags) and the interactive ones,
+ *  where a taller row buys nothing. Everything else wraps and the row grows with
+ *  it, the way a legacy list `<td>` did — a truncated description is worse than
+ *  a two-line record (SXADV-5770.2). */
+const NO_WRAP_CONTENT_TYPES = new Set([
+  'money', 'number', 'date', 'time', 'timestamp', 'durata',
+  'boolean', 'checkbox', 'button', 'action', 'windowButton',
+  'navigateView', 'add', 'upload', 'download', 'barcode',
+]);
 
 /* Adaptive page size (SXADV-5742). Bounds mirror SetPageSizeCommand's, which is
  * the authority — these only keep the client from asking for something the
@@ -385,6 +409,54 @@ function widthsFromOffsets(
   return result;
 }
 
+/** Height a continuation row starts at — its FLOOR. What the text does at the
+ *  current column widths isn't knowable here (only the <br> count is), so
+ *  ContinuationRowRenderer measures the laid-out row and grows it from this
+ *  (SXADV-5770.2). Module-level so the column-resize resync can restore the floor
+ *  before the re-measure, which is how a row shrinks back after a widening. */
+function continuationRowFloor(params: { data?: Record<string, unknown> }): number | undefined {
+  if (params.data?._isContinuationRow) {
+    const cells = params.data._continuationCells as Array<{ html?: string; text?: string; control?: UIControl }> | undefined;
+    if (cells?.some(c => c.html && /<br\s*\/?>/i.test(c.html))) {
+      let maxBreaks = 0;
+      for (const c of cells) {
+        if (c.html) {
+          const breaks = (c.html.match(/<br\s*\/?>/gi) || []).length;
+          if (breaks > maxBreaks) maxBreaks = breaks;
+        }
+      }
+      return (maxBreaks + 1) * GRID_CONTINUATION_ROW_HEIGHT;
+    }
+    // An interactive control is taller than a line of text and would otherwise
+    // bleed over the row below (it already overlapped by 2px at the old 22px).
+    if (cells?.some(c => c.control && c.control.type && isCellRenderable(c.control.type))) {
+      return GRID_CONTINUATION_CONTROL_ROW_HEIGHT;
+    }
+    // Otherwise: one line of 12px text. This is the row a wrapped record pays
+    // a second time for, so it is where the density is worth buying.
+    return GRID_CONTINUATION_ROW_HEIGHT;
+  }
+  return undefined;
+}
+
+/** `onRowHeightChanged()` repositions every row, and a page's worth of
+ *  continuation rows all measure themselves in the same paint — so coalesce
+ *  their notifications into one call per frame per grid. */
+const pendingRowHeightGrids = new Set<GridApi>();
+let rowHeightFlushHandle = 0;
+function scheduleRowHeightFlush(api: GridApi): void {
+  pendingRowHeightGrids.add(api);
+  if (rowHeightFlushHandle) return;
+  rowHeightFlushHandle = requestAnimationFrame(() => {
+    rowHeightFlushHandle = 0;
+    const grids = Array.from(pendingRowHeightGrids);
+    pendingRowHeightGrids.clear();
+    for (const grid of grids) {
+      if (!grid.isDestroyed()) grid.onRowHeightChanged();
+    }
+  });
+}
+
 // Render a single continuation cell. Custom (cell-renderable) controls
 // delegate to the registered React component — main cols are served by
 // AG Grid's cellRenderer pipeline, but continuation cells sit outside
@@ -426,6 +498,77 @@ const ContinuationCell = ({
   return <span style={style}>{cell.text}</span>;
 };
 
+/** Una cella di una banda di continuazione, come la costruisce
+ *  `buildContinuationCells`. */
+type ContCell = { html?: string; text?: string; colspan?: number; control?: UIControl };
+
+/** Colonne bloccate in modalità una-riga quando il server non dice nulla. Lo
+ *  dice con `<View pinnedCols="...">`; questo è solo la rete per un server che
+ *  non emette l'attributo. */
+const DEFAULT_PINNED_COLS = '2';
+
+/** Specifica di `pinnedCols` risolta: o un conteggio da sinistra, o un insieme
+ *  di nomi (content/tag) da bloccare ovunque si trovino. La seconda forma è
+ *  quella che serve davvero — i campi significativi stanno spesso nelle righe di
+ *  continuazione, mandati a capo proprio perché lunghi, e per posizione non si
+ *  raggiungono. */
+type PinnedSpec = { kind: 'count'; count: number } | { kind: 'names'; names: Set<string> };
+
+function parsePinnedSpec(raw: number | string | undefined): PinnedSpec {
+  const spec = String(raw ?? DEFAULT_PINNED_COLS).trim();
+  if (/^\d+$/.test(spec)) return { kind: 'count', count: parseInt(spec, 10) };
+  const names = new Set(
+    spec.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean),
+  );
+  return names.size > 0 ? { kind: 'names', names } : { kind: 'count', count: 0 };
+}
+
+/** I nomi con cui una colonna può essere riferita in `pinnedCols`. */
+function headerTokens(hdr: { name?: string; tag?: string } | undefined): string[] {
+  if (!hdr) return [];
+  const out: string[] = [];
+  if (hdr.name) out.push(hdr.name.trim().toLowerCase());
+  if (hdr.tag) out.push(hdr.tag.trim().toLowerCase());
+  return out;
+}
+
+/** Larghezza minima di una colonna nata da una banda di continuazione: sotto
+ *  questa un valore non si legge, e la banda di partenza non porta con sé una
+ *  dimensione dichiarata da cui dedurla. */
+const FLAT_COL_MIN_WIDTH = 60;
+
+/** Testo piatto di una cella HTML — per ordinamento e copia, non per il render. */
+function stripHtml(html?: string): string {
+  return html ? html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+/** Cella di una banda di continuazione promossa a colonna vera (modalità
+ *  una-riga). Il valore della colonna è il testo piatto — così ordinamento e
+ *  copia funzionano — mentre il contenuto ricco (HTML o control registrato)
+ *  viaggia a parte in `_contcell_<field>` e viene reso qui, riusando lo stesso
+ *  `ContinuationCell` della modalità a più righe. */
+const FlatContinuationRenderer = (params: ICellRendererParams) => {
+  const field = params.colDef?.field;
+  const cell = field ? (params.data?.[`_contcell_${field}`] as ContCell | undefined) : undefined;
+  if (!cell) return null;
+  const ctx = params.context as {
+    onAction?: (action: string, params?: Record<string, string>) => void;
+    onChange?: (name: string, value: unknown) => void;
+  } | undefined;
+  const isCustom = !!(cell.control && cell.control.type && isCellRenderable(cell.control.type));
+  return (
+    <ContinuationCell
+      cell={cell}
+      style={isCustom
+        ? { overflow: 'visible', whiteSpace: 'nowrap' }
+        : { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      onAction={ctx?.onAction ?? (() => {})}
+      onChange={ctx?.onChange ?? (() => {})}
+      rowPath={params.data?._selectorPath as string | undefined}
+    />
+  );
+};
+
 // Full-width renderer for continuation rows (2nd, 3rd, ... rows of a multi-row record).
 // The outer div is clipped to the viewport width; the inner div holds the
 // full row width and translates horizontally via the --grid-scroll-x CSS
@@ -433,6 +576,33 @@ const ContinuationCell = ({
 // content stays aligned with the scrolled main columns.
 const ContinuationRowRenderer = (params: ICellRendererParams) => {
   const cells = params.data?._continuationCells as Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> | undefined;
+  // Grow the row to its tallest wrapped cell. A continuation row is a FULL-WIDTH
+  // row, so the per-column autoHeight that sizes main rows never sees it: its
+  // height comes from getRowHeight, which can only count <br>s — it can't know
+  // how the text wrapped at the current column widths. So measure what was laid
+  // out and push it back (SXADV-5770.2). Growth only: getRowHeight resets the
+  // row to its floor whenever the data changes, so this converges (the measure
+  // that follows a grow sees the height it just asked for) instead of ratcheting.
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const { node, api } = params;
+  useEffect(() => {
+    if (!node || !api) return;
+    const grow = () => {
+      const el = trackRef.current;
+      if (!el) return;
+      const measured = Math.ceil(el.getBoundingClientRect().height);
+      if (measured > (node.rowHeight ?? 0) + 1) {
+        node.setRowHeight(measured);
+        scheduleRowHeightFlush(api);
+      }
+    };
+    grow();
+    if (typeof ResizeObserver === 'undefined' || !trackRef.current) return;
+    // Re-measure when a column resize rewraps the text.
+    const ro = new ResizeObserver(grow);
+    ro.observe(trackRef.current);
+    return () => ro.disconnect();
+  }, [node, api]);
   if (!cells || cells.length === 0) return null;
   const ctx = params.context as {
     onAction?: (action: string, params?: Record<string, string>) => void;
@@ -455,7 +625,7 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
   if (widths && totalWidth != null) {
     return (
       <div style={{ width: '100%', overflow: 'hidden', position: 'relative', lineHeight: `${GRID_CONTINUATION_ROW_HEIGHT}px`, fontSize: 12, paddingLeft: selectorPad }}>
-        <div style={{
+        <div ref={trackRef} style={{
           display: 'flex',
           width: totalWidth,
           padding: '0 4px',
@@ -469,9 +639,11 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
             // (SXADV-5457.1). Keep the box width for column alignment but let
             // the control overflow visibly instead of being clipped.
             const isCustom = !!(cell.control && cell.control.type && isCellRenderable(cell.control.type));
+            // Text cells wrap instead of being cut (SXADV-5770.2); the effect
+            // above then grows the row to the tallest of them.
             const style: React.CSSProperties = isCustom
               ? { width: w, minWidth: w, padding: '0 4px', overflow: 'visible', whiteSpace: 'nowrap' }
-              : { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis' };
+              : { width: w, minWidth: w, maxWidth: w, padding: '0 4px', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word' };
             return <ContinuationCell key={i} cell={cell} style={style} onAction={onAction} onChange={onChange} rowPath={rowPath} />;
           })}
         </div>
@@ -506,26 +678,63 @@ interface ListRendererProps {
   /** listEdit: report the ordered record paths (main rows) so the panel can
    *  navigate prev/next between records. */
   onRecordPaths?: (records: ListRecord[]) => void;
+  /** Grid inside a form/tab rather than a page of its own. It gets a MEASURED
+   *  pixel height (see fillCapHeight) — the layout-table ancestors block CSS
+   *  flex-fill — and scrolls internally; a top-level list just takes flex:1. */
   embedded?: boolean;
-  /** Fill available vertical space with internal scroll instead of
-   *  AG Grid's autoHeight (used for grids inside tabs). */
-  fillHeight?: boolean;
-  /** listEdit grid: fill all the container height (minus the edit panel when
-   *  shown) via JS measurement, instead of shrinking to content. The layout-table
-   *  ancestor blocks CSS flex-fill, so it's measured. */
-  fillContainer?: boolean;
   /** Whether the bottom edit panel is currently visible — re-measure the fill
    *  height when it appears/disappears (the grid grows to reclaim its space). */
   panelShown?: boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, onSelectRecord, onRecordPaths, embedded, fillContainer, panelShown }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, onSelectRecord, onRecordPaths, embedded, panelShown }) => {
   // The page title is already the closing breadcrumb, so a page-level list must
   // not repeat it as a heading (SXADV-5742). Embedded grids keep their title —
   // it names the section, not the page. The subtitle (applied filters, 5484) is
   // unaffected: it says something the breadcrumb doesn't.
   const titleInBreadcrumb = useContext(TitleInBreadcrumbContext) && !embedded;
+  // Nor does a grid inside a tab repeat the tab's own label (the documents
+  // "Righe fattura" case — see TabLabelContext).
+  const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
   const sid = useContext(SidContext);
+  /* Zoom della griglia (SXADV-5737). Offerto solo alle griglie del pannello
+     inferiore di una vista a due aree: sono quelle che hanno una testata sopra
+     da collassare, ed è lì che l'alta numerosità righi è ingestibile. Lo stato
+     è l'`ui.path` della griglia, così una vista con più griglie sa quale. */
+  const inSplitArea = useContext(SplitAreaContext);
+  const { zoomedGridId, setZoomedGridId, isOneLine, setOneLine } = useUiMode();
+  /* Identità della griglia dentro la vista: il NOME della vista, non `ui.path`.
+     `ToolViewState.getPath()` è `parent + id + '.' + posizione`, quindi il path
+     cambia navigando i record del padre — lo zoom si sarebbe spento passando al
+     record successivo, e peggio: la testata sarebbe rimasta collassata mentre il
+     pulsante tornava "ingrandisci". Stesso motivo per cui `selKey` sopra usa
+     `viewName ?? path`. */
+  const gridId = ui.viewName ?? ui.path ?? null;
+  const canZoom = !!embedded && inSplitArea && !!gridId;
+  const isZoomed = canZoom && zoomedGridId === gridId;
+  /* Modalità una-riga: le bande di continuazione diventano colonne vere, il
+     record sta su una linea sola e la griglia scorre in orizzontale con le
+     prime colonne bloccate. Offerta solo dove c'è qualcosa da linearizzare —
+     senza bande di continuazione il record è già su una riga. A differenza
+     dello zoom vale anche per le liste a tutta pagina: la scansione di molti
+     record ne guadagna lì esattamente come in un tab. */
+  const canFlatten = !!gridId && !!(ui.continuationHeaders && ui.continuationHeaders.length > 0);
+  // Come per `adaptivePageSize`: il valore arriva nell'header su un render FULL
+  // e nel `paging` su un aggiornamento di pagina, quindi si leggono entrambi.
+  const pinnedSpec = useMemo(
+    () => parsePinnedSpec(ui.paging?.pinnedCols ?? ui.header?.pinnedCols),
+    [ui.paging?.pinnedCols, ui.header?.pinnedCols],
+  );
+  const oneLine = canFlatten && isOneLine(gridId as string);
+  // L'uscita da tastiera la registra la griglia zoomata, non lo store: lo zoom è
+  // memorizzato per vista, e da fuori non si saprebbe quale ambito chiudere —
+  // si finirebbe per rubare Esc e cancellare uno zoom che l'utente non sta
+  // vedendo. Priorità gridZoom: con anche l'immersiva attiva, la prima Esc
+  // toglie lo zoom e la seconda l'immersiva.
+  useHotkey('Escape', () => setZoomedGridId(null), {
+    priority: HotkeyPriority.gridZoom,
+    enabled: isZoomed,
+  });
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
   // Stable key for persisting the selected row across the remount that occurs
@@ -671,6 +880,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     // Build column definitions from server headers
     const cols: ColDef[] = [];
+    /** field della colonna → nomi con cui `pinnedCols` può riferirla. */
+    const colTokens = new Map<string, string[]>();
     if (serverHeaders && serverHeaders.length > 0) {
       serverHeaders.forEach((hdr: ListHeader, idx: number) => {
         if (hdr.type === 'selector') {
@@ -678,11 +889,22 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
         const isHtml = htmlColumns.has(idx);
         const customType = customColumns.get(idx);
+        const colCtrl = ui.columns?.[idx]?.control;
+        const colCtrlType = colCtrl?.type as string | undefined;
+        const isCustom = colCtrlType && isCellRenderable(colCtrlType);
         let cellRenderer: ColDef['cellRenderer'] = undefined;
         let autoHeight = false;
         let wrapText = false;
         // Server-driven auto-height: UIControl.isColumnAutoHeight() emits autoHeight in column metadata
-        const colAutoHeight = !!ui.columns?.[idx]?.control?.autoHeight;
+        const colAutoHeight = !!colCtrl?.autoHeight;
+        // Values that don't fit their column wrap onto further lines and the row
+        // grows to the tallest cell — the legacy row height was driven by its
+        // content, not fixed to one line (SXADV-5770.2). Columns edited in the
+        // grid stay one line: a cell editor in a grown cell has nothing to gain.
+        const contentWraps = !NO_WRAP_CONTENT_TYPES.has(colCtrlType ?? '')
+          && !isBooleanType(colCtrlType)
+          && !editableColumns.has(idx)
+          && !!colCtrl;
         if (isHtml || colAutoHeight || wrapColumns.has(idx)) {
           if (isHtml) cellRenderer = HtmlCellRenderer;
           autoHeight = true;
@@ -690,6 +912,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         } else if (customType) {
           cellRenderer = CustomCellRenderer;
           autoHeight = true;
+        } else if (contentWraps) {
+          autoHeight = true;
+          wrapText = true;
         }
         const isRightAlign = rightAlignColumns.has(idx);
         // Minimum width based on longest word in header (measured, zoom-proof)
@@ -702,10 +927,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         // get a more generous minimum so embedded components (reportBar etc.)
         // aren't clipped. If the sum exceeds the viewport the grid scrolls
         // horizontally — better than clipping the declared content.
-        const colCtrl = ui.columns?.[idx]?.control;
-        const colCtrlType = colCtrl?.type as string | undefined;
         const colSize = colCtrl?.size;
-        const isCustom = colCtrlType && isCellRenderable(colCtrlType);
         // Filler columns (trailing padding in the template with no control)
         // must still carry pixel width so continuation-row cells that map to
         // these units don't collapse to 0px. Use the header-based flex units
@@ -812,6 +1034,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           || (isBool ? BooleanTextRenderer : undefined)
           || (needsDisplayValue ? DisplayValueRenderer : undefined);
 
+        colTokens.set(`col_${idx}`, headerTokens(hdr));
         cols.push({
           field: `col_${idx}`,
           headerName: hdr.text || '',
@@ -845,8 +1068,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           resizable: true,
           cellRenderer: resolvedCellRenderer,
           cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx, dynPropKey } : undefined,
-          autoHeight,
-          wrapText,
+          // In one-line il record sta su UNA linea: niente a-capo né crescita in
+          // altezza, che è ciò che fa entrare molti più record nella pagina. Le
+          // colonne con un control registrato tengono l'autoHeight: il loro
+          // contenuto non è testo e sborderebbe sulla riga sotto.
+          autoHeight: oneLine ? !!customType : autoHeight,
+          wrapText: oneLine ? false : wrapText,
           editable,
           cellEditor,
           cellEditorParams,
@@ -965,6 +1192,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     const continuationHeaders = ui.continuationHeaders;
 
+    /* Modalità una-riga: le celle delle bande di continuazione vengono promosse
+       a colonne vere e fuse nella riga principale del record. Le colonne si
+       indicizzano per POSIZIONE IN UNITÀ (banda + unità di partenza), non per
+       indice nell'array: le celle sono emesse per record e un record che ne ha
+       una in meno sposterebbe tutte le successive di una colonna. L'unità è la
+       stessa coordinata su cui il server allinea celle ed etichette
+       (`colspan` cumulativo), quindi è anche ciò che permette di ritrovare
+       l'etichetta giusta per ognuna. */
+    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean };
+    const flatCols = new Map<string, FlatCol>();
+
     // Build row data, detecting continuation rows (first cell is DUMMY elementType 9)
     const rows: Array<Record<string, unknown>> = [];
     let lastSelectorInfo: { command?: string; path?: string } = {};
@@ -993,6 +1231,29 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // Continuation row: first cell is DUMMY (elementType 9)
       if (isContinuationRow(row)) {
         const contCells = buildContinuationCells(row);
+        if (oneLine) {
+          // Fusione nella riga principale del record, che è l'ultima inserita.
+          const target = rows.length > 0 ? rows[rows.length - 1] : null;
+          if (target && !target._isBreakRow) {
+            let unit = 0;
+            for (const cell of contCells) {
+              const span = cell.colspan || 1;
+              const field = `cont_${contRowIdx}_${unit}`;
+              const text = cell.text ?? stripHtml(cell.html);
+              const filled = !!(text || cell.control);
+              if (filled) {
+                target[field] = text;
+                target[`_contcell_${field}`] = cell;
+              }
+              const known = flatCols.get(field);
+              if (known) known.hasContent = known.hasContent || filled;
+              else flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled });
+              unit += span;
+            }
+          }
+          contRowIdx++;
+          continue;
+        }
         // Skip empty continuation rows (all dummy/empty cells)
         if (contCells.every(c => !c.html && !c.text)) {
           contRowIdx++;
@@ -1022,7 +1283,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (row.cls) rowObj._rowCls = row.cls;
       // Check if next row is a continuation — mark this as having continuations
       const nextRow = i + 1 < uiRows.length ? uiRows[i + 1] : null;
-      if (nextRow && isContinuationRow(nextRow)) {
+      // In one-line la continuazione confluisce in questa stessa riga: marcarla
+      // come "record che prosegue sotto" le toglierebbe il bordo inferiore, cioè
+      // il separatore fra un record e l'altro.
+      if (!oneLine && nextRow && isContinuationRow(nextRow)) {
         rowObj._hasContination = true;
         rowObj._recordGroup = recordGroup;
       }
@@ -1146,6 +1410,60 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (isLast) r._isLastContinuationRow = true;
     }
 
+    /* Colonne nate dalle bande di continuazione. Le etichette si recuperano da
+       `ui.continuationHeaders` per SOVRAPPOSIZIONE di unità e non per indice:
+       bande e celle sono due sequenze indipendenti sulla stessa coordinata, e
+       una banda può coprire più celle (allora la sua etichetta si ripete, che è
+       meglio di una colonna senza nome). Le colonne vuote in tutti i record del
+       pagina non vengono create: sono i riempitivi che il server emette per
+       tenere l'allineamento, e da colonne sarebbero rumore. */
+    if (oneLine && flatCols.size > 0) {
+      const contHeaders = ui.continuationHeaders ?? [];
+      // Etichetta E identità arrivano dalle stesse bande sovrapposte: una banda
+      // che copre più celle presta il proprio nome a tutte, quindi bloccarla per
+      // nome le blocca insieme — che è il comportamento voluto, sono lo stesso
+      // campo spezzato su più celle.
+      const bandInfoFor = (band: number, unit: number, span: number): { label: string; tokens: string[] } => {
+        const hdrs = contHeaders[band];
+        if (!hdrs) return { label: '', tokens: [] };
+        const labels: string[] = [];
+        const tokens: string[] = [];
+        let pos = 0;
+        for (const h of hdrs) {
+          const hs = h.colspan || 1;
+          if (pos < unit + span && pos + hs > unit) {
+            if (h.text) labels.push(h.text);
+            tokens.push(...headerTokens(h));
+          }
+          pos += hs;
+        }
+        return { label: labels.join(' '), tokens };
+      };
+      const perUnitPx = ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0;
+      Array.from(flatCols.entries())
+        .filter(([, m]) => m.hasContent)
+        .sort((a, b) => a[1].band - b[1].band || a[1].unit - b[1].unit)
+        .forEach(([field, m]) => {
+          const { label, tokens } = bandInfoFor(m.band, m.unit, m.span);
+          colTokens.set(field, tokens);
+          const longest = label.split(/\s+/).reduce((a, b) => (a.length > b.length ? a : b), '');
+          const minW = Math.max(FLAT_COL_MIN_WIDTH, headerLabelMinWidth(longest));
+          const width = Math.max(minW, perUnitPx > 0 ? Math.round(m.span * perUnitPx) : minW);
+          cols.push({
+            field,
+            headerName: label,
+            width,
+            minWidth: Math.min(40, minW),
+            resizable: true,
+            // Ordinamento lato client escluso: il server ordina per colonna
+            // della riga principale, e queste colonne non esistono per lui.
+            sortable: false,
+            cellRenderer: FlatContinuationRenderer,
+            headerClass: 'continuation-flat-header',
+          });
+        });
+    }
+
     // Leftmost navigate-to-detail column (legacy selector) — only when the list
     // both edits in place (listEdit) and binds a detail view. Field click opens
     // the edit panel; this icon opens the full detail page.
@@ -1168,8 +1486,42 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       });
     }
 
+    /* Prime colonne bloccate: con le bande promosse a colonne la griglia diventa
+       più larga della finestra e si scorre in orizzontale, quindi ciò che
+       identifica il record deve restare in vista. `pinned` è nativo di AG Grid;
+       il selettore, quando c'è, è già bloccato e non conta nel budget. */
+    if (oneLine) {
+      if (pinnedSpec.kind === 'count') {
+        let pinnedCount = 0;
+        for (const col of cols) {
+          if (col.pinned) continue; // il selettore è già bloccato e non conta
+          if (pinnedCount >= pinnedSpec.count) break;
+          col.pinned = 'left';
+          pinnedCount++;
+        }
+      } else {
+        // Per nome: l'ordine a schermo resta quello della griglia, non quello in
+        // cui i nomi sono elencati — l'elenco dice QUALI colonne, non in che
+        // ordine metterle.
+        let matched = 0;
+        for (const col of cols) {
+          if (col.pinned || !col.field) continue;
+          const tokens = colTokens.get(col.field);
+          if (!tokens || !tokens.some((t) => pinnedSpec.names.has(t))) continue;
+          col.pinned = 'left';
+          matched++;
+        }
+        if (matched === 0) {
+          console.warn(
+            `[pinnedCols] nessuna colonna corrisponde a ${Array.from(pinnedSpec.names).join(', ')}`
+            + ' — attesi il content o il tag del ViewItem',
+          );
+        }
+      }
+    }
+
     return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, allDataLocal, isMultiEdit, isListEdit, editableColumns]);
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec]);
 
   // Report the ordered records (main rows: path + onboard edit data) so the
   // edit panel hydrates on selection and steps prev/next — all client-side,
@@ -1289,69 +1641,52 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const lastHoverPath = useRef<string | null>(null);
   const lastSelectedPath = useRef<string | null>(null);
 
-  // When an embedded grid lives inside a dual-area bottom panel
-  // (.view-split-bottom), cap its height at the panel's *visible* height
-  // instead of a fixed 60vh. Sizing to 60vh (or content) makes a tall grid
-  // overflow the tab, which forces a second, outer scrollbar and makes the
-  // grid's own scroll fight the container's — you can only scroll "to a point".
-  // Tables in the ancestor chain block CSS flex height propagation, so measure
-  // the available space and cap the grid to it: few rows still shrink to
-  // content; many rows fill the visible area and scroll internally (one region).
+  // An embedded grid fills the space its container actually leaves it, measured
+  // in pixels. Sizing it to content (or to a fixed 60vh) makes a tall grid
+  // overflow the tab, which forces a second, outer scrollbar and makes the grid's
+  // own scroll fight the container's — you can only scroll "to a point". Tables
+  // in the ancestor chain block CSS flex height propagation, hence the JS measure.
   const [fillCapHeight, setFillCapHeight] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (!embedded) return;
     const gridEl = gridContainerRef.current;
     if (!gridEl || typeof ResizeObserver === 'undefined') return;
-    // The bottom panel has a definite height and clips overflow — it is the
-    // viewport the grid should fill down to. Absent it (e.g. a grid inline in
-    // a form), keep the 60vh fallback by leaving fillCapHeight null.
+    // A dual-area bottom panel has a definite height and clips overflow; when the
+    // grid sits in one, its resizes have to re-trigger the measure (below).
     const bound = gridEl.closest<HTMLElement>('.view-split-bottom');
-    if (!bound && !fillContainer) return;
     // The edit panel is a sibling of .list-container (both in the Fragment). When
     // present the grid must FILL down to it.
     const panelEl = gridEl.closest('.list-container')?.parentElement?.querySelector<HTMLElement>('.edit-panel') ?? null;
     const measure = () => {
       const el = gridContainerRef.current;
       if (!el) return;
-      // Panel below the grid: fill from the grid's top down to the panel top,
-      // measuring the panel height directly (the scrollHeight formula is circular
-      // with a sibling panel — it just re-derives the grid's current height).
-      if (fillContainer) {
-        let bottomRef = window.innerHeight;
-        for (let p = el.parentElement; p; p = p.parentElement) {
-          const s = getComputedStyle(p);
-          if (s.overflowY === 'auto' || s.overflowY === 'scroll') {
-            // Fill to the scroll container's CONTENT bottom. Derive it from
-            // clientHeight (which already excludes the horizontal scrollbar and
-            // borders) so a wide grid's scrollbar doesn't push content past the
-            // fold. The -2 absorbs sub-pixel rounding.
-            const borderTop = parseFloat(s.borderTopWidth) || 0;
-            const padBottom = parseFloat(s.paddingBottom) || 0;
-            bottomRef = p.getBoundingClientRect().top + borderTop + p.clientHeight - padBottom - 2;
-            break;
-          }
+      // Fill from the grid's top down to the bottom of the nearest scrolling
+      // ancestor, minus the edit panel when one is stacked below. The panel's
+      // height is measured directly: deriving it from scrollHeight is circular
+      // with a sibling panel — it just re-derives the grid's current height.
+      let bottomRef = window.innerHeight;
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        if (s.overflowY === 'auto' || s.overflowY === 'scroll') {
+          // Fill to the scroll container's CONTENT bottom. Derive it from
+          // clientHeight (which already excludes the horizontal scrollbar and
+          // borders) so a wide grid's scrollbar doesn't push content past the
+          // fold. The -2 absorbs sub-pixel rounding.
+          const borderTop = parseFloat(s.borderTopWidth) || 0;
+          const padBottom = parseFloat(s.paddingBottom) || 0;
+          bottomRef = p.getBoundingClientRect().top + borderTop + p.clientHeight - padBottom - 2;
+          break;
         }
-        const listCont = el.closest<HTMLElement>('.list-container');
-        const panel = listCont?.parentElement?.querySelector<HTMLElement>('.edit-panel');
-        const panelH = panel ? panel.getBoundingClientRect().height : 0;
-        // The grid is one part of .list-container (title/pagination/padding are
-        // the rest — grid-height-independent). Fill so that the panel, stacked
-        // right below .list-container, ends at the scroll container's bottom.
-        const listRect = (listCont ?? el).getBoundingClientRect();
-        const nonGridChrome = Math.max(0, listRect.height - el.getBoundingClientRect().height);
-        setFillCapHeight(Math.max(120, Math.floor(bottomRef - panelH - listRect.top - nonGridChrome)));
-        return;
       }
-      // Dual-area (no panel): the constraining viewport is the outermost scroll
-      // container between the grid and .view-split-bottom.
-      let scrollC: HTMLElement = bound as HTMLElement;
-      for (let p = el.parentElement; p && p !== (bound as HTMLElement).parentElement; p = p.parentElement) {
-        const oy = getComputedStyle(p).overflowY;
-        if (oy === 'auto' || oy === 'scroll') scrollC = p; // keep last → outermost
-      }
-      const chrome = scrollC.scrollHeight - el.clientHeight;
-      const avail = scrollC.clientHeight - chrome;
-      setFillCapHeight(Math.max(120, Math.floor(avail)));
+      const listCont = el.closest<HTMLElement>('.list-container');
+      const panel = listCont?.parentElement?.querySelector<HTMLElement>('.edit-panel');
+      const panelH = panel ? panel.getBoundingClientRect().height : 0;
+      // The grid is one part of .list-container (title/pagination/padding are
+      // the rest — grid-height-independent). Fill so that the panel, stacked
+      // right below .list-container, ends at the scroll container's bottom.
+      const listRect = (listCont ?? el).getBoundingClientRect();
+      const nonGridChrome = Math.max(0, listRect.height - el.getBoundingClientRect().height);
+      setFillCapHeight(Math.max(120, Math.floor(bottomRef - panelH - listRect.top - nonGridChrome)));
     };
     measure();
     // AG Grid / fonts settle a frame later — re-measure once the layout is final.
@@ -1365,7 +1700,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [embedded, fillContainer, panelShown, rowData.length]);
+  }, [embedded, panelShown, rowData.length]);
 
   const getGridViewport = useCallback((): HTMLElement | null => {
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
@@ -1382,29 +1717,54 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
    * on a 1265px-tall window 22 wrapped records fit and 20 are loaded, so every
    * list ends in a band of empty grid. */
   const requestedPageSizeRef = useRef<number | null>(null);
+  /** Sizes already requested for the current amount of space. Now that a record
+   *  sizes to its content, the page size and the average record height feed each
+   *  other — asking for 40 can load records that wrap, which measures back as 30,
+   *  which measures back as 40 — so each size is asked at most once, until the
+   *  space available genuinely changes (window resize, zoom) (SXADV-5770.2). */
+  const askedPageSizesRef = useRef<{ avail: number; sizes: Set<number> }>({ avail: 0, sizes: new Set<number>() });
 
   /** Vertical pitch of one RECORD — main row plus its continuation rows. Measured
    *  from the rendered rows rather than computed from the height constants, so it
-   *  stays right whatever a given view's records are made of. */
+   *  stays right whatever a given view's records are made of.
+   *
+   *  Records no longer share one height (a record wraps to fit its content —
+   *  SXADV-5770.2), so this is the AVERAGE gap over the rendered rows, not the
+   *  smallest one: the shortest record in view says nothing about how many of the
+   *  rest fit. AG Grid renders a contiguous window of rows, so the average over
+   *  what's in the DOM is representative of the page. */
   const measureRecordPitch = useCallback((): number | null => {
     const host = gridContainerRef.current;
     if (!host) return null;
     const tops = Array.from(host.querySelectorAll('.ag-center-cols-container .ag-row'))
       .map(r => (r as HTMLElement).getBoundingClientRect().top)
       .sort((a, b) => a - b);
-    // Smallest positive gap between consecutive main rows: the pitch is uniform,
-    // and taking the minimum is immune to a row being absent from the DOM
-    // (AG Grid virtualises) or to DOM order not matching visual order.
-    let pitch = Infinity;
+    let total = 0;
+    let gaps = 0;
     for (let i = 1; i < tops.length; i++) {
       const d = tops[i] - tops[i - 1];
-      if (d > 0 && d < pitch) pitch = d;
+      if (d > 0) { total += d; gaps++; }
     }
-    if (pitch !== Infinity) return pitch;
+    if (gaps > 0) return total / gaps;
     // Fewer than two rows on screen — fall back to the configured heights.
     const bands = ui.continuationHeaders?.length ?? 0;
     return GRID_ROW_HEIGHT + bands * GRID_CONTINUATION_ROW_HEIGHT;
   }, [ui.continuationHeaders]);
+
+  /* Cambio di modalità di layout: cambia il PASSO delle righe, non lo spazio.
+     La stessa finestra ospita il doppio dei record una volta linearizzati, ma il
+     misuratore qui sotto si sveglia su un ResizeObserver dell'HOST — che in
+     questo caso non scatta, perché l'host è grande uguale — e resterebbe con la
+     pagina misurata sull'altra modalità: mezza griglia vuota in fondo.
+
+     Va azzerata anche la memoria di "cosa ho già chiesto": è indicizzata sullo
+     spazio disponibile, che non è cambiato, quindi senza azzerarla la taglia
+     chiesta nell'altra modalità risulterebbe già richiesta e tornando indietro
+     non si rimpicciolirebbe più. */
+  useEffect(() => {
+    askedPageSizesRef.current = { avail: 0, sizes: new Set<number>() };
+    requestedPageSizeRef.current = null;
+  }, [oneLine]);
 
   useEffect(() => {
     // Top-level, server-paged lists only. Embedded grids size to their content
@@ -1424,6 +1784,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const viewport = getGridViewport();
       if (!viewport) return;
       const avail = viewport.clientHeight;
+      const asked = askedPageSizesRef.current;
+      if (Math.abs(asked.avail - avail) > 8) {
+        asked.avail = avail;
+        asked.sizes.clear();
+      }
       const pitch = measureRecordPitch();
       if (!pitch || avail < pitch) return;
       const fits = Math.floor(avail / pitch);
@@ -1441,6 +1806,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // Once we've adapted, a couple of rows is no longer worth a round-trip and
       // a renumbered pager.
       if (lastAsked !== null && Math.abs(want - lastAsked) < ADAPTIVE_PAGE_SIZE_HYSTERESIS) return;
+      if (asked.sizes.has(want)) return;
+      asked.sizes.add(want);
       requestedPageSizeRef.current = want;
       onAction('SetPageSize', { option1: String(want) });
     };
@@ -1456,7 +1823,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       window.clearTimeout(timer);
       ro.disconnect();
     };
-  }, [embedded, ui.paging?.adaptivePageSize, ui.paging?.pageSize, ui.header?.adaptivePageSize, ui.header?.pageSize, getGridViewport, measureRecordPitch, onAction]);
+  }, [embedded, oneLine, ui.paging?.adaptivePageSize, ui.paging?.pageSize, ui.header?.adaptivePageSize, ui.header?.pageSize, getGridViewport, measureRecordPitch, onAction]);
 
   /** Apply a CSS class to all rows sharing the same _selectorPath */
   const applyClassByPath = useCallback((path: string | null, cls: string) => {
@@ -1586,31 +1953,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return rowCls;
   };
 
-  const getRowHeight = (params: { data?: Record<string, unknown> }): number | undefined => {
-    if (params.data?._isContinuationRow) {
-      const cells = params.data._continuationCells as Array<{ html?: string; text?: string; control?: UIControl }> | undefined;
-      if (cells?.some(c => c.html && /<br\s*\/?>/i.test(c.html))) {
-        let maxBreaks = 0;
-        for (const c of cells) {
-          if (c.html) {
-            const breaks = (c.html.match(/<br\s*\/?>/gi) || []).length;
-            if (breaks > maxBreaks) maxBreaks = breaks;
-          }
-        }
-        return (maxBreaks + 1) * GRID_CONTINUATION_ROW_HEIGHT;
-      }
-      // An interactive control is taller than a line of text and would otherwise
-      // bleed over the row below (it already overlapped by 2px at the old 22px).
-      if (cells?.some(c => c.control && c.control.type && isCellRenderable(c.control.type))) {
-        return GRID_CONTINUATION_CONTROL_ROW_HEIGHT;
-      }
-      // Otherwise: one line of 12px text. This is the row a wrapped record pays
-      // a second time for, so it is where the density is worth buying.
-      return GRID_CONTINUATION_ROW_HEIGHT;
-    }
-    return undefined;
-  };
-
   // Native DOM event listeners for grouped hover — React synthetic events
   // don't fire reliably for AG Grid's dynamically created DOM elements
   useEffect(() => {
@@ -1682,6 +2024,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (!agHeader) return;
 
     container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
+    // In one-line le bande sono diventate colonne vere, con la loro etichetta
+    // nell'intestazione della griglia: la fascia iniettata sarebbe un doppione
+    // sospeso su righe che non esistono più. La rimozione sopra deve comunque
+    // essere passata, o entrando in one-line resterebbe quella di prima.
+    if (oneLine) return;
 
     const api = gridApiRef.current;
     const offsets = api ? computeUnitOffsets(api, headersByField) : null;
@@ -1712,7 +2059,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const cell = document.createElement('div');
         const w = widths?.[i];
         if (w != null) {
-          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:1px 4px;overflow:hidden;text-overflow:ellipsis;`;
+          // Wraps like the primary header does (SXADV-5770.1A): the width was
+          // fitted to the longest WORD of these labels (secondaryMinWidth), so
+          // a multi-word one only shows in full over two lines. The wrapper is
+          // flex:0 0 auto, so the band grows with the tallest cell.
+          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:1px 4px;overflow:hidden;white-space:normal;word-break:break-word;line-height:14px;`;
         } else {
           cell.style.cssText = `flex:${hdr.colspan || 1};padding:1px 4px;`;
         }
@@ -1723,7 +2074,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField]);
+  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll
@@ -1773,17 +2124,32 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   useEffect(() => {
     const api = gridApiRef.current;
     if (!api) return;
-    const resync = () => {
+    const resync = (event?: unknown) => {
+      // Mid-drag columnResized events (finished === false) only re-lay the cells
+      // out; the row heights are settled once, at the end of the drag. The other
+      // events this is bound to carry no `finished` and count as settled.
+      const settled = (event as { finished?: boolean } | undefined)?.finished !== false;
       const nodes: Parameters<GridApi['redrawRows']>[0] extends (infer P) | undefined
         ? P extends { rowNodes?: infer R } ? R : never : never = [] as never;
+      let floored = false;
       api.forEachNode((n) => {
-        if ((n.data as Record<string, unknown> | undefined)?._isContinuationRow) {
+        const data = n.data as Record<string, unknown> | undefined;
+        if (data?._isContinuationRow) {
           (nodes as unknown[]).push(n);
+          // Back to the floor: the row grew to fit the text at the OLD widths, and
+          // growth alone can't give those pixels back when a column gets wider.
+          // The renderer re-measures on the redraw below and grows again from here.
+          const floor = continuationRowFloor({ data });
+          if (settled && floor != null && n.rowHeight !== floor) {
+            n.setRowHeight(floor);
+            floored = true;
+          }
         }
       });
       if ((nodes as unknown[]).length > 0) {
         api.redrawRows({ rowNodes: nodes });
       }
+      if (floored) scheduleRowHeightFlush(api);
       injectContinuationHeaders();
     };
     api.addEventListener('columnResized', resync);
@@ -1897,6 +2263,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // is the same one gridActions carries, now shown once above the grid.
   const gridActions = ui.gridActions;
   const gridPath = gridActions?.path || ui.path;
+  const hasGridActions = !!gridActions && !!(gridActions.addCommand || gridActions.xlsCommand || gridActions.printCommand);
 
   // The container never claims more than the available width: horizontal
   // overflow is AG Grid's job (internal scroll, per-column minWidths keep the
@@ -1916,7 +2283,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   return (
     <div className="list-container" style={listContainerStyle}>
-      {meta?.title && !titleInBreadcrumb && <div className="view-title">{meta.title}</div>}
+      {/* In zoom il titolo torna anche quando ripete l'etichetta del tab: la
+          barra dei tab non c'è più, e resterebbe l'unica cosa a dire su quali
+          righe si sta lavorando. */}
+      {meta?.title && !titleInBreadcrumb && (!titleEchoesTab || isZoomed) && <div className="view-title">{meta.title}</div>}
       {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
 
       {/* Embedded-list action bar, above the grid and styled like the primary
@@ -1924,8 +2294,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           section header) so users who had scrolled a long list could reach it
           without scrolling back; detail grids paginate now, so a single bar on
           top is both enough and consistent with the page toolbar (SXADV-5693). */}
-      {gridActions && (gridActions.addCommand || gridActions.xlsCommand || gridActions.printCommand) && (
-        <div className="toolbar grid-actions">
+      {(hasGridActions || canZoom || canFlatten) && (
+        <div className="toolbar grid-actions" style={{ display: 'flex', alignItems: 'center' }}>
+          {gridActions && hasGridActions && (
           <Space wrap size="small">
             {gridActions.addCommand && (
               <Button
@@ -1957,6 +2328,48 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               </Tooltip>
             )}
           </Space>
+          )}
+          {/* Comandi di layout della griglia, in coda a destra.
+              - una-riga: le bande di continuazione diventano colonne, il record
+                sta su una linea e si scorre in orizzontale con le prime colonne
+                bloccate. Guadagna sull'asse ORIZZONTALE.
+              - zoom: collassa testata e barra tab. Guadagna sul VERTICALE. Non è
+                un overlay — la griglia non si rimonta, quindi scroll, selezione
+                e riga in editing restano dove sono.
+              Si compongono, ed entrambi fanno riadattare il page size da solo:
+              più record entrano, il client li misura e li chiede al server
+              (SetPageSizeCommand, SXADV-5742). */}
+          {(canFlatten || canZoom) && (
+            <Space size="small" style={{ marginLeft: 'auto' }}>
+              {canFlatten && (
+                <Tooltip
+                  title={oneLine ? 'Torna al record su più righe' : 'Un record per riga (colonne affiancate, prime colonne bloccate)'}
+                  placement="bottom"
+                >
+                  <Button
+                    size="small"
+                    type={oneLine ? 'primary' : 'default'}
+                    icon={oneLine ? <ColumnHeightOutlined /> : <ColumnWidthOutlined />}
+                    aria-label={oneLine ? 'Torna al record su più righe' : 'Un record per riga'}
+                    aria-pressed={oneLine}
+                    onClick={() => setOneLine(gridId as string, !oneLine)}
+                  />
+                </Tooltip>
+              )}
+              {canZoom && (
+                <Tooltip title={isZoomed ? 'Riduci la griglia (Esc)' : 'Ingrandisci la griglia'} placement="bottom">
+                  <Button
+                    size="small"
+                    type={isZoomed ? 'primary' : 'default'}
+                    icon={isZoomed ? <CompressOutlined /> : <ExpandOutlined />}
+                    aria-label={isZoomed ? 'Riduci la griglia' : 'Ingrandisci la griglia'}
+                    aria-pressed={isZoomed}
+                    onClick={() => setZoomedGridId(isZoomed ? null : gridId)}
+                  />
+                </Tooltip>
+              )}
+            </Space>
+          )}
         </div>
       )}
 
@@ -1981,40 +2394,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           if (!embedded) {
             return { width: '100%', flex: 1, minHeight: 0 };
           }
-          // Stacked above the in-flow edit panel: FILL the space from the grid's
-          // top down to the panel (measured JS height — the layout-table ancestor
-          // blocks CSS flex-fill). The grid takes all remaining vertical space and
-          // pushes the panel to the bottom.
-          if (fillContainer) {
-            return {
-              width: '100%',
-              maxWidth: '100%',
-              height: Math.max(120, fillCapHeight ?? Math.round(window.innerHeight * 0.45)),
-              overflow: 'hidden',
-              boxSizing: 'border-box',
-            };
-          }
-          // Embedded grid (form/detail or tab): size to content but cap so it
-          // never overflows its container. Inside a dual-area bottom panel the
-          // cap is the panel's measured visible height (fillCapHeight) so the
-          // grid fills it and scrolls internally; elsewhere fall back to 60% of
-          // the viewport. AG Grid's native scroll handles overflow past the cap.
-          // Few rows → small grid; many rows → capped grid with internal scroll.
-          const rowCount = rowData.length || 0;
-          const approxRowHeight = 28;
-          const headerChromeHeight = 40
-            + (ui.continuationHeaders?.length ?? 0) * 24
-            + 30;
-          const contentHeight = rowCount * approxRowHeight + headerChromeHeight;
-          const cap = fillCapHeight ?? Math.round(window.innerHeight * 0.6);
-          const cappedHeight = Math.min(contentHeight, cap);
+          // Embedded grid (form section, tab, or stacked above the in-flow edit
+          // panel): FILL the space measured down to the container bottom / the
+          // panel top (fillCapHeight — the layout-table ancestors block CSS
+          // flex-fill), and let AG Grid scroll internally past it. The 45vh is
+          // only the first-paint value, before the layout effect has measured.
+          // maxWidth constrains the box to the parent so AG Grid's horizontal
+          // scroll kicks in when the columns exceed the viewport.
           return {
             width: '100%',
             maxWidth: '100%',
-            height: Math.max(120, cappedHeight),
+            height: Math.max(120, fillCapHeight ?? Math.round(window.innerHeight * 0.45)),
             minHeight: 0,
-            // Constrain to parent width so AG Grid's internal horizontal
-            // scroll kicks in when columns exceed the viewport.
             overflow: 'hidden',
             boxSizing: 'border-box',
           };
@@ -2025,6 +2416,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           modules={[AllCommunityModule]}
           theme={gridTheme}
           columnDefs={columnDefs}
+          defaultColDef={WRAPPING_HEADER_COLDEF}
           rowData={rowData}
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); }}
@@ -2036,7 +2428,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           fullWidthCellRenderer={fullWidthCellRenderer}
           getRowClass={getRowClass}
           rowHeight={GRID_ROW_HEIGHT}
-          getRowHeight={getRowHeight}
+          getRowHeight={continuationRowFloor}
           suppressRowClickSelection
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
@@ -2046,8 +2438,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         />
       </div>
 
-      {/* Pagination */}
-      {showDetailPager ? (
+      {/* Pagination. Only the embedded detail pager lives here: it is the sole
+          way to page a one-to-many grid (no toolbar of its own). A top-level list
+          gets no footer band at all — its toolbar already carries the very same
+          numbers (TableNavigator emits "pag: [n] di N … N righe."), so the band
+          was spending a row of grid on a second copy (SXADV-5770.3A). */}
+      {showDetailPager && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderTop: '1px solid #e8e8e8' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>{pageInfo!.totalRows} record</Text>
           <Pagination
@@ -2059,21 +2455,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             showSizeChanger={false}
             onChange={(page) => onAction('DetailPage', { navpath: ui.path!, page: String(page) })}
           />
-        </div>
-      ) : ui.paging ? (
-        <div style={{ padding: '6px 8px', fontSize: 12, color: '#666', borderTop: '1px solid #e8e8e8' }}>
-          <Text type="secondary">
-            {ui.paging.totalRows} record &middot; Pagina {ui.paging.currentPage} di {ui.paging.totalPages}
-          </Text>
-        </div>
-      ) : meta && meta.recordCount !== undefined && (
-        <div style={{ padding: '6px 8px', fontSize: 12, color: '#666', borderTop: '1px solid #e8e8e8' }}>
-          <Text type="secondary">
-            {meta.recordCount} record
-            {meta.pageSize && meta.position !== undefined && (
-              <> &middot; Pagina {Math.floor(meta.position / meta.pageSize) + 1} di {Math.ceil(meta.recordCount / meta.pageSize)}</>
-            )}
-          </Text>
         </div>
       )}
 

@@ -8,6 +8,7 @@ import * as AgGridReact from 'ag-grid-react';
 import itIT from 'antd/locale/it_IT';
 import LoginForm from './components/LoginForm';
 import Shell from './components/Shell';
+import { UiModeProvider } from './hooks/UiModeProvider';
 import type { LoginInfo, MenuItem } from './types/ui';
 import * as api from './services/api';
 
@@ -246,18 +247,23 @@ const App: React.FC = () => {
   return (
     <ConfigProvider locale={itIT} theme={{ token: { fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" } }}>
       <AntApp>
-        {!loggedIn ? (
-          showLogin ? (
-            <LoginForm onLogin={handleLogin} error={loginError} loading={loginLoading} title={loginTitle} />
-          ) : null /* Auto-login in progress */
-        ) : (
-          <Shell
-            menuItems={menuItems}
-            loginInfo={loginInfo!}
-            onLogout={handleLogout}
-            onReloadMenu={handleReloadMenu}
-          />
-        )}
+        {/* Registro tasti + stato delle modalità UI (immersiva, zoom griglia).
+            Sopra tutto: gli acceleratori della toolbar si registrano da dentro
+            la Shell. Vedi hooks/uiMode.tsx. */}
+        <UiModeProvider>
+          {!loggedIn ? (
+            showLogin ? (
+              <LoginForm onLogin={handleLogin} error={loginError} loading={loginLoading} title={loginTitle} />
+            ) : null /* Auto-login in progress */
+          ) : (
+            <Shell
+              menuItems={menuItems}
+              loginInfo={loginInfo!}
+              onLogout={handleLogout}
+              onReloadMenu={handleReloadMenu}
+            />
+          )}
+        </UiModeProvider>
       </AntApp>
     </ConfigProvider>
   );

@@ -14,6 +14,8 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
+import { useUiMode, UiModeStoreContext, ZoomScopeContext } from '../hooks/uiMode';
+import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
@@ -122,6 +124,38 @@ export const FillHeightContext = React.createContext<boolean>(false);
 // ignore it: their title names a section inside the page ("Righe fattura"), not
 // the page, so it is not the thing the breadcrumb is showing.
 export const TitleInBreadcrumbContext = React.createContext<boolean>(false);
+
+// Label of the tab whose content is being rendered, for the subtree inside it.
+// A tab's label already names its content, so a view inside it must not repeat
+// that name as a heading. CORE drops the title of a view sitting DIRECTLY in a
+// tab (ToolViewState.getTitle, "SPORCO TRUCCO ... dentro ad un Tab", keyed on the
+// tab-list view name ending in "Tab"), but the chain is often
+// tab → wrapper view → real view: the wrapper is the direct child, so the view
+// that actually carries the title is one level too deep and the rule misses it —
+// that is why the documents tab showed "Righe fattura" twice
+// (docDetailTab → docRigheWrapperDetail → docRigheCliList). This catches the
+// repetition wherever it sits in the tab's subtree, by matching the text.
+// Deliberately only a DUPLICATE is dropped: a heading that says something the tab
+// label doesn't is information, and a wrapper holding two grids keeps both of its
+// section titles.
+export const TabLabelContext = React.createContext<string | undefined>(undefined);
+
+/** True nel pannello inferiore di una vista a due aree (`.view-split-bottom`).
+ *  È lì che lo zoom griglia (SXADV-5737) ha senso: c'è una testata sopra da
+ *  collassare, e sono i tab di dettaglio a soffrire dell'alta numerosità righi.
+ *  Su una lista a tutta pagina non c'è niente da guadagnare — la vista È la
+ *  griglia — e in una vista senza split la griglia sta dentro la tabella di
+ *  layout, dove "nascondere il resto" vuol dire nascondere righe di form. */
+export const SplitAreaContext = React.createContext<boolean>(false);
+
+/** Normalized comparison against the enclosing tab's label — true when this
+ *  heading would just repeat it. */
+export function useIsTabLabelEcho(title?: string): boolean {
+  const tabLabel = React.useContext(TabLabelContext);
+  if (!title || !tabLabel) return false;
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+  return norm(title) === norm(tabLabel);
+}
 
 // View name context — used only for diagnostics (e.g. unknown-control-type warnings)
 export const ViewNameContext = React.createContext<string | undefined>(undefined);
@@ -439,7 +473,8 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
   // stays fully visible above it. Only wrap in the flex split when the panel
   // actually shows — otherwise render the grid alone so its height context is
-  // unchanged. When the panel shows, the grid fills its flex slot via fillContainer.
+  // unchanged. `panelShown` tells the grid to re-measure the height it fills, so
+  // it gives up exactly the panel's space and takes it back when the panel closes.
   const showPanel = isListEdit && !hidden && !!hydratedPanel;
   return (
     <>
@@ -452,8 +487,6 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         onSelectRecord={isListEdit ? onSelectRecord : undefined}
         onRecordPaths={isListEdit ? setRecords : undefined}
         embedded={props.embedded}
-        fillHeight={props.fillHeight}
-        fillContainer
         panelShown={showPanel}
       />
       {showPanel && hydratedPanel && (
@@ -475,13 +508,44 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   );
 };
 
+/** Rete di sicurezza per lo zoom griglia: se lo zoom è acceso ma nessuna griglia
+ *  lo rivendica — può capitare tornando indietro su un tab diverso da quello
+ *  zoomato — non c'è pulsante da premere né Esc registrata dalla griglia, e la
+ *  testata resterebbe collassata con la barra dei tab nascosta e nessun modo di
+ *  riaprirla. Componente separato, montato solo quando lo zoom è acceso, così i
+ *  suoi hook non pesano sul conteggio di ViewRenderer. Priorità più bassa della
+ *  griglia, che quando c'è deve vincere lei. */
+const ZoomEscapeFallback: React.FC = () => {
+  const { setZoomedGridId } = useUiMode();
+  useHotkey('Escape', () => setZoomedGridId(null), { priority: HotkeyPriority.gridZoomFallback });
+  return null;
+};
+
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded, fillHeight: fillHeightProp }) => {
   // Suppressed only for the page-level view: an embedded view's title names a
   // section, which the breadcrumb is not showing (see TitleInBreadcrumbContext).
   const titleInBreadcrumb = React.useContext(TitleInBreadcrumbContext) && !embedded;
+  // Inside a tab, a heading that just repeats the tab label is dropped.
+  const titleEchoesTab = useIsTabLabelEcho(ui?.title);
   const fillHeightCtx = React.useContext(FillHeightContext);
   const splitSid = React.useContext(SidContext);
   const fillHeight = fillHeightProp ?? fillHeightCtx;
+  /* Zoom su una griglia (SXADV-5737): la vista collassa tutto ciò che sta sopra
+     la griglia — testata e barra dei tab — lasciando il pannello inferiore da
+     solo. Non è un overlay: stesso nodo DOM, stesso albero React, quindi AG Grid
+     non si rimonta e non perde scroll, selezione né riga in editing.
+
+     Qui sopra i return anticipati si possono fare SOLO letture di context: non
+     occupano slot nella lista degli hook di React, ed è quello che permette al
+     ramo lista (`pageType===1`) di uscire subito pur avendo il ramo pieno una
+     ventina di hook più sotto. Un solo useRef/useMemo/useEffect messo qui rompe
+     l'invariante e la pagina diventa bianca — "Rendered fewer hooks than
+     expected" — passando da una query alla sua lista dei risultati, che stanno
+     sullo stesso fiber (Shell non dà key a ViewRenderer). Per questo l'uscita
+     da tastiera sta in `ZoomEscapeFallback`, montato solo quando serve. */
+  const zoomStore = React.useContext(UiModeStoreContext);
+  const zoomScope = React.useContext(ZoomScopeContext);
+  const gridZoom = zoomStore.zoomByScope[zoomScope] != null;
   if (!ui) return null;
 
   // Tree views
@@ -838,7 +902,8 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {ui.title && !hasOlapCube && !titleInBreadcrumb && <div className="view-title">{ui.title}</div>}
+        {gridZoom && !embedded && <ZoomEscapeFallback />}
+        {ui.title && !hasOlapCube && !titleInBreadcrumb && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
             {actionBarRows.map((row, ri) => (
@@ -846,7 +911,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
             ))}
           </div>
         )}
-        {hasVisibleFormContent && (
+        {hasVisibleFormContent && !gridZoom && (
           <>
             <div
               className={`view-split-form${resizing ? ' view-split-form--resizing' : ''}`}
@@ -881,14 +946,21 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
           </>
         )}
         <div className="view-split-bottom">
+          <SplitAreaContext.Provider value={true}>
           {bottomRows.map((row, ri) => {
             // Tab rows: render tab bar + content rows in a table sharing the master grid
             const tabCell = row.cells.find((c) => c.control?.type === 'tab');
             if (tabCell?.control) {
               const tabControl = tabCell.control;
-              const tabActiveTab = tabControl.tabs?.find((t) => t.selected)?.name || tabControl.tabs?.[0]?.name;
+              const tabSelected = tabControl.tabs?.find((t) => t.selected) ?? tabControl.tabs?.[0];
+              const tabActiveTab = tabSelected?.name;
               return (
                 <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+                  {/* In zoom sparisce anche la barra dei tab: si resta sul tab
+                      corrente finché non si esce (Esc). La griglia zoomata in
+                      compenso mostra il proprio titolo, che normalmente viene
+                      soppresso perché ripete l'etichetta del tab. */}
+                  {!gridZoom && (
                   <div className="tab-sticky-wrapper">
                     <Tabs
                       activeKey={tabActiveTab}
@@ -899,16 +971,21 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                       }))}
                     />
                   </div>
+                  )}
                   {tabControl.contentRows && (
                     <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                      <table className="layout-table" style={{ width: '100%' }}>
-                        <tbody>
-                          {rulerRow}
-                          {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
-                            <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
-                          ))}
-                        </tbody>
-                      </table>
+                      {/* Same as the non-split tab path: the tab label names this
+                          content, so a heading repeating it is dropped (TabLabelContext). */}
+                      <TabLabelContext.Provider value={tabSelected?.prompt}>
+                        <table className="layout-table" style={{ width: '100%' }}>
+                          <tbody>
+                            {rulerRow}
+                            {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
+                              <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+                            ))}
+                          </tbody>
+                        </table>
+                      </TabLabelContext.Provider>
                     </div>
                   )}
                 </div>
@@ -919,6 +996,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
               <BottomPanelRow key={row.id || `bp_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
             );
           })}
+          </SplitAreaContext.Provider>
         </div>
       </div>
       </PathContext.Provider>
@@ -945,7 +1023,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
-      {ui.title && !hasOlapCube && !titleInBreadcrumb && <div className="view-title">{ui.title}</div>}
+      {ui.title && !hasOlapCube && !titleInBreadcrumb && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
       <div {...bodyProps}>
         <table ref={tableRef} className="layout-table" style={tableStyle}>
           <tbody>
@@ -1171,7 +1249,8 @@ function renderContainerControl(
 ): React.ReactNode {
   switch (control.type) {
     case 'tab': {
-      const activeTab = control.tabs?.find((t) => t.selected)?.name || control.tabs?.[0]?.name;
+      const selectedTab = control.tabs?.find((t) => t.selected) ?? control.tabs?.[0];
+      const activeTab = selectedTab?.name;
       return (
         <div className="tab-container">
           <div className="tab-sticky-wrapper">
@@ -1186,19 +1265,23 @@ function renderContainerControl(
           </div>
           {control.contentRows && (
             <div className="tab-content" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <ViewRenderer
-                ui={{
-                  rows: control.contentRows,
-                  viewName: control.contentViewName,
-                  totalCols: control.totalCols as number | undefined,
-                  totalWidth: control.totalWidth as number | undefined,
-                }}
-                onAction={onAction}
-                onChange={onChange}
-                onGridChange={onGridChange}
-                embedded
-                fillHeight
-              />
+              {/* The tab label names this content: a heading inside that repeats it
+                  is dropped, however deep the wrapper chain (see TabLabelContext). */}
+              <TabLabelContext.Provider value={selectedTab?.prompt}>
+                <ViewRenderer
+                  ui={{
+                    rows: control.contentRows,
+                    viewName: control.contentViewName,
+                    totalCols: control.totalCols as number | undefined,
+                    totalWidth: control.totalWidth as number | undefined,
+                  }}
+                  onAction={onAction}
+                  onChange={onChange}
+                  onGridChange={onGridChange}
+                  embedded
+                  fillHeight
+                />
+              </TabLabelContext.Provider>
             </div>
           )}
         </div>

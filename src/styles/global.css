@@ -502,8 +502,10 @@ html, body {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 4px 0 2px;
-  text-align: center;
+  padding: 4px 8px 2px 0;
+  /* Right, not centred: centred under a list it reads as part of the content and
+     draws the eye away from it (SXADV-5770.3B). */
+  text-align: right;
   font-size: 11px;
   font-style: italic;
   color: #8c8c8c;
@@ -830,6 +832,41 @@ tr.breakRow td {
   box-shadow: inset 3px 0 0 #fff;
 }
 
+/* Colonne nate dalle bande di continuazione (modalità una-riga): stessa
+   griglia, ma l'intestazione le distingue da quelle della riga principale —
+   sono i campi che nella vista a più righe stanno sotto, e ritrovarli in coda
+   senza alcun segno le farebbe sembrare colonne nuove comparse dal nulla. */
+.ag-header-cell.continuation-flat-header {
+  background: var(--app-grid-continuation-header-bg, rgba(0, 0, 0, 0.025));
+}
+.ag-header-cell.continuation-flat-header .ag-header-cell-text {
+  font-style: italic;
+}
+
+/* Uscita dalla modalità immersiva. È l'unico comando che resta sullo schermo
+   quando app bar, header e strip sessioni sono nascosti, quindi deve essere
+   raggiungibile senza essere ingombrante: smorzato finché non lo si cerca,
+   pieno al passaggio del mouse. Sopra il contenuto ma sotto modali e overlay
+   di caricamento. */
+.immersive-exit {
+  position: fixed;
+  top: 2px;
+  right: 4px;
+  z-index: 1000;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+.immersive-exit:hover,
+.immersive-exit:focus-visible {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
 /* Header company/site selectors: slightly smaller text inside (SXADV-5454) */
 .header-select .ant-select-selection-item,
 .header-select .ant-select-selection-placeholder {
@@ -943,6 +980,21 @@ tr.breakRow td {
   height: 18px;
   padding: 0 6px;
   font-size: 11px;
+}
+
+/* Wrapped column headers (SXADV-5770.1A/1B). `wrapHeaderText` gives the header
+   comp wrapper `white-space: normal`; these keep the extra line cheap (14px
+   instead of the ~16-17px AG Grid inherits from the body) and break a label that
+   is one long word rather than letting it overflow the cell. The header row grows
+   to the tallest label via `autoHeaderHeight`, never below the configured 28px. */
+.ag-header-cell-wrap-text .ag-header-cell-comp-wrapper {
+  line-height: 14px;
+  word-break: break-word;
+  /* Shrink-wrap the label instead of stretching to the header row (AG Grid drops
+     its own `height:100%` for auto-height cells, leaving the flex default): the
+     measured height is then the label's own, and a one-line label stays centred
+     in a header row grown by a two-line one. */
+  align-self: center;
 }
 
 /* Grid cell text (SXADV-5742). AG Grid's own stylesheet sizes `.ag-cell` at
