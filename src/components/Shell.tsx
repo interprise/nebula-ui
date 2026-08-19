@@ -406,6 +406,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     document.body.style.cursor = 'col-resize';
   }, [sidebarWidth]);
   const [tabs, setTabs] = useState<TabState[]>([defaultTab]);
+  // Mirror of `tabs` for callbacks that must not re-create on every tab change
+  // (processResponseInner) but still need the tab's sid.
+  const tabsRef = useRef<TabState[]>([defaultTab]);
+  tabsRef.current = tabs;
   const [activeTab, setActiveTab] = useState<string>('tab_1');
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
@@ -858,7 +862,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             const index = decodeURIComponent(m[3]);
             const CMD2 = '/entrasp/controller2';
             if (fileType === 'application/pdf') {
-              window.open(`${CMD2}?action=LoadPdf&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}&type=application/pdf`);
+              // LoadPdf runs the report's post-render action on the session it
+              // lands in; without an explicit sid the server falls back to S1
+              // and the action hits the wrong tab's session (or a stale key).
+              const tabSid = tabsRef.current.find((t) => t.key === tabKey)?.sid;
+              window.open(`${CMD2}?action=LoadPdf&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}&type=application/pdf${tabSid ? `&sid=${encodeURIComponent(tabSid)}` : ''}`);
             } else if (fileType === 'text/html') {
               window.open(`${CMD2}?action=LoadHtml&fileName=${encodeURIComponent(fileName)}&index=${encodeURIComponent(index)}`);
             } else {
