@@ -562,6 +562,42 @@ html, body {
 /* Nav links stay single-line by default (grid cells have fixed row height)… */
 .navigate-view-link {
   white-space: nowrap;
+  margin-right: 12px;
+}
+
+/* Icon + first word, and last word + pill: each pair stays on one line, so a
+   wrapping caption never strands the icon or the badge (see NavigateViewControl). */
+.nav-link-head,
+.nav-link-tail {
+  white-space: nowrap;
+}
+.nav-link-icon {
+  margin-right: 4px;
+  font-size: 12px;
+}
+
+/* Row count behind a checkTarget link, e.g. "Fatture 9". Legacy wrote it inline
+   as plain "(n)"; here it's a filled counter pill in the phone-badge idiom — a
+   circle for one digit, stretching to a lozenge for more. Kept inline (not
+   absolutely positioned over the caption) because the captions in a link band
+   wrap, so there is no stable corner to pin it to. */
+.nav-link-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 1.25em;
+  height: 1.25em;
+  margin-left: 4px;
+  padding: 0 0.35em;
+  border-radius: 999px;
+  background: var(--app-primary, #1677ff);
+  color: #fff;
+  font-size: 0.8em;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 /* The form scroll areas are inline-size containers so bars inside the (often
@@ -583,6 +619,39 @@ html, body {
   max-width: 100cqw;
   position: sticky;
   left: 0;
+}
+
+/* Link-action band (the anagrafica navigation links). Legacy rendered it as a
+   single <tr> of <td>s: when the links didn't fit the width, the table shrank
+   the cells and the CAPTIONS wrapped over two lines, so the band still occupied
+   one row. The React bar was flex-wrap:wrap with single-line captions instead,
+   so each caption kept its full width and the band spilled onto a second row —
+   more visual scanning per anagrafica and an easier mis-click (SXADV-5746.1).
+   A link band (.button-bar-links below) therefore stays on one row and lets the
+   items shrink to their min-content width (longest word), wrapping their own
+   text; overflow-x is the last resort for the pathological case where even that
+   doesn't fit — nothing is ever clipped away, which is what the wrap was
+   protecting against in 5450.1C. */
+.button-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 8px;
+  row-gap: 2px;
+}
+/* Only a bar made purely of links behaves like the legacy table row: a link can
+   wrap its own caption, a button can't (it would just get squeezed), so bars of
+   buttons keep wrapping the band instead. */
+.button-bar-links {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.button-bar-links > * {
+  min-width: min-content;
+}
+.button-bar-links .navigate-view-link {
+  white-space: normal;
+  margin-right: 0;
 }
 /* …but inside form layout cells they wrap instead: table-layout:fixed cells
    shrink with the viewport/zoom and overflow:hidden would silently clip away

@@ -81,16 +81,33 @@ export const NavigateViewControl: ControlComponent = ({ control, onAction }) => 
   // `visible` dynProp. Hide when the current record has no navigable target
   // (SXADV-5474).
   if (control.visible === false) return null;
+  // Captions wrap (they must: inside a link band the columns are narrow), but
+  // the icon and the count pill are atomic inline boxes, and a line can break
+  // on either side of one — so the link icon ended up alone on the first line
+  // and the pill alone on the last, both detached from the words they belong
+  // to. Bind them to the caption's first and last word inside nowrap spans; the
+  // words in between wrap freely (SXADV-5746).
+  const prompt = (control.prompt as string | undefined) ?? '';
+  const count = typeof control.count === 'number' && control.count > 0 ? control.count : null;
+  const words = prompt.trim() ? prompt.trim().split(/\s+/) : [];
+  // checkTarget links carry the number of rows behind the link; legacy appended
+  // it inline as "(n)", here it's a filled counter pill in the phone-badge
+  // idiom (SXADV-5746.2).
+  const badge = count === null ? null : <span className="nav-link-count">{count}</span>;
+  const first = words[0];
+  const last = words.length > 1 ? words[words.length - 1] : undefined;
+  const middle = words.slice(1, words.length - 1);
   return (
   <span
     id={control.id}
     className="navigate-view-link"
-    // white-space lives in CSS (global.css): nowrap by default, but relaxed to
-    // wrap inside form layout cells — a nowrap link in a fixed-width cell gets
-    // hard-clipped by overflow:hidden when zoom shrinks the viewport, silently
-    // hiding trailing links ("Storico Ordini" etc., 5450.1C). Legacy rendered
-    // them as plain <a> in table cells, which wrapped.
-    style={{ cursor: 'pointer', color: '#1677ff', marginRight: 12 }}
+    // white-space and spacing live in CSS (global.css): nowrap by default, but
+    // relaxed to wrap inside form layout cells and inside the link band — a
+    // nowrap link in a fixed-width cell gets hard-clipped by overflow:hidden
+    // when zoom shrinks the viewport, silently hiding trailing links ("Storico
+    // Ordini" etc., 5450.1C). Legacy rendered them as plain <a> in table cells,
+    // which wrapped.
+    style={{ cursor: 'pointer', color: '#1677ff' }}
     title={control.hint}
     onClick={() => control.action && onAction(control.action, {
       navpath: control.navpath as string,
@@ -101,8 +118,18 @@ export const NavigateViewControl: ControlComponent = ({ control, onAction }) => 
       option1: (control.controlName ?? control.name) as string,
     })}
   >
-    <LinkOutlined style={{ marginRight: 4, fontSize: 12 }} />
-    {control.prompt as string}
+    <span className="nav-link-head">
+      <LinkOutlined className="nav-link-icon" />
+      {first}
+      {last === undefined && badge}
+    </span>
+    {middle.length > 0 && ' ' + middle.join(' ')}
+    {last !== undefined && (
+      <>
+        {' '}
+        <span className="nav-link-tail">{last}{badge}</span>
+      </>
+    )}
   </span>
   );
 };

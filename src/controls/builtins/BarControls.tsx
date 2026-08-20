@@ -127,8 +127,15 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
 export const ButtonBarControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const buttons = control.buttons as Array<Record<string, unknown>> | undefined;
   if (!buttons?.length) return null;
+  // A bar made only of navigation links (the anagrafica link-action band) keeps
+  // the legacy single-row behaviour: captions wrap instead of the band wrapping
+  // (SXADV-5746.1, see global.css). Bars of real buttons — which can't wrap
+  // their own label — keep wrapping the band itself.
+  const linksOnly = buttons.every((b) => b.type === 'navigateView');
   return (
-    <div className="button-bar" style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+    // Layout lives in global.css so the band can behave like the legacy
+    // <tr>-of-<td>s it replaces.
+    <div className={linksOnly ? 'button-bar button-bar-links' : 'button-bar'}>
       {buttons.map((btn, i) => {
         const btnControl = btn as unknown as UIControl;
         const ci = btnControl.configureIcon;

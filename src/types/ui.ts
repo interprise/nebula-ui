@@ -47,6 +47,9 @@ export interface UIControl {
   disabled?: boolean;
   // navigate
   targetViewName?: string;
+  /** Rows behind a checkTarget NavigateView link, shown as a "(n)" badge after
+   *  the caption. Absent when the link doesn't count its target. */
+  count?: number;
   // post-decorations: navigation icons next to field
   navigateView?: { command: string; navpath: string; controlName: string };
   navigateAdd?: { command: string; navpath: string; controlName: string };
