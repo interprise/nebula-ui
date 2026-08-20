@@ -62,16 +62,29 @@ const MoneyInput: React.FC<{
   // real server round-trip. (SXADV-5494)
   const [local, setLocal] = useSyncedState<number | null>(toNumber(value));
   const symbol = currencySymbol !== undefined ? decodeHtmlEntities(String(currencySymbol || '€')) : undefined;
-  const showPrefix = symbol && !focused && local != null;
+  // Simbolo di valuta DOPO il numero, non prima: i campi numerici sono
+  // allineati a destra (vedi `.ant-input-number-input` in global.css, che
+  // ripristina il `.number { text-align: right }` che il legacy applicava a
+  // ogni controllo Number/Money via createInputClass). Come prefisso il simbolo
+  // sarebbe rimasto incollato a sinistra con il valore a filo destro e un vuoto
+  // in mezzo; come suffisso si legge `1.220,00 €`, che è esattamente quello che
+  // mostrava il legacy — lì il simbolo faceva parte del valore formattato.
+  const showSymbol = symbol && !focused && local != null;
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    // maxWidth sull'involucro, non sul solo InputNumber: essendo un inline-flex
+    // che si dimensiona sul contenuto, un `max-width:100%` sul figlio si
+    // risolverebbe sulla larghezza del contenitore stesso (cioè su se stesso) e
+    // non vincolerebbe nulla. Vincolato qui, il campo si restringe alla cella
+    // invece di sforare ed essere tagliato — con il valore a destra la parte
+    // tagliata è proprio quella che conta.
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
       <InputNumber
         {...commonProps}
         value={local}
         precision={decimals}
         // Server sends/expects Italian: comma is the decimal separator.
         decimalSeparator=","
-        prefix={showPrefix ? symbol : undefined}
+        suffix={showSymbol ? symbol : undefined}
         placeholder={symbol || undefined}
         style={{ width }}
         onFocus={() => setFocused(true)}

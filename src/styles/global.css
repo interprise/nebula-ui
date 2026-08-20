@@ -1093,6 +1093,34 @@ tr.breakRow td {
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Campi numerici e importi allineati a destra, con cifre a larghezza fissa.
+   Nel legacy ogni controllo Number/Money (quindi anche UMNumber ed ExtMoney)
+   riceveva la classe `number` da createInputClass, e `.number { text-align:
+   right }` allineava a destra sia la cella di lista sia l'input della form.
+   Nel protocollo JSON quella classe non viaggia (`cls` porta solo il
+   contentClass del ViewItem): le liste se la ricavano dal tipo di controllo,
+   le form non l'avevano mai riavuta. Nel progetto InputNumber lo usano solo il
+   controllo Number/Money e l'editor numerico di griglia, quindi la regola non
+   raggiunge altro. Selettori con le due classi di modo (input/spinner) per
+   specificita': antd definisce l'allineamento dell'input con
+   `:where(.css-hash).ant-input-number .ant-input-number-input` e lo centra in
+   modo spinner, regole che una classe sola non batte. */
+.ant-input-number.ant-input-number-mode-input .ant-input-number-input,
+.ant-input-number.ant-input-number-mode-spinner .ant-input-number-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* La larghezza del campo viene da `size` e puo' superare quella della cella,
+   che la taglia (`.content-cell` e' overflow:hidden, e il righello adatta le
+   colonne alla larghezza visibile). Finche' il valore stava a sinistra la
+   troncatura non si vedeva; allineato a destra finirebbe dentro la parte
+   tagliata, cioe' invisibile. Il campo si ferma quindi al bordo della cella —
+   che e' gia' dove lo si vedeva finire. */
+.ant-input-number {
+  max-width: 100%;
+}
+
 /* Tabular figures for number/money columns in grids */
 .ag-right-aligned-cell {
   font-variant-numeric: tabular-nums lining-nums;
@@ -1457,7 +1485,8 @@ body[style*="cursor: wait"] * {
 /* Stacked in-flow below the grid (NOT an overlay): the grid renders at its own
    height above and stays fully visible; the panel is a normal block beneath it,
    capped, so rows are never hidden behind a popup. Appears on record selection,
-   closes via its button or a click outside. */
+   closes via its button or Esc (never on a click outside: that would fire on
+   the blur that commits a reload field). */
 .edit-panel {
   max-height: 45vh;
   border-top: 2px solid var(--color-border, #d9d9d9);

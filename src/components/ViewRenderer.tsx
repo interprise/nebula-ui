@@ -1,7 +1,7 @@
 import React, { useCallback, useRef } from 'react';
 import { fixServerHtml } from '../services/serverHtml';
-import { Tabs } from 'antd';
-import { BookOutlined, CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons';
+import { Button, Tabs, Tooltip } from 'antd';
+import { BookOutlined, CheckCircleFilled, CloseCircleFilled, CompressOutlined, ExpandOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListRecord, RowEditData } from '../types/ui';
 import { hydrate } from '../services/hydrate';
 import { putPanelTemplate, getPanelTemplate } from '../services/templateCache';
@@ -14,7 +14,8 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
-import { useUiMode, UiModeStoreContext, ZoomScopeContext } from '../hooks/uiMode';
+import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID } from '../hooks/uiMode';
+import { useDensity, DENSITY_FONT_SIZE, type Density } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
@@ -59,20 +60,33 @@ const PROMPT_CELL_PADDING = 10;
 /** Kept free so a table sized to the host doesn't itself trigger the scrollbar. */
 const RULER_GUTTER = 8;
 
+const RULER_FONT_FAMILY = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+/** Il carattere con cui la layout-table disegnera' davvero le etichette. Il
+ *  corpo non e' piu' inchiodato a 13px: lo sceglie l'utente (SXADV-5745), e un
+ *  righello che misura con un corpo diverso da quello disegnato sbaglia la
+ *  banda delle etichette proprio nel preset compatto, dove lo spazio conta di
+ *  piu'. Il valore arriva da `DENSITY_FONT_SIZE`, che tiene il passo con
+ *  `--app-font-size` in tokens.css — come `GRID_ROW_HEIGHT` fa con
+ *  `--ag-row-height`. */
+function layoutTableFont(density: Density): string {
+  return `${DENSITY_FONT_SIZE[density]}px ${RULER_FONT_FAMILY}`;
+}
+
 /** Width of a prompt's text at the layout table's own font. Uses a canvas so it
- *  can run inside a useMemo — no DOM node, no reflow. The font mirrors
- *  `.layout-table` (13px) and App.tsx's ConfigProvider fontFamily; a mismatch
- *  only costs a few pixels, which PROMPT_BAND_SLACK absorbs, and the prompt cell
- *  wraps rather than clipping if it ever came out short. */
+ *  can run inside a useMemo — no DOM node, no reflow. Il chiamante misura il
+ *  font una volta per passata e lo passa qui: `getComputedStyle` per ogni
+ *  etichetta costerebbe un reflow a testa. A mismatch only costs a few pixels,
+ *  which PROMPT_BAND_SLACK absorbs, and the prompt cell wraps rather than
+ *  clipping if it ever came out short. */
 const measurePromptWidth = (() => {
-  const FONT = "13px Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
   let ctx: CanvasRenderingContext2D | null | undefined;
-  return (promptHtml: string): number => {
+  return (promptHtml: string, font: string): number => {
     const text = promptHtml.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
     if (!text) return 0;
     if (ctx === undefined) ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return text.length * 7;
-    ctx.font = FONT;
+    ctx.font = font;
     return ctx.measureText(text).width;
   };
 })();
@@ -147,6 +161,14 @@ export const TabLabelContext = React.createContext<string | undefined>(undefined
  *  griglia — e in una vista senza split la griglia sta dentro la tabella di
  *  layout, dove "nascondere il resto" vuol dire nascondere righe di form. */
 export const SplitAreaContext = React.createContext<boolean>(false);
+
+/** True per il contenuto di un tab del pannello inferiore. Serve a decidere
+ *  DOVE vive il comando di ingrandimento: con una barra tab presente lo porta
+ *  lei (ingrandisce l'area e la barra resta, così si continua a cambiare tab),
+ *  e la griglia dentro al tab non ripete un secondo pulsante a quaranta pixel
+ *  di distanza che fa quasi la stessa cosa. Senza barra tab il pulsante resta
+ *  alla griglia, che è l'unico posto dove metterlo (SXADV-5651). */
+export const InTabPanelContext = React.createContext<boolean>(false);
 
 /** Normalized comparison against the enclosing tab's label — true when this
  *  heading would just repeat it. */
@@ -545,7 +567,20 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
      da tastiera sta in `ZoomEscapeFallback`, montato solo quando serve. */
   const zoomStore = React.useContext(UiModeStoreContext);
   const zoomScope = React.useContext(ZoomScopeContext);
-  const gridZoom = zoomStore.zoomByScope[zoomScope] != null;
+  /* Corpo del carattere scelto dall'utente (SXADV-5745): cambiandolo cambia la
+     larghezza delle etichette e il righello va rimisurato. Sta qui sopra, e non
+     accanto a chi lo usa, perche' e' una lettura di context — nessuno slot
+     occupato — e regge quindi l'invariante descritta sopra. */
+  const { density } = useDensity();
+  /* Un solo slot di zoom per ambito, con due rivendicanti possibili: una
+     griglia (id = suo `viewName`/`path`) oppure l'area inferiore intera
+     (`PANEL_ZOOM_ID`, SXADV-5651). Per la testata non fa differenza — in
+     entrambi i casi si collassa — mentre la barra dei tab sopravvive solo
+     allo zoom d'area: è lì che sta il pulsante per uscirne, e in un tab a
+     campi (non a griglia) senza barra non si cambierebbe più tab. */
+  const zoomedId = zoomStore.zoomByScope[zoomScope] ?? null;
+  const zoomed = zoomedId != null;
+  const panelZoom = zoomedId === PANEL_ZOOM_ID;
   if (!ui) return null;
 
   // Tree views
@@ -688,15 +723,18 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   // widest prompt colspan in the view.
   const promptBandWidth = React.useMemo(() => {
     if (!promptBandCols) return 0;
+    // Rimisurato quando cambia la densita': il corpo del carattere e' cambiato
+    // e con lui la larghezza che ogni etichetta pretende.
+    const font = layoutTableFont(density);
     let perCol = 0;
     for (const row of ui.rows) {
       const first = row.cells[0];
       if (!first || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
       const span = first.colspan || 1;
-      perCol = Math.max(perCol, (measurePromptWidth(first.prompt) + PROMPT_CELL_PADDING) / span);
+      perCol = Math.max(perCol, (measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING) / span);
     }
     return perCol ? Math.ceil(perCol * promptBandCols) : 0;
-  }, [ui.rows, promptBandCols]);
+  }, [ui.rows, promptBandCols, density]);
 
   // What's left of the visible width goes to the content columns, in the
   // proportions the server declared (colspans), so the form fills the editing
@@ -902,7 +940,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {gridZoom && !embedded && <ZoomEscapeFallback />}
+        {zoomed && !embedded && <ZoomEscapeFallback />}
         {ui.title && !hasOlapCube && !titleInBreadcrumb && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
@@ -911,7 +949,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
             ))}
           </div>
         )}
-        {hasVisibleFormContent && !gridZoom && (
+        {hasVisibleFormContent && !zoomed && (
           <>
             <div
               className={`view-split-form${resizing ? ' view-split-form--resizing' : ''}`}
@@ -956,11 +994,13 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
               const tabActiveTab = tabSelected?.name;
               return (
                 <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
-                  {/* In zoom sparisce anche la barra dei tab: si resta sul tab
-                      corrente finché non si esce (Esc). La griglia zoomata in
-                      compenso mostra il proprio titolo, che normalmente viene
-                      soppresso perché ripete l'etichetta del tab. */}
-                  {!gridZoom && (
+                  {/* Con lo zoom di una GRIGLIA sparisce anche la barra dei tab: si
+                      resta sul tab corrente finché non si esce (Esc), e la griglia
+                      zoomata mostra il proprio titolo, normalmente soppresso perché
+                      ripete l'etichetta del tab. Con lo zoom dell'AREA la barra
+                      resta: è il contenuto del tab a prendersi lo schermo, qualunque
+                      esso sia, e cambiare tab deve continuare a funzionare. */}
+                  {(!zoomed || panelZoom) && (
                   <div className="tab-sticky-wrapper">
                     <Tabs
                       activeKey={tabActiveTab}
@@ -969,10 +1009,25 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                         key: tab.name,
                         label: renderTabLabel(tab, onAction),
                       }))}
+                      tabBarExtraContent={{
+                        right: (
+                          <Tooltip title={panelZoom ? 'Riduci la sezione (Esc)' : 'Ingrandisci la sezione'} placement="bottom">
+                            <Button
+                              size="small"
+                              type={panelZoom ? 'primary' : 'default'}
+                              icon={panelZoom ? <CompressOutlined /> : <ExpandOutlined />}
+                              aria-label={panelZoom ? 'Riduci la sezione' : 'Ingrandisci la sezione'}
+                              aria-pressed={panelZoom}
+                              onClick={() => zoomStore.setZoomForScope(zoomScope, panelZoom ? null : PANEL_ZOOM_ID)}
+                            />
+                          </Tooltip>
+                        ),
+                      }}
                     />
                   </div>
                   )}
                   {tabControl.contentRows && (
+                    <InTabPanelContext.Provider value={true}>
                     <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                       {/* Same as the non-split tab path: the tab label names this
                           content, so a heading repeating it is dropped (TabLabelContext). */}
@@ -987,6 +1042,7 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
                         </table>
                       </TabLabelContext.Provider>
                     </div>
+                    </InTabPanelContext.Provider>
                   )}
                 </div>
               );

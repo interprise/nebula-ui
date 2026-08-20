@@ -1448,12 +1448,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
      `allowWhileTyping`: è un tasto funzione, non digita niente, e passare a
      schermo intero mentre si compila un campo è legittimo. Senza, la
      scorciatoia sembra rotta ogni volta che il fuoco è dentro un input — che
-     durante la compilazione di una testata è la condizione normale. */
+     durante la compilazione di una testata è la condizione normale.
+
+     Sui portatili però la fila dei funzione non è sempre raggiungibile: dove
+     F11 di fabbrica è un tasto multimediale ci vuole anche `fn`, e una combo
+     a tre tasti tenuti insieme o non arriva alla pagina o non si prova
+     nemmeno (SXADV-5744.1, portatile Dell). Da qui la seconda combo:
+     `Ctrl+Shift+F` sta sulla fila alfabetica, nessun browser la rivendica,
+     ed è la stessa azione — due strade per la stessa porta, non due
+     comportamenti. */
   const toggleImmersive = useCallback(
     () => (immersive ? exitImmersive() : enterImmersive()),
     [immersive, exitImmersive, enterImmersive],
   );
   useHotkey('Shift+F11', toggleImmersive, { allowWhileTyping: true });
+  useHotkey('Ctrl+Shift+F', toggleImmersive, { allowWhileTyping: true });
 
   type AppBarButton = {
     key: string;
@@ -1490,7 +1499,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: loginInfo.changePassword !== false },
     // Solo l'ingresso: in immersiva questa barra non c'è più, si esce con Esc o
     // col pulsante flottante.
-    { key: 'immersive', icon: <FullscreenOutlined />, tooltip: 'Schermo intero (Shift+F11)', onClick: enterImmersive, visible: true },
+    { key: 'immersive', icon: <FullscreenOutlined />, tooltip: 'Schermo intero (Ctrl+Shift+F o Shift+F11)', onClick: enterImmersive, visible: true },
   ];
 
   const appBarButtons: AppBarButton[] = [

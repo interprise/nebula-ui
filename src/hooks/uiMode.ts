@@ -24,6 +24,17 @@ import { HotkeyPriority, useHotkey } from './hotkeys';
  *  nuova si dipingerebbe per un frame con lo zoom di quella vecchia. */
 export const ZoomScopeContext = createContext<string>('');
 
+/** Identità convenzionale dello zoom quando a essere ingrandita è **l'area
+ *  inferiore intera**, non una griglia al suo interno (SXADV-5651). Sta nello
+ *  stesso slot per-ambito dello zoom griglia — le due cose si escludono a
+ *  vicenda per costruzione: ingrandire l'area mentre una griglia è già a tutto
+ *  campo non vorrebbe dire niente, e con un solo slot non c'è uno stato
+ *  intermedio da riconciliare.
+ *
+ *  La `@` la tiene fuori dallo spazio dei nomi delle griglie, che si
+ *  identificano con `ui.viewName ?? ui.path`. */
+export const PANEL_ZOOM_ID = '@panel';
+
 interface UiModeStore {
   immersive: boolean;
   setImmersive: (v: boolean) => void;

@@ -1,11 +1,12 @@
 import React from 'react';
 import { fixServerHtml } from '../services/serverHtml';
-import { App, Button } from 'antd';
+import { App, Button, Tooltip } from 'antd';
 import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
+import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 
 /**
  * Bottom edit panel for listEdit lists. The grid stays read-only; selecting a
@@ -132,7 +133,15 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // No click-outside close: the panel is in-flow (doesn't cover rows), and a
   // click-outside handler would fire on the very blur that commits a reload
   // field (and on combo/date option clicks), swallowing them. It closes via its
-  // own button or by switching tab (which unmounts it).
+  // own button, via Esc, or by switching tab (which unmounts it).
+  //
+  // Esc deliberately WITHOUT allowWhileTyping: inside a field Esc means "annulla
+  // la modifica del campo" — the combos already bind it that way (useSelectKeys
+  // restores the baseline and preventDefaults, which the dispatcher honours) —
+  // and stealing it would break that. So Esc closes the panel only when focus
+  // isn't in a field, which covers the reported case: the user clicks a row,
+  // focus stays on the grid, and Esc gets them back to the rows (SXADV-5735.2).
+  useHotkey('Escape', onClose, { priority: HotkeyPriority.editPanel });
 
   const path = rowPath ?? panel.path ?? '';
   // Mirror the server's buildPanelTemplate choice: the panel is a DETAIL FORM
@@ -173,7 +182,11 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 Elimina
               </Button>
             )}
-            <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} aria-label="Chiudi" />
+            <Tooltip title="Chiudi il pannello e tornare ai soli righi (Esc)">
+              <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose}>
+                Chiudi
+              </Button>
+            </Tooltip>
           </span>
         </div>
         <div className="edit-panel-body">

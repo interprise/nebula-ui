@@ -103,6 +103,10 @@ export const HotkeyPriority = {
   gridZoomFallback: 25,
   /** Uscita dallo zoom griglia: più interna dell'immersiva, quindi prima. */
   gridZoom: 30,
+  /** Chiusura del pannello di editing di una lista listEdit: è la superficie
+   *  più interna di tutte — una modifica in corso su un rigo — quindi Esc
+   *  chiude prima quello e solo alla pressione dopo lo zoom o l'immersiva. */
+  editPanel: 40,
 } as const;
 
 export interface HotkeyOptions {

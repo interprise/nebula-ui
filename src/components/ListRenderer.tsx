@@ -7,7 +7,7 @@ import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, Expand
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { getControl, isCellRenderable } from '../controls/registry';
-import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } from './ViewRenderer';
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -37,8 +37,17 @@ const ServerSortHeader = (props: {
   sortExpression?: string;
   sortDir?: string;
   configureIcon?: { included: boolean; itemId: string };
+  /** Colonna allineata a destra (money/number). AG Grid allinea l'intestazione
+   *  con `.ag-right-aligned-header .ag-header-cell-text`, un selettore che
+   *  esiste solo per l'intestazione DI SERIE: con un headerComponent proprio
+   *  (liste ordinate dal server, o colonna con configureIcon) quella regola non
+   *  aggancia nulla e il nome colonna resta a sinistra sopra dati allineati a
+   *  destra (SXADV-5736.2). Ci allineiamo qui, come fa AG Grid: `row-reverse`,
+   *  che impacchetta a destra e porta l'indicatore di ordinamento a sinistra
+   *  dell'etichetta. */
+  alignRight?: boolean;
 }) => {
-  const { displayName, sortExpression, sortDir, configureIcon } = props;
+  const { displayName, sortExpression, sortDir, configureIcon, alignRight } = props;
   const icon = configureIcon && (
     <span
       className={`configure-icon ${configureIcon.included ? 'configure-on' : 'configure-off'}`}
@@ -54,7 +63,14 @@ const ServerSortHeader = (props: {
   );
   if (!sortExpression) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        flexDirection: alignRight ? 'row-reverse' : 'row',
+        width: alignRight ? '100%' : undefined,
+        textAlign: alignRight ? 'right' : undefined,
+      }}>
         <span>{displayName}</span>
         {icon}
       </span>
@@ -62,7 +78,16 @@ const ServerSortHeader = (props: {
   }
   return (
     <div
-      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, width: '100%', userSelect: 'none' }}
+      style={{
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        width: '100%',
+        userSelect: 'none',
+        flexDirection: alignRight ? 'row-reverse' : 'row',
+        textAlign: alignRight ? 'right' : undefined,
+      }}
       onClick={() => sortDispatchRef.current?.(sortExpression)}
     >
       <span>{displayName}</span>
@@ -713,6 +738,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      da collassare, ed è lì che l'alta numerosità righi è ingestibile. Lo stato
      è l'`ui.path` della griglia, così una vista con più griglie sa quale. */
   const inSplitArea = useContext(SplitAreaContext);
+  const inTabPanel = useContext(InTabPanelContext);
   const { zoomedGridId, setZoomedGridId, isOneLine, setOneLine } = useUiMode();
   /* Identità della griglia dentro la vista: il NOME della vista, non `ui.path`.
      `ToolViewState.getPath()` è `parent + id + '.' + posizione`, quindi il path
@@ -721,7 +747,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      pulsante tornava "ingrandisci". Stesso motivo per cui `selKey` sopra usa
      `viewName ?? path`. */
   const gridId = ui.viewName ?? ui.path ?? null;
-  const canZoom = !!embedded && inSplitArea && !!gridId;
+  /* Dentro un tab il comando di ingrandimento ce l'ha la barra dei tab, che
+     ingrandisce l'area tenendo la barra: due pulsanti quasi uguali a poca
+     distanza confondevano e basta. Fuori dai tab resta qui, unico posto
+     disponibile (SXADV-5651). */
+  const canZoom = !!embedded && inSplitArea && !inTabPanel && !!gridId;
   const isZoomed = canZoom && zoomedGridId === gridId;
   /* Modalità una-riga: le bande di continuazione diventano colonne vere, il
      record sta su una linea sola e la griglia scorre in orizzontale con le
@@ -849,11 +879,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // and the whole value shows over multiple lines instead of being clipped to
     // the first line (item 5455.3). Detected from the first data row's cells.
     const wrapColumns = new Set<number>();
+    // Colonne allineate a destra dallo STILE della cella invece che dal tipo di
+    // controllo: `contentStyle="text-align:right"` su un ViewItem di testo (il
+    // numero documento, ad esempio) arriva come stile inline per-cella, che il
+    // dato rispetta e l'intestazione no — nome colonna a sinistra sopra valori a
+    // destra (SXADV-5736.2). Serve solo per l'intestazione: la cella è già a
+    // posto per conto suo.
+    const styleRightColumns = new Set<number>();
     {
       const firstDataRow = uiRows.find((r: UIRow) => r.cls !== 'breakRow' && !isContinuationRow(r));
       firstDataRow?.cells.forEach((cell: UICell, idx: number) => {
         const st = cell.control?.style;
-        if (st && /white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
+        if (!st) return;
+        if (/white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
+        if (/text-align\s*:\s*right/i.test(st)) styleRightColumns.add(idx);
       });
     }
 
@@ -928,6 +967,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           wrapText = true;
         }
         const isRightAlign = rightAlignColumns.has(idx);
+        // L'intestazione segue anche l'allineamento imposto via contentStyle,
+        // che invece non tocca le celle (già allineate dal loro stile inline).
+        const isHeaderRightAlign = isRightAlign || styleRightColumns.has(idx);
         // Minimum width based on longest word in header (measured, zoom-proof)
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
         const hdrMinWidth = headerLabelMinWidth(longestWord);
@@ -1068,7 +1110,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             const s = params.data?.[`_style_${idx}`] as string | undefined;
             return s ? parseInlineStyle(s) : null;
           },
-          headerClass: isRightAlign ? 'ag-right-aligned-header' : undefined,
+          headerClass: isHeaderRightAlign ? 'ag-right-aligned-header' : undefined,
           headerTooltip: hdr.hint,
           // Fixed width so columns start at their colspan-proportioned
           // dimension (see effectiveWidth) and remain resizable by the user.
@@ -1096,6 +1138,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               sortExpression: !allDataLocal ? hdr.sortExpression : undefined,
               sortDir: hdr.sortDir,
               configureIcon: hdr.configureIcon,
+              alignRight: isHeaderRightAlign,
             },
           } : {}),
         });
