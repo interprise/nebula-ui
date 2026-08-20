@@ -98,10 +98,13 @@ html, body {
   display: inline-block;
 }
 
-/* Layout table for detail/query views */
+/* Layout table for detail/query views. Il corpo (e con lui interlinee, altezze
+   dei controlli e padding delle celle) arriva dai token di densita' in
+   tokens.css, non da letterali: e' la preferenza scelta dall'utente nel menu
+   utente a decidere quanti campi entrano nello schermo (SXADV-5745). */
 .layout-table {
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--app-font-size);
 }
 
 /* Layout tables in bottom panels (tabs/embedded views) should fill width */
@@ -120,9 +123,9 @@ html, body {
 }
 
 .layout-table td {
-  padding: 2px 4px;
+  padding: var(--app-cell-pad-y) 4px;
   vertical-align: top;
-  line-height: 18px;
+  line-height: var(--app-row-line-h);
 }
 
 .layout-table td.content-cell {
@@ -137,7 +140,7 @@ html, body {
   padding-right: 4px;
   overflow: hidden;
   word-wrap: break-word;
-  line-height: 16px;
+  line-height: var(--app-prompt-line-h);
 }
 
 /* Content cells (controls) */
@@ -159,7 +162,7 @@ html, body {
 .section-header {
   background: linear-gradient(to bottom, #dae6f4 0%, #c2d6eb 100%);
   font-weight: bold;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   padding: 4px 6px;
   border: 1px solid #99bbe8;
   color: #15428b;
@@ -192,7 +195,7 @@ html, body {
 }
 .tab-sticky-wrapper .ant-tabs-tab {
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--app-font-size);
 }
 .tab-sticky-wrapper .ant-tabs-nav {
   margin-bottom: 4px;
@@ -203,36 +206,36 @@ html, body {
 .layout-table .ant-input-number,
 .layout-table .ant-picker,
 .layout-table .ant-select-selector {
-  font-size: 13px !important;
-  height: 26px !important;
-  min-height: 26px !important;
+  font-size: var(--app-font-size) !important;
+  height: var(--app-field-h) !important;
+  min-height: var(--app-field-h) !important;
   padding: 0 6px !important;
-  line-height: 26px !important;
+  line-height: var(--app-field-h) !important;
 }
 
 .layout-table textarea.ant-input {
-  font-size: 13px !important;
+  font-size: var(--app-font-size) !important;
   padding: 4px 6px !important;
   line-height: 1.4 !important;
 }
 
 .layout-table .ant-input-number-input {
-  height: 24px !important;
+  height: var(--app-field-line-h) !important;
   padding: 0 6px !important;
 }
 
 .layout-table .ant-select {
-  font-size: 13px !important;
-  height: 26px !important;
+  font-size: var(--app-font-size) !important;
+  height: var(--app-field-h) !important;
 }
 
 .layout-table .ant-select-selection-item {
-  line-height: 24px !important;
+  line-height: var(--app-field-line-h) !important;
 }
 
 .layout-table .ant-checkbox-wrapper {
-  font-size: 13px;
-  line-height: 26px;
+  font-size: var(--app-font-size);
+  line-height: var(--app-field-h);
 }
 
 /* Tri-state query filter checkboxes (SXADV-5485): the indeterminate/NULL state
@@ -250,7 +253,7 @@ html, body {
 
 
 .layout-table .ant-picker-input > input {
-  font-size: 13px !important;
+  font-size: var(--app-font-size) !important;
 }
 
 /* Tabular figures for number/money inputs in forms */
@@ -315,7 +318,7 @@ html, body {
 }
 
 .view-title {
-  font-size: 14px;
+  font-size: var(--app-font-size-lg);
   font-weight: 600;
   padding: var(--app-chrome-band-pad-y) 0;
   border-bottom: 1px solid #e8e8e8;
@@ -326,7 +329,7 @@ html, body {
    legacy .subTitle. When present it carries the separator so the title+subtitle
    read as one header group. */
 .view-subtitle {
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   font-weight: 400;
   color: #8c8c8c;
   padding: 0 0 6px;
@@ -463,7 +466,7 @@ html, body {
 }
 .session-tabs .ant-tabs-tab {
   padding: 2px 10px !important;
-  font-size: 13px;
+  font-size: var(--app-font-size);
   line-height: 18px;
 }
 .session-tabs .ant-tabs-tab + .ant-tabs-tab {
@@ -730,7 +733,7 @@ html, body {
 .action-bar .ant-btn.action-link,
 .action-bar .ant-btn.action-btn {
   height: 20px;
-  font-size: 13px;
+  font-size: var(--app-font-size);
   line-height: 18px;
 }
 .action-bar .ant-btn.action-link {
@@ -778,7 +781,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   color: #6b5a14;
 }
 .bpm-cog {
@@ -794,7 +797,7 @@ html, body {
   flex-wrap: wrap;
 }
 .bpm-notif {
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   color: #555;
 }
 .bpm-notif-active {
@@ -1069,10 +1072,12 @@ tr.breakRow td {
 /* Grid cell text (SXADV-5742). AG Grid's own stylesheet sizes `.ag-cell` at
    14px/17px whatever `--ag-font-size` says, so the theme param alone can't buy
    the row height back: at 19px rows the 17px line box leaves no room for
-   descenders. 12px/16px matches the header and the continuation rows, so a
-   wrapped record reads as one block instead of two differently-sized ones. */
+   descenders. Corpo e header condividono `--app-grid-font-size` (SXADV-5745),
+   cosi' un record mandato a capo si legge come un blocco solo invece che come
+   due di corpi diversi. L'interlinea resta fissa: le righe normali sono
+   comunque inchiodate al pavimento di 22px di AG Grid. */
 .ag-cell {
-  font-size: 12px;
+  font-size: var(--app-grid-font-size);
   line-height: 16px;
 }
 
@@ -1083,7 +1088,7 @@ tr.breakRow td {
      tell different stories. */
   --ag-row-height: 22px;
   --ag-header-height: 28px;
-  --ag-font-size: 12px;
+  --ag-font-size: var(--app-grid-font-size);
   --ag-cell-horizontal-padding: 4px;
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -1218,30 +1223,30 @@ body[style*="cursor: wait"] * {
 .post-prompt {
   white-space: nowrap;
   color: #666;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   flex-shrink: 0;
 }
 .mandatory-icon {
   color: #faad14;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   flex-shrink: 0;
 }
 .nav-icon {
-  font-size: 14px;
+  font-size: var(--app-font-size-lg);
   color: #1677ff;
   cursor: pointer;
   flex-shrink: 0;
 }
 .nav-icon:hover { color: #4096ff; }
 .lookup-icon {
-  font-size: 14px;
+  font-size: var(--app-font-size-lg);
   color: #1677ff;
   cursor: pointer;
   flex-shrink: 0;
 }
 .lookup-icon:hover { color: #4096ff; }
 .add-icon {
-  font-size: 14px;
+  font-size: var(--app-font-size-lg);
   color: #52c41a;
   cursor: pointer;
   flex-shrink: 0;
@@ -1263,7 +1268,7 @@ body[style*="cursor: wait"] * {
 /* Documentation mode: help icon next to fields */
 .doc-icon {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--app-font-size);
   margin-left: 4px;
   vertical-align: middle;
 }
@@ -1274,7 +1279,7 @@ body[style*="cursor: wait"] * {
 /* Configuration mode: per-item visibility toggle icon */
 .configure-icon {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--app-font-size);
   margin-left: 4px;
   vertical-align: middle;
   flex-shrink: 0;
@@ -1315,7 +1320,7 @@ body[style*="cursor: wait"] * {
 }
 .multiselect-chip {
   margin: 0 !important;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
   line-height: 18px;
 }
 .multiselect-picker-btn {
@@ -1327,7 +1332,7 @@ body[style*="cursor: wait"] * {
 .multiselect-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--app-font-size-sm);
 }
 .multiselect-table thead th {
   position: sticky;
@@ -1372,7 +1377,7 @@ body[style*="cursor: wait"] * {
   padding: 0 4px;
 }
 .cdms-tree-content .ant-tree {
-  font-size: 13px;
+  font-size: var(--app-font-size);
 }
 .cdms-tree-content .ant-tree-node-content-wrapper {
   padding: 1px 4px;
@@ -1474,7 +1479,7 @@ body[style*="cursor: wait"] * {
   border-bottom: 1px solid var(--color-border, #eee);
   z-index: 1;
 }
-.edit-panel-title { font-size: 12px; font-weight: 600; color: var(--color-text-secondary, #555); }
+.edit-panel-title { font-size: var(--app-font-size-sm); font-weight: 600; color: var(--color-text-secondary, #555); }
 .edit-panel-head-actions { display: flex; align-items: center; gap: 4px; }
 .selector-nav-cell { padding: 0 !important; display: flex; align-items: center; justify-content: center; }
 .selector-nav {

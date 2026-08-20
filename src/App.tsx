@@ -9,6 +9,7 @@ import itIT from 'antd/locale/it_IT';
 import LoginForm from './components/LoginForm';
 import Shell from './components/Shell';
 import { UiModeProvider } from './hooks/UiModeProvider';
+import { DensityContext, DENSITY_FONT_SIZE, useDensityStore } from './hooks/density';
 import type { LoginInfo, MenuItem } from './types/ui';
 import * as api from './services/api';
 
@@ -57,6 +58,10 @@ const hostApi: HostAPI = {
 };
 
 const App: React.FC = () => {
+  // Densita' tipografica scelta dall'utente (SXADV-5745). Sta qui e non piu' in
+  // basso perche' il corpo del carattere e' un token del tema antd: va noto
+  // prima che il ConfigProvider costruisca il tema, non dopo.
+  const density = useDensityStore();
   const [loggedIn, setLoggedIn] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [showLogin, setShowLogin] = useState(true);
@@ -245,25 +250,39 @@ const App: React.FC = () => {
   }
 
   return (
-    <ConfigProvider locale={itIT} theme={{ token: { fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" } }}>
+    /* `fontSize` copre i componenti antd che non passano dal CSS della
+       layout-table — modali, tendine, menu, toolbar — che altrimenti
+       resterebbero al default di 14px mentre il form scende a 12 o 13.
+       Le altezze dei controlli NON vengono toccate qui: dentro il form le
+       impone il CSS a token, e la chrome applicativa e' gia' tarata a parte
+       (SXADV-5742). */
+    <ConfigProvider
+      locale={itIT}
+      theme={{ token: {
+        fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+        fontSize: DENSITY_FONT_SIZE[density.density],
+      } }}
+    >
       <AntApp>
-        {/* Registro tasti + stato delle modalità UI (immersiva, zoom griglia).
-            Sopra tutto: gli acceleratori della toolbar si registrano da dentro
-            la Shell. Vedi hooks/uiMode.tsx. */}
-        <UiModeProvider>
-          {!loggedIn ? (
-            showLogin ? (
-              <LoginForm onLogin={handleLogin} error={loginError} loading={loginLoading} title={loginTitle} />
-            ) : null /* Auto-login in progress */
-          ) : (
-            <Shell
-              menuItems={menuItems}
-              loginInfo={loginInfo!}
-              onLogout={handleLogout}
-              onReloadMenu={handleReloadMenu}
-            />
-          )}
-        </UiModeProvider>
+        <DensityContext.Provider value={density}>
+          {/* Registro tasti + stato delle modalità UI (immersiva, zoom griglia).
+              Sopra tutto: gli acceleratori della toolbar si registrano da dentro
+              la Shell. Vedi hooks/uiMode.tsx. */}
+          <UiModeProvider>
+            {!loggedIn ? (
+              showLogin ? (
+                <LoginForm onLogin={handleLogin} error={loginError} loading={loginLoading} title={loginTitle} />
+              ) : null /* Auto-login in progress */
+            ) : (
+              <Shell
+                menuItems={menuItems}
+                loginInfo={loginInfo!}
+                onLogout={handleLogout}
+                onReloadMenu={handleReloadMenu}
+              />
+            )}
+          </UiModeProvider>
+        </DensityContext.Provider>
       </AntApp>
     </ConfigProvider>
   );

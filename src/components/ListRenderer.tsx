@@ -9,6 +9,7 @@ import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, 
 import { getControl, isCellRenderable } from '../controls/registry';
 import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, useIsTabLabelEcho } from './ViewRenderer';
 import { useUiMode } from '../hooks/uiMode';
+import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import {
   getCellEditorForType,
@@ -114,7 +115,7 @@ function parseInlineStyle(css: string): Record<string, string> {
 const HEADER_LABEL_PAD = 8;  // 4px horizontal cell padding per side
 const HEADER_LABEL_SLACK = 6; // absorbs zoom-dependent rasterization drift
 let headerMeasureCtx: CanvasRenderingContext2D | null | undefined;
-let headerMeasureFont: string | null = null;
+let headerMeasureFont: { size: number; font: string } | null = null;
 function headerLabelMinWidth(text: string): number {
   if (!text) return HEADER_LABEL_PAD;
   if (headerMeasureCtx === undefined) {
@@ -124,12 +125,22 @@ function headerLabelMinWidth(text: string): number {
     // Canvas unavailable — fall back to the old estimate
     return Math.round(text.length * 6.3) + 10;
   }
-  if (!headerMeasureFont) {
-    // Headers render at 12px bold; the family (Inter stack) is shared by the
-    // grid theme and the app body, so body's computed value is authoritative.
-    headerMeasureFont = `700 12px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`;
+  // Il corpo non e' piu' fisso: lo decide la densita' scelta dall'utente
+  // (SXADV-5745), e misurare con un corpo diverso da quello disegnato rimette
+  // in gioco proprio l'ellissi che questa misura serviva a togliere. La cache
+  // e' quindi chiusa a chiave sul corpo — `getComputedStyle` si paga solo al
+  // cambio. Il family (stack Inter) e' condiviso da tema griglia e body, quindi
+  // il valore calcolato del body fa fede. Una lista GIA' aperta conserva le
+  // larghezze misurate prima del cambio finche' non si ridisegna: si riallinea
+  // alla prima navigazione o al primo caricamento dati.
+  const size = gridFontSizePx();
+  if (!headerMeasureFont || headerMeasureFont.size !== size) {
+    headerMeasureFont = {
+      size,
+      font: `700 ${size}px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`,
+    };
   }
-  headerMeasureCtx.font = headerMeasureFont;
+  headerMeasureCtx.font = headerMeasureFont.font;
   return Math.ceil(headerMeasureCtx.measureText(text).width) + HEADER_LABEL_PAD + HEADER_LABEL_SLACK;
 }
 
@@ -2051,9 +2062,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
       const track = document.createElement('div');
       if (totalWidth != null) {
-        track.style.cssText = `display:flex;width:${totalWidth}px;font-size:12px;font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;transform:translateX(calc(var(--grid-scroll-x, 0px) * -1));`;
+        track.style.cssText = `display:flex;width:${totalWidth}px;font-size:var(--app-grid-font-size);font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;transform:translateX(calc(var(--grid-scroll-x, 0px) * -1));`;
       } else {
-        track.style.cssText = 'display:flex;font-size:12px;font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;';
+        track.style.cssText = 'display:flex;font-size:var(--app-grid-font-size);font-weight:700;color:var(--ag-header-foreground-color, #181d1f);padding:0 4px;';
       }
       rowHeaders.forEach((hdr, i) => {
         const cell = document.createElement('div');

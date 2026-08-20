@@ -82,6 +82,65 @@
    * itself costs 56px instead of 80px. */
   --app-header-h: 56px;
   --app-header-logo-h: 40px;
+
+  /* --- Densita' tipografica (SXADV-5745) ---------------------------------
+   * I valori qui sotto sono il preset "Normale" e coincidono con i letterali
+   * che erano sparsi in global.css: introdurre lo strato e' visivamente un
+   * no-op finche' l'utente non sceglie un altro preset.
+   *
+   * Perche' esistono: il client React usa Inter, che ha una x-height di circa
+   * 0.73em contro lo 0.55em del Tahoma/Verdana del legacy. A parita' di corpo
+   * nominale i glifi sono circa il 40% piu' alti, quindi 13px di Inter
+   * ingombrano come 17px di Tahoma e l'area di editing mostra meno campi a
+   * schermo. Il carattere resta (la leggibilita' guadagnata e' reale): a
+   * diventare regolabile e' il corpo, via `data-density` su <html>.
+   *
+   * Chi aggiunge una regola che dipende dal corpo del carattere la aggancia a
+   * questi token invece di scrivere un px: un letterale nuovo e' un punto che
+   * non seguira' la scelta dell'utente. Vedi `hooks/density.ts`. */
+  --app-font-size: 13px;       /* campi, etichette, testo del form          */
+  --app-font-size-sm: 12px;    /* griglie, intestazioni di sezione, note    */
+  --app-font-size-lg: 14px;    /* titolo vista, icone di riga               */
+  --app-field-h: 26px;         /* altezza di un controllo nella layout-table */
+  --app-field-line-h: 24px;    /* interlinea/altezza interna del controllo   */
+  --app-row-line-h: 18px;      /* interlinea di una cella della layout-table */
+  --app-prompt-line-h: 16px;   /* interlinea di un'etichetta                 */
+  --app-cell-pad-y: 2px;       /* padding verticale di una cella             */
+  /* Corpo del testo di griglia. L'ALTEZZA delle righe non e' un token: AG Grid
+   * tiene le righe normali a un pavimento di 22px qualunque cosa si configuri,
+   * e la sua altezza e' comunque incrociata fra tema, opzione `rowHeight` e
+   * `getRowHeight` in ListRenderer — un token che non puo' essere onorato
+   * mentirebbe. Qui si scala solo il carattere. */
+  --app-grid-font-size: 12px;
+}
+
+/* Preset compatto: recupera righe. A 12px Inter resta piu' leggibile del
+ * legacy (x-height ~8.7px contro ~6.5px del Tahoma 12px), quindi si guadagna
+ * densita' senza tornare sotto il punto di partenza. */
+:root[data-density='compact'] {
+  --app-font-size: 12px;
+  --app-font-size-sm: 11px;
+  --app-font-size-lg: 13px;
+  --app-field-h: 22px;
+  --app-field-line-h: 20px;
+  --app-row-line-h: 15px;
+  --app-prompt-line-h: 14px;
+  --app-cell-pad-y: 1px;
+  --app-grid-font-size: 11px;
+}
+
+/* Preset ampio: per chi lavora a distanza dallo schermo o su risoluzioni alte.
+ * Costa campi visibili, ed e' una scelta esplicita di chi lo attiva. */
+:root[data-density='comfortable'] {
+  --app-font-size: 14px;
+  --app-font-size-sm: 13px;
+  --app-font-size-lg: 16px;
+  --app-field-h: 30px;
+  --app-field-line-h: 28px;
+  --app-row-line-h: 21px;
+  --app-prompt-line-h: 19px;
+  --app-cell-pad-y: 3px;
+  --app-grid-font-size: 13px;
 }
 
 /* -----------------------------------------------------------------------------

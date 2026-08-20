@@ -47,6 +47,8 @@ import {
   ReadOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  FontSizeOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -76,6 +78,7 @@ import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
 import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
+import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
 
 const { Header, Content } = Layout;
@@ -1471,6 +1474,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // or from one of the app-bar shortcuts.
   const activeMenuId = currentTab?.menuId;
 
+  // Corpo del carattere dell'interfaccia (SXADV-5745): e' una preferenza
+  // personale, quindi vive nel menu utente insieme a login/profilo/uscita e non
+  // si prende pixel di chrome — che e' proprio cio' che il ticket chiede di
+  // restituire all'area di editing.
+  const { density, setDensity } = useDensity();
+
   // Session-level functions, kept in both sidebar modes together with the
   // menu/documentale toggle itself.
   const commonBarButtons: AppBarButton[] = [
@@ -1789,10 +1798,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 items: [
                   { key: 'user', label: `${loginInfo.login} (${loginInfo.profile})`, icon: <UserOutlined />, disabled: true },
                   { type: 'divider' as const, key: 'div' },
+                  {
+                    key: 'density',
+                    label: 'Dimensione caratteri',
+                    icon: <FontSizeOutlined />,
+                    children: DENSITY_OPTIONS.map((o) => ({
+                      key: `density:${o.value}`,
+                      label: (
+                        <Space size={6}>
+                          <CheckOutlined style={{ visibility: o.value === density ? 'visible' : 'hidden' }} />
+                          <span>{o.label}</span>
+                          <Text type="secondary" style={{ fontSize: 'var(--app-font-size-sm)' }}>{o.hint}</Text>
+                        </Space>
+                      ),
+                    })),
+                  },
+                  { type: 'divider' as const, key: 'div2' },
                   { key: 'logout', label: 'Esci', icon: <LogoutOutlined />, danger: true },
                 ],
                 onClick: ({ key }) => {
                   if (key === 'logout') onLogout();
+                  else if (key.startsWith('density:')) setDensity(key.slice('density:'.length) as Density);
                 },
               }}
             >
