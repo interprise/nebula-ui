@@ -46,14 +46,42 @@ function useEdgeScrollReveal() {
  *  (no measurement yet, or a table without a label band). Legacy HTML billed a
  *  column at ~charWidth * gridSize — typically 24–30px. */
 const DEFAULT_COL_WIDTH = 24;
-/** Below this per-column width the table stops shrinking and scrolls instead.
- *  Not a taste value: compressing further clips the *content* of narrow cells —
- *  measured on Fatture, a colspan-7 date cell needs ~17.7px/column before
- *  "28/07/2026" starts being cut off by the picker's own suffix icon. 19 leaves a
- *  little margin under that while still recovering ~20% of the old uniform 24px.
- *  A very wide view (80+ server columns) therefore still scrolls horizontally —
- *  which is the accepted outcome, rather than squeezing fields into illegibility. */
+/** Pavimento assoluto: sotto questa larghezza per colonna non si scende mai,
+ *  qualunque cosa dica il calcolo (una tabella senza controlli incomprimibili
+ *  non ha comunque motivo di stringersi oltre). */
 const MIN_CONTENT_COL = 19;
+/** Padding orizzontale di `.content-cell` (4px per lato): non è spazio
+ *  disponibile per il controllo, e va scontato prima di confrontare la
+ *  larghezza della cella con quella che il controllo pretende. */
+const CONTENT_CELL_PADDING = 8;
+
+/** Larghezza INCOMPRIMIBILE di un controllo, in px — quella che il controllo si
+ *  impone da sé e che la cella non può negoziare. Un `<input>` di testo è
+ *  `width:100%` e si adatta alla cella, quindi qui vale 0: al più gli si taglia
+ *  il testo dentro, che è recuperabile scorrendo. Un Select antd no — o è
+ *  fissato alla larghezza derivata dal `size` (vedi ComboControl) o porta un
+ *  `min-width` di 160px — e lo stesso vale per i DatePicker. Se la cella è più
+ *  stretta, `overflow:hidden` di `.content-cell` taglia il bordo destro e la
+ *  freccia della tendina, e il campo diventa inapribile: è SXADV-5677. */
+function controlHardWidth(control: UIControl): number {
+  switch (control.type) {
+    case 'combo':
+    case 'multiselect':
+      // Mirror di getTextMaxWidth + della regola di ComboControl.
+      return control.size != null ? Math.min(control.size * 8 + 16, 500) : 160;
+    case 'workflowStatus':
+    case 'bpmStatus':
+      return 160;
+    case 'date':
+      return 96;
+    case 'time':
+      return 95;
+    case 'timestamp':
+      return 170;
+    default:
+      return 0;
+  }
+}
 /** The prompt cell's own horizontal padding (`.prompt-cell`: 4px each side) plus
  *  a couple of pixels of air, so the longest label still fits on one line. */
 const PROMPT_CELL_PADDING = 10;
@@ -736,16 +764,46 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     return perCol ? Math.ceil(perCol * promptBandCols) : 0;
   }, [ui.rows, promptBandCols, density]);
 
+  // Pavimento delle colonne di contenuto, derivato dai controlli che questa
+  // tabella contiene davvero e non da una costante: ogni cella con un controllo
+  // incomprimibile pretende (larghezza + padding) / colspan px per colonna, e la
+  // tabella non può scendere sotto la più esigente senza tagliarlo.
+  // Il tetto è DEFAULT_COL_WIDTH, la colonna del layout legacy: oltre non si
+  // sale, altrimenti una singola tendina in una cella colspan=1 (168px per
+  // colonna) gonfierebbe l'intera tabella per compiacere un campo solo.
+  // Calcolato in linea come `formCols` qui sotto, non in un useMemo: questo
+  // componente tiene i suoi hook sopra i return anticipati (vedi la nota sugli
+  // hook più in alto), e un giro sulle celle costa quanto quello che già si fa.
+  const contentColFloor = (() => {
+    let need = 0;
+    for (const row of ui.rows) {
+      for (const cell of row.cells) {
+        if (cell.elementType !== ELTYPE_CONTENT || !cell.control) continue;
+        const hard = controlHardWidth(cell.control);
+        if (!hard) continue;
+        need = Math.max(need, (hard + CONTENT_CELL_PADDING) / (cell.colspan || 1));
+      }
+    }
+    return Math.max(MIN_CONTENT_COL, Math.min(DEFAULT_COL_WIDTH, Math.ceil(need)));
+  })();
+
   // What's left of the visible width goes to the content columns, in the
   // proportions the server declared (colspans), so the form fills the editing
-  // area instead of overflowing it. MIN_CONTENT_COL is the floor: past it the
-  // table stops shrinking and the horizontal scrollbar appears, which is the
-  // wanted behaviour at high zoom / low resolution rather than squeezing every
-  // field into illegibility.
+  // area instead of overflowing it.
+  //
+  // Stringere sotto il pavimento NON si fa (SXADV-5677): il righello a larghezza
+  // visibile serve a togliere la scrollbar orizzontale, ma su una view molto
+  // larga — Fatture ha 86 colonne server, Anagrafica Unica 90 — la scrollbar
+  // resta comunque, e la stretta si è pagata solo in campi tagliati. Quando la
+  // larghezza che entrerebbe è sotto il pavimento la tabella torna quindi alle
+  // colonne che i suoi controlli chiedono e scorre, come faceva il legacy.
   const contentCols = totalCols - promptBandCols;
   const fitRuler = hostWidth > 0 && promptBandWidth > 0 && contentCols > 0;
+  const fittedColWidth = fitRuler
+    ? (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols
+    : 0;
   const contentColWidth = fitRuler
-    ? Math.max(MIN_CONTENT_COL, (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols)
+    ? (fittedColWidth >= contentColFloor ? fittedColWidth : contentColFloor)
     : DEFAULT_COL_WIDTH;
 
   // Fallback (no measurement yet, or a table with no prompt band): the previous
@@ -755,8 +813,27 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
   const tableWidth = fitRuler
     ? Math.round(promptBandWidth + contentCols * contentColWidth)
     : uniformWidth;
+  // Una tabella EMBEDDED (il form aperto dentro un tab) con il solo
+  // `width:100%` è costretta dentro il contenitore, e con `table-layout:fixed`
+  // il browser riscala il righello in proporzione: il pavimento non protegge
+  // più niente e i campi si tagliano lo stesso — è il caso "Tab Indirizzi ->
+  // Nuovo -> Cap" di SXADV-5677. Quando il righello non entra le si dà quindi
+  // un `minWidth`, come alla tabella di pagina: meglio scorrere che tagliare.
+  //
+  // MAI però se la tabella ospita contenuti autonomi (griglie, tab annidati):
+  // quelli scorrono già per conto loro, e una tabella più larga del tab
+  // rimetterebbe in campo la seconda barra di scorrimento (SXADV-5450).
+  const hostsAutonomousContent = hasOlapCube || ui.rows.some((row) =>
+    row.cells.some((cell) => {
+      const t = cell.control?.type;
+      return t === 'tab' || t === 'detailView' || t === 'embeddedView';
+    }),
+  );
+  const rulerOverflows = fitRuler && fittedColWidth < contentColFloor;
   const tableStyle: React.CSSProperties = embedded
-    ? { width: '100%' }
+    ? (rulerOverflows && !hostsAutonomousContent
+        ? { width: '100%', minWidth: tableWidth }
+        : { width: '100%' })
     : { minWidth: tableWidth || '100%' };
 
   const rulerRow = totalCols > 0 && tableWidth > 0 ? (
@@ -1222,10 +1299,13 @@ const CellRenderer: React.FC<{
         tdProps.colSpan = 1;
         tdProps.style = { ...tdProps.style, width: '1%' };
       }
-      const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${cell.cls || ''}`;
       const docIcon = cell.control?.docIcon;
       const configureIcon = cell.control?.configureIcon;
+      // `has-side-icons` toglie il clipping alla cella: in una cella stretta
+      // (una checkbox ne occupa una sola, ~24px) l'icona finirebbe oltre il
+      // bordo e l'`overflow:hidden` la mangerebbe — vedi global.css.
       const hasSideIcons = !!(docIcon || configureIcon);
+      const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${hasSideIcons ? 'has-side-icons' : ''} ${cell.cls || ''}`;
       return (
         <td {...tdProps} className={cellClass}>
           {cell.control ? (

@@ -1316,6 +1316,23 @@ body[style*="cursor: wait"] * {
 .configure-icon.configure-off { color: #ff4d4f; }
 .configure-icon:hover { opacity: 0.8; }
 
+/* Le icone laterali delle due modalità admin stanno DENTRO la cella del campo,
+   e l'`overflow:hidden` di `.content-cell` le taglia via appena la cella è
+   stretta: una checkbox occupa una colonna sola (~24px) e il pallino finiva
+   ~17px oltre il bordo destro — sui campi flag (Escludi Vis, Sincro, Esclusione
+   controlli C.F., Postalizzazione) e su un read-only con l'input a tutta cella
+   (ID) non si vedeva affatto, pur essendo stato mandato dal server.
+   In quelle celle si lascia sbordare invece di restringere il campo: il layout
+   resta identico a quello che l'utente vede fuori dalla modalità, e i pixel che
+   escono cadono sull'etichetta accanto, che è allineata a destra e quindi lì è
+   vuota. */
+.layout-table td.content-cell.has-side-icons {
+  overflow: visible;
+}
+.doc-icon {
+  flex-shrink: 0;
+}
+
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
    don't stretch inputs to fill the cell — let them sit at their natural width.
    NOTE: this must NOT include .ant-select — an antd Select is a <div> with no
