@@ -572,43 +572,8 @@ const ZoomEscapeFallback: React.FC = () => {
 };
 
 const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, embedded, fillHeight: fillHeightProp }) => {
-  // Suppressed only for the page-level view: an embedded view's title names a
-  // section, which the breadcrumb is not showing (see TitleInBreadcrumbContext).
-  const titleInBreadcrumb = React.useContext(TitleInBreadcrumbContext) && !embedded;
-  // Inside a tab, a heading that just repeats the tab label is dropped.
-  const titleEchoesTab = useIsTabLabelEcho(ui?.title);
   const fillHeightCtx = React.useContext(FillHeightContext);
-  const splitSid = React.useContext(SidContext);
   const fillHeight = fillHeightProp ?? fillHeightCtx;
-  /* Zoom su una griglia (SXADV-5737): la vista collassa tutto ciò che sta sopra
-     la griglia — testata e barra dei tab — lasciando il pannello inferiore da
-     solo. Non è un overlay: stesso nodo DOM, stesso albero React, quindi AG Grid
-     non si rimonta e non perde scroll, selezione né riga in editing.
-
-     Qui sopra i return anticipati si possono fare SOLO letture di context: non
-     occupano slot nella lista degli hook di React, ed è quello che permette al
-     ramo lista (`pageType===1`) di uscire subito pur avendo il ramo pieno una
-     ventina di hook più sotto. Un solo useRef/useMemo/useEffect messo qui rompe
-     l'invariante e la pagina diventa bianca — "Rendered fewer hooks than
-     expected" — passando da una query alla sua lista dei risultati, che stanno
-     sullo stesso fiber (Shell non dà key a ViewRenderer). Per questo l'uscita
-     da tastiera sta in `ZoomEscapeFallback`, montato solo quando serve. */
-  const zoomStore = React.useContext(UiModeStoreContext);
-  const zoomScope = React.useContext(ZoomScopeContext);
-  /* Corpo del carattere scelto dall'utente (SXADV-5745): cambiandolo cambia la
-     larghezza delle etichette e il righello va rimisurato. Sta qui sopra, e non
-     accanto a chi lo usa, perche' e' una lettura di context — nessuno slot
-     occupato — e regge quindi l'invariante descritta sopra. */
-  const { density } = useDensity();
-  /* Un solo slot di zoom per ambito, con due rivendicanti possibili: una
-     griglia (id = suo `viewName`/`path`) oppure l'area inferiore intera
-     (`PANEL_ZOOM_ID`, SXADV-5651). Per la testata non fa differenza — in
-     entrambi i casi si collassa — mentre la barra dei tab sopravvive solo
-     allo zoom d'area: è lì che sta il pulsante per uscirne, e in un tab a
-     campi (non a griglia) senza barra non si cambierebbe più tab. */
-  const zoomedId = zoomStore.zoomByScope[zoomScope] ?? null;
-  const zoomed = zoomedId != null;
-  const panelZoom = zoomedId === PANEL_ZOOM_ID;
   if (!ui) return null;
 
   // Tree views
@@ -641,6 +606,61 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
       </FillHeightContext.Provider>
     );
   }
+
+  /* Il ramo testata/dettaglio sta in un componente a sé (sotto): è l'unico del
+     gruppo a chiamare hook, e ViewRenderer da qui in giù non ne chiama più.
+     Prima stavano tutti in questa funzione, sotto i return anticipati, e
+     reggevano solo perché i rami che escono prima non ne chiamano NEMMENO uno:
+     al primo useRef/useMemo aggiunto qui sopra la pagina diventava bianca
+     — "Rendered fewer hooks than expected" — passando da una query alla sua
+     lista dei risultati, che stanno sullo stesso fiber (Shell non dà key a
+     ViewRenderer). Separati, l'invariante regge da sola: qui si possono
+     aggiungere hook, purché sopra i return anticipati. */
+  return (
+    <DetailFormView
+      ui={ui}
+      pageType={pageType}
+      onAction={onAction}
+      onChange={onChange}
+      onGridChange={onGridChange}
+      embedded={embedded}
+      fillHeight={fillHeight}
+    />
+  );
+};
+
+/** Query e dettaglio: la testata a griglia di campi e, sotto, l'eventuale area
+ *  a tab. Vedi la nota in ViewRenderer per il motivo per cui è un componente
+ *  separato e non un ramo della stessa funzione. */
+const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight'> & {
+  pageType: number | undefined;
+  fillHeight: boolean;
+}> = ({ ui, pageType, onAction, onChange, onGridChange, embedded, fillHeight }) => {
+  // Suppressed only for the page-level view: an embedded view's title names a
+  // section, which the breadcrumb is not showing (see TitleInBreadcrumbContext).
+  const titleInBreadcrumb = React.useContext(TitleInBreadcrumbContext) && !embedded;
+  // Inside a tab, a heading that just repeats the tab label is dropped.
+  const titleEchoesTab = useIsTabLabelEcho(ui.title);
+  const splitSid = React.useContext(SidContext);
+  /* Zoom su una griglia (SXADV-5737): la vista collassa tutto ciò che sta sopra
+     la griglia — testata e barra dei tab — lasciando il pannello inferiore da
+     solo. Non è un overlay: stesso nodo DOM, stesso albero React, quindi AG Grid
+     non si rimonta e non perde scroll, selezione né riga in editing. L'uscita
+     da tastiera sta in `ZoomEscapeFallback`, montato solo quando serve. */
+  const zoomStore = React.useContext(UiModeStoreContext);
+  const zoomScope = React.useContext(ZoomScopeContext);
+  /* Corpo del carattere scelto dall'utente (SXADV-5745): cambiandolo cambia la
+     larghezza delle etichette e il righello va rimisurato. */
+  const { density } = useDensity();
+  /* Un solo slot di zoom per ambito, con due rivendicanti possibili: una
+     griglia (id = suo `viewName`/`path`) oppure l'area inferiore intera
+     (`PANEL_ZOOM_ID`, SXADV-5651). Per la testata non fa differenza — in
+     entrambi i casi si collassa — mentre la barra dei tab sopravvive solo
+     allo zoom d'area: è lì che sta il pulsante per uscirne, e in un tab a
+     campi (non a griglia) senza barra non si cambierebbe più tab. */
+  const zoomedId = zoomStore.zoomByScope[zoomScope] ?? null;
+  const zoomed = zoomedId != null;
+  const panelZoom = zoomedId === PANEL_ZOOM_ID;
 
   // Find last header-item row index (rows containing controls with group or forGroup)
   const lastHeaderRowIdx = (() => {
@@ -937,31 +957,51 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     setFocusZone(zone);
     setManualPct(null);
   }, []);
-  const activateZone = React.useCallback((target: EventTarget | null) => {
+  const zoneOf = React.useCallback((target: EventTarget | null): 'form' | 'bottom' | null => {
     const t = target as HTMLElement | null;
-    if (!t) return;
-    // Interactions on the tab bar must NOT drive the split resize. The tab bar
-    // sits at the top of the bottom panel; growing the bottom zone reflows it
-    // upward, out from under the cursor, before the click (pointerup) lands — so
-    // the tab click was lost and selecting a tab took two clicks. Both the
-    // pointerdown and the focus the tab receives route here, so excluding the
-    // nav here covers both. The zone is expanded *after* selection instead —
-    // see revealBottom, wired to onClickCapture and to the Tabs onChange.
-    if (t.closest('.ant-tabs-nav')) return;
-    let zone: 'form' | 'bottom' | null = null;
-    if (t.closest('.view-split-bottom')) zone = 'bottom';
-    else if (t.closest('.view-split-form')) zone = 'form';
-    if (!zone) return;
-    setZone(zone);
-  }, [setZone]);
-  const onSplitFocus = React.useCallback((e: React.FocusEvent) => activateZone(e.target), [activateZone]);
-  const onSplitPointerDown = React.useCallback((e: React.PointerEvent) => activateZone(e.target), [activateZone]);
+    if (!t) return null;
+    if (t.closest('.view-split-bottom')) return 'bottom';
+    if (t.closest('.view-split-form')) return 'form';
+    return null;
+  }, []);
+
+  // A pointer settles the zone on CLICK — never on pointerdown, nor on the focus
+  // that pointerdown hands its target. Resizing the split moves everything in
+  // both areas (up to a third of the view's height, over the 150ms transition),
+  // so if the press itself resizes, the element slides out from under the cursor
+  // and mouseup lands elsewhere: the browser then fires no click on it at all.
+  // The action was swallowed and the user had to click a second time, the first
+  // click having only resized the areas — reported on "Nuovo" inside a tab, but
+  // it hit every button and link in either area whenever that click was the one
+  // that changed zone (SXADV-5820). The tab bar hit this first and got the same
+  // cure; see revealBottom. Keyboard focus still activates immediately — nothing
+  // moves out from under a caret that arrived by Tab.
+  const pointerDrivenRef = React.useRef(false);
+  const onSplitPointerDown = React.useCallback(() => {
+    pointerDrivenRef.current = true;
+    // Not every press ends in a click (a drag released outside its element
+    // doesn't), so clear the flag once the click would have fired — otherwise a
+    // later keyboard focus would be taken for a pointer one and ignored. The
+    // timeout runs after the click, which is dispatched right after pointerup.
+    window.addEventListener(
+      'pointerup',
+      () => { window.setTimeout(() => { pointerDrivenRef.current = false; }, 0); },
+      { once: true, capture: true },
+    );
+  }, []);
+  const onSplitFocus = React.useCallback((e: React.FocusEvent) => {
+    if (pointerDrivenRef.current) return;
+    const t = e.target as HTMLElement | null;
+    // Focus on the tab bar doesn't move the split: picking a tab does, through
+    // revealBottom below.
+    if (t?.closest('.ant-tabs-nav')) return;
+    const zone = zoneOf(t);
+    if (zone) setZone(zone);
+  }, [setZone, zoneOf]);
 
   // Picking a tab is a request to look at that tab's rows, so give them the room
   // — otherwise the tab highlights while its content stays pinned at 22% and the
-  // user has to hunt for it. Unlike pointerdown/focus (which activateZone ignores
-  // over the tab bar, see above), a click has already landed, so reflowing the
-  // panel now cannot steal it. Covers re-clicking the active tab too, which fires
+  // user has to hunt for it. Covers re-clicking the active tab too, which fires
   // no onChange.
   const revealBottom = React.useCallback(() => {
     focusZoneRef.current = 'bottom';
@@ -971,11 +1011,14 @@ const ViewRenderer: React.FC<ViewRendererProps> = ({ ui, onAction, onChange, onG
     setManualPct((cur) => (cur != null && cur > BOTTOM_FOCUS_PCT ? null : cur));
   }, []);
   const onSplitClick = React.useCallback((e: React.MouseEvent) => {
+    pointerDrivenRef.current = false;
     const t = e.target as HTMLElement | null;
-    if (!t?.closest('.ant-tabs-nav')) return;
-    if (!t.closest('.view-split-bottom')) return;
-    revealBottom();
-  }, [revealBottom]);
+    const zone = zoneOf(t);
+    if (!zone) return;
+    // The tab bar has its own rule (it keeps a roomier manual drag).
+    if (zone === 'bottom' && t?.closest('.ant-tabs-nav')) { revealBottom(); return; }
+    setZone(zone);
+  }, [revealBottom, setZone, zoneOf]);
 
   const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault();
