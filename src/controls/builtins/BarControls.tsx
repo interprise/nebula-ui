@@ -91,6 +91,13 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
   // — keeps a filled button; the rest render as links, which is both what the
   // legacy UI did and roughly half the height. The `action-link` / `action-btn`
   // classes carry the compaction (see global.css) so a row wraps to ~20px.
+  //
+  // Ogni azione porta poi il suo riquadro (fondo velato + angoli smussati, in
+  // global.css) perche' una fila di link nudi, con azioni di piu' parole, si
+  // legge come una frase invece che come comandi distinti. Il columnGap qui e'
+  // 4 e non piu' 6: il filetto separatore fra i link non c'e' piu' — a delineare
+  // l'azione ora e' il riquadro — quindi i due pixel recuperati pagano quasi per
+  // intero il padding in piu' del chip.
   const hasWorkflowRow = !!wfState || !!actions?.length;
   return (
     <div className="action-bar-wrap">
@@ -102,7 +109,7 @@ export const ActionBarControl: ControlComponent = ({ control, onAction }) => {
             </div>
           )}
           {actions?.length ? (
-            <div style={{ display: 'flex', columnGap: 6, rowGap: 2, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', columnGap: 4, rowGap: 2, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
               {actions.map((act) => (
                 <Button
                   key={act.index}

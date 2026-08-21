@@ -736,24 +736,30 @@ html, body {
   font-size: var(--app-font-size);
   line-height: 18px;
 }
+/* Un'azione non e' una parola sola — "Attiva reg. contabili manuali", "Elimina
+   ultima versione" — e in fila, da link nudi separati da un filetto, il confine
+   fra una e la successiva si perdeva: si leggeva una frase, non quattro comandi.
+   Ogni azione prende quindi il suo riquadro: fondo appena piu' scuro della barra
+   e angoli smussati, cioe' quel tanto di bottone che basta a delinearla.
+   L'altezza resta 20px, quindi il guadagno verticale di 5742 e' intatto; il
+   costo e' orizzontale e minimo, +4px per azione (il padding sale da 2 a 6 px
+   per lato, ma il filetto sparisce e il gap fra le azioni scende da 6 a 4). */
 .action-bar .ant-btn.action-link {
-  padding: 0 2px;
+  /* 5px + 1px di bordo = i 6px di prima: il contorno non costa larghezza.
+     E nemmeno altezza, perche' i bottoni antd sono border-box e i 20px
+     restano quelli. */
+  padding: 0 5px;
+  background: var(--app-action-chip-bg);
+  border: 1px solid var(--app-action-chip-border);
+  border-radius: var(--app-action-chip-radius);
+}
+.action-bar .ant-btn.action-link:hover {
+  background: var(--app-action-chip-bg-hover);
+  border-color: var(--app-action-chip-border);
 }
 .action-bar .ant-btn.action-btn {
   padding: 0 8px;
-}
-/* Links in a wrapping row need a visible boundary between adjacent labels;
-   underline-on-hover alone doesn't tell you where one action ends. */
-.action-bar .ant-btn.action-link::after {
-  content: '';
-  position: absolute;
-  right: -4px;
-  top: 3px;
-  bottom: 3px;
-  border-right: 1px solid var(--app-border);
-}
-.action-bar .ant-btn.action-link:last-child::after {
-  border-right: none;
+  border-radius: var(--app-action-chip-radius);
 }
 
 /* BPM bar — open process steps for the current object. Sits below the

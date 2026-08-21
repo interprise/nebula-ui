@@ -39,6 +39,16 @@
    * Defined in terms of the palette above so a theme can override either the
    * base token or the specific one. Keep these keyed to a concrete UI concern. */
 
+  /* Azioni della barra workflow: rese a chip invece che a link nudi, perche'
+   * con piu' parole per azione il confine fra una e la successiva si perdeva.
+   * Il fondo e' una VELATURA, non un colore pieno: cosi' resta "un filo piu'
+   * scuro della cella" sopra qualunque fondo la barra abbia (grigio della
+   * sticky, bianco di una form) senza doverlo ridefinire caso per caso. */
+  --app-action-chip-bg: rgba(0, 0, 0, 0.05);
+  --app-action-chip-bg-hover: rgba(0, 0, 0, 0.1);
+  --app-action-chip-border: rgba(0, 0, 0, 0.12);
+  --app-action-chip-radius: 4px;
+
   /* Query-filter tri-state checkbox (SXADV-5485): the indeterminate / NULL
    * ("not filtered") mark must read as neutral, distinct from the primary-blue
    * checked state, so an unset filter isn't mistaken for a valued one. */
@@ -151,4 +161,10 @@
  * -------------------------------------------------------------------------- */
 [data-theme='dark'] {
   /* e.g. --app-neutral: #6e7681;  --app-border: #30363d; ... */
+
+  /* La velatura dei chip azione va rovesciata: sul chiaro e' nero al 5%, sullo
+   * scuro dev'essere bianco, altrimenti "un filo piu' scuro" diventa invisibile. */
+  --app-action-chip-bg: rgba(255, 255, 255, 0.08);
+  --app-action-chip-bg-hover: rgba(255, 255, 255, 0.14);
+  --app-action-chip-border: rgba(255, 255, 255, 0.2);
 }
