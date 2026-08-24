@@ -153,6 +153,15 @@ export const PathContext = React.createContext<string | undefined>(undefined);
 // threading the callback through every RowRenderer/renderContainerControl.
 export const EditRowContext = React.createContext<((navpath: string | null) => void) | undefined>(undefined);
 
+// "Was the Nuovo/Add toolbar action just dispatched?" — read-and-clear function
+// provided by Shell (pendingAddRef). Lets a listEdit/multiEdit list distinguish
+// "server just marked a row as the edit path because it was added" from "this
+// row happens to always be in the edit path" (true for virtually every row of
+// a multiEdit list — see CORE ToolViewState.isInEditPath), so ListRenderer only
+// auto-opens the edit panel right after a real Add, never on an ordinary
+// load/refresh that happens to touch the same row.
+export const PendingAddContext = React.createContext<(() => boolean) | undefined>(undefined);
+
 // Propagates the "fill available vertical space" signal down to embedded
 // lists. Set by tab content so nested grids use internal scroll instead of
 // AG Grid's autoHeight.
@@ -450,13 +459,14 @@ function renderTabLabel(
  */
 const ListView: React.FC<ViewRendererProps> = (props) => {
   const { ui, onAction, onChange } = props;
-  // The bottom edit panel is for single-row listEdit only. A multiEdit list does
-  // in-grid multi-row editing / record selection (all rows editable, multi-row
-  // post, listActions on the checked set) — no panel, which would restrict to the
-  // current row. The selection checkbox's content varies (selected/flagSelezione)
-  // so we don't try to distinguish "selection" from "real multi-edit": all
-  // multiEdit keep the in-grid behaviour. All multiEdit lists also set listEdit.
-  const isListEdit = !!ui.listEdit && !ui.multiEdit;
+  const consumePendingAdd = React.useContext(PendingAddContext);
+  // Field editing always happens in the bottom panel now, multiEdit or not — a
+  // multiEdit list additionally keeps its selection checkbox interactive in-grid
+  // (ListRenderer handles that separately) and its page-wide post for bulk
+  // listActions/Save (see CORE ToolViewState.postData/postChildren: a
+  // row-targeted navpath posts just that row, a bare navpath keeps the
+  // page-wide walk).
+  const isListEdit = !!ui.listEdit;
   // From context (not props): embedded lists are rendered by renderContainerControl,
   // which doesn't thread onEditRow through. Shell provides it once at the top.
   const setEditRow = React.useContext(EditRowContext);
@@ -480,6 +490,15 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     setEditRow?.(path);
     // INSTANT: no Post — the panel hydrates from the row's onboard editData.
   }, [setEditRow]);
+
+  // The panel's Elimina follows the SELECTED record: the right to delete is a
+  // per-row property (deletable="?expr" evaluated on the row's BO, the BO's own
+  // workflow rules), which is why the server sends it per row. Undefined from a
+  // server that predates it — EditPanel then falls back to the grid-wide flag.
+  const selectedCanDelete = React.useMemo(
+    () => (selectedPath ? records.find((r) => r.path === selectedPath)?.canDelete : undefined),
+    [records, selectedPath],
+  );
 
   // Step to the previous/next record from the panel — pure client-side reselection.
   const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
@@ -536,6 +555,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         onEditRow={props.onEditRow}
         onSelectRecord={isListEdit ? onSelectRecord : undefined}
         onRecordPaths={isListEdit ? setRecords : undefined}
+        pendingAdd={isListEdit ? consumePendingAdd : undefined}
         embedded={props.embedded}
         panelShown={showPanel}
       />
@@ -545,9 +565,10 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           panel={hydratedPanel}
           listUi={ui}
           rowPath={selectedPath ?? undefined}
+          canDelete={selectedCanDelete}
           onChange={onChange}
           onAction={onAction}
-          onClose={() => setHidden(true)}
+          onClose={() => { setHidden(true); setEditRow?.(null); }}
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
@@ -1016,8 +1037,18 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
     const zone = zoneOf(t);
     if (!zone) return;
     // The tab bar has its own rule (it keeps a roomier manual drag).
-    if (zone === 'bottom' && t?.closest('.ant-tabs-nav')) { revealBottom(); return; }
-    setZone(zone);
+    const tabNav = zone === 'bottom' && !!t?.closest('.ant-tabs-nav');
+    // Resize on the NEXT task, never inside the click's own dispatch. This is a
+    // capture-phase handler, so React flushes the state change — and the
+    // re-render it causes — before the event has even reached its target: AG
+    // Grid then never fires rowClicked for that click, and the first click on a
+    // grid inside an area only resized the areas (the cell took focus, but no
+    // row selection and no edit panel — the user had to click a second time).
+    // Same swallowed first click as SXADV-5820, one layer in: there the press
+    // itself moved the button, here the re-render lands mid-dispatch. Deferring
+    // by a task lets every handler downstream of us see the click first; the
+    // 150ms transition starting a task later is invisible.
+    window.setTimeout(() => { if (tabNav) revealBottom(); else setZone(zone); }, 0);
   }, [revealBottom, setZone, zoneOf]);
 
   const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {

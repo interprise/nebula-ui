@@ -35,6 +35,10 @@ interface EditPanelProps {
   /** Exact path of the selected record (from ListRenderer's selector). Used as
    *  PathContext so reload fields and combo fetches target this row. */
   rowPath?: string;
+  /** Whether THIS record may be deleted — evaluated per row by the server
+   *  (deletable="?expr" on the row's BO, the BO's workflow rules). Undefined on
+   *  a server that doesn't send it: falls back to the grid-wide selector flag. */
+  canDelete?: boolean;
   onChange?: (name: string, value: unknown) => void;
   onAction: (action: string, params?: Record<string, string>) => void;
   onClose: () => void;
@@ -51,9 +55,19 @@ const visibleCells = (cells: UICell[]): UICell[] =>
 const visibleHeaders = (headers: ListHeader[]): ListHeader[] =>
   headers.filter((h) => h.type !== 'selector');
 
+// Grid-wide fallback: the selector's canDelete, evaluated once for the whole
+// list. Only used when the server didn't send the per-row permission.
 const canDeleteRecord = (ui: UITree): boolean => {
   for (const col of ui.columns ?? []) if (col.selector) return !!col.selector.canDelete;
   return false;
+};
+
+// The view's customDeleteCommand, which the legacy per-row X posted in place of
+// the built-in Delete (e.g. RegAnaliticaEliminaDettaglio). View-level, so it
+// rides on the selector column rather than per row.
+const deleteCommandOf = (ui: UITree): string => {
+  for (const col of ui.columns ?? []) if (col.selector) return col.selector.deleteCommand || 'Delete';
+  return 'Delete';
 };
 
 const HeaderRow: React.FC<{ headers: ListHeader[] }> = ({ headers }) => (
@@ -125,11 +139,11 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, onChange, onAction, onClose, onNavigate, hasPrev, hasNext,
+  panel, listUi, rowPath, canDelete: rowCanDelete, onChange, onAction, onClose, onNavigate, hasPrev, hasNext,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const { modal } = App.useApp();
-  const canDelete = canDeleteRecord(listUi);
+  const canDelete = rowCanDelete ?? canDeleteRecord(listUi);
   // No click-outside close: the panel is in-flow (doesn't cover rows), and a
   // click-outside handler would fire on the very blur that commits a reload
   // field (and on combo/date option clicks), swallowing them. It closes via its
@@ -157,9 +171,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
       okText: 'Elimina',
       okButtonProps: { danger: true },
       cancelText: 'Annulla',
-      // Delete on the selected record. The server's confirmation flow (if any)
-      // is handled by Shell.makeConfirmReplay.
-      onOk: () => { if (path) onAction('Delete', { navpath: path }); },
+      // Delete on the selected record, through the view's own delete command
+      // when it declares one. The server's confirmation flow (if any) is
+      // handled by Shell.makeConfirmReplay.
+      onOk: () => { if (path) onAction(deleteCommandOf(listUi), { navpath: path }); },
     });
   };
 

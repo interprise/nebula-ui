@@ -133,6 +133,14 @@ export interface UIRow {
   /** Instant edit-panel data for this record (emitted on the primary grid row
    *  of a listEdit list). */
   editData?: RowEditData;
+  /** Dynamic row properties (evaluated isEditable expressions, "i0"/"i1"/…)
+   *  plus, on the primary grid row, "isNew" (this record is an unsaved insert)
+   *  and "canDelete" (this record's own delete permission, evaluated per row).
+   *  isNew is row-level and independent of per-cell "editable" metadata: it
+   *  identifies the row Add just created even when none of its fields are
+   *  in-grid-editable (multiEdit — field editing moved to the panel, see
+   *  ListRenderer's auto-open-panel-on-Add effect). */
+  props?: Record<string, unknown>;
 }
 
 /** One selectable record reported by ListRenderer to the edit panel: its
@@ -141,6 +149,10 @@ export interface UIRow {
 export interface ListRecord {
   path: string;
   editData?: RowEditData;
+  /** Per-row delete permission (row `props.canDelete`), the panel's Elimina
+   *  gate. Undefined on a server that predates it — fall back to the
+   *  grid-wide `columns[].selector.canDelete`. */
+  canDelete?: boolean;
 }
 
 export interface ListColumn {
@@ -151,6 +163,9 @@ export interface ListColumn {
     basePath: string;
     canEdit?: boolean;
     canDelete?: boolean;
+    /** View's customDeleteCommand — what the legacy per-row X posted instead
+     *  of the built-in Delete. Absent = plain Delete. */
+    deleteCommand?: string;
     /** Dynamic updatable rule (updatable="?expr"): false when read-only for the
      *  current object even though listEdit/canEdit are true. Gates the edit panel. */
     canUpdate?: boolean;

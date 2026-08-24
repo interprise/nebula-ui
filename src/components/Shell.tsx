@@ -64,7 +64,7 @@ import type {
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, TitleInBreadcrumbContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, PendingAddContext, TitleInBreadcrumbContext } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1058,9 +1058,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
       if (navActions.includes(action)) {
         editNavpathRef.current = null;
+        pendingAddRef.current = false;
       } else if (editNavpathRef.current && !serverParams.navpath) {
         serverParams.navpath = editNavpathRef.current;
       }
+      if (action === 'Add') pendingAddRef.current = true;
 
       document.body.style.cursor = 'wait';
       const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
@@ -1223,6 +1225,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     },
     []
   );
+
+  // Was the Nuovo/Add toolbar action just dispatched? Set in handleAction below,
+  // consumed-and-cleared by ListRenderer's auto-open-panel effect (see
+  // PendingAddContext) so it only fires right after a real Add, never on an
+  // ordinary reload of a multiEdit list (where almost every row is "in edit
+  // path" server-side). Covers the default "Add" command name — a handful of
+  // views with a customAddCommand override won't get the auto-open, matching
+  // their pre-existing behaviour (not a regression).
+  const pendingAddRef = useRef(false);
+  const consumePendingAdd = useCallback(() => {
+    const was = pendingAddRef.current;
+    pendingAddRef.current = false;
+    return was;
+  }, []);
 
   const handleTabChange = (key: string) => setActiveTab(key);
 
@@ -1950,17 +1966,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                       <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
-                      <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
-                        <TitleInBreadcrumbContext.Provider value={titleIsLastCrumb}>
-                          <ViewRenderer
-                            ui={currentTab.ui}
-                            onAction={handleAction}
-                            onChange={handleFieldChange}
-                            onGridChange={handleGridChange}
-                            onEditRow={handleEditRow}
-                          />
-                        </TitleInBreadcrumbContext.Provider>
-                      </DataVersionContext.Provider>
+                      <PendingAddContext.Provider value={consumePendingAdd}>
+                        <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
+                          <TitleInBreadcrumbContext.Provider value={titleIsLastCrumb}>
+                            <ViewRenderer
+                              ui={currentTab.ui}
+                              onAction={handleAction}
+                              onChange={handleFieldChange}
+                              onGridChange={handleGridChange}
+                              onEditRow={handleEditRow}
+                            />
+                          </TitleInBreadcrumbContext.Provider>
+                        </DataVersionContext.Provider>
+                      </PendingAddContext.Provider>
                     </EditRowContext.Provider>
                   </>
                 ) : (

@@ -11,6 +11,7 @@ import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, InTabPanelConte
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
+import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -714,6 +715,11 @@ interface ListRendererProps {
   /** listEdit: report the ordered record paths (main rows) so the panel can
    *  navigate prev/next between records. */
   onRecordPaths?: (records: ListRecord[]) => void;
+  /** Read-and-clear "was Nuovo/Add just dispatched?" (Shell's pendingAddRef).
+   *  Gates auto-opening the panel on the server's newly-added edit-path row —
+   *  without it, a multiEdit list (where virtually every row is "in edit path")
+   *  would auto-open the panel on row 1 of every ordinary load/refresh. */
+  pendingAdd?: () => boolean;
   /** Grid inside a form/tab rather than a page of its own. It gets a MEASURED
    *  pixel height (see fillCapHeight) — the layout-table ancestors block CSS
    *  flex-fill — and scrolls internally; a top-level list just takes flex:1. */
@@ -723,7 +729,7 @@ interface ListRendererProps {
   panelShown?: boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onEditRow, onSelectRecord, onRecordPaths, embedded, panelShown }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown }) => {
   // The page title is already the closing breadcrumb, so a page-level list must
   // not repeat it as a heading (SXADV-5742). Embedded grids keep their title —
   // it names the section, not the page. The subtitle (applied filters, 5484) is
@@ -832,7 +838,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
 
 
-  const { columnDefs, rowData, serverEditingPath, serverEditingFirstCol } = useMemo(() => {
+  const { columnDefs, rowData, serverEditingPath } = useMemo(() => {
     // An empty list still has column metadata (ui.headers / ui.columns). Build
     // the columns from it so the header row and the "no records" overlay render
     // correctly. Bailing to zero columns here left an empty list (e.g.
@@ -1054,15 +1060,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               cellEditor = 'agCheckboxCellEditor';
             }
           } else if (isMultiEdit) {
-            editable = makeEditableCallback();
-            const editorName = getCellEditorForType(ctrlType);
-            if (colMeta.remote) {
-              cellEditor = 'remoteComboCellEditor';
-              cellEditorParams = { colMeta, sid, navpath: ui.path };
-            } else if (editorName) {
-              cellEditor = editorName;
-              cellEditorParams = { colMeta };
-            }
+            // Non-boolean multiEdit columns are never in-grid-editable: field
+            // editing happens exclusively in the bottom panel now (server no
+            // longer sends colMeta.editable for these either — see
+            // UIControl.getJSONColumnMeta). Only the selection checkbox above
+            // stays interactive in-grid.
+            editable = false;
           } else if (isListEdit) {
             editable = makeEditableCallback();
             const editorName = getCellEditorForType(ctrlType);
@@ -1352,8 +1355,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // the panel hydrates client-side on selection with no round-trip.
       if (row.editData) rowObj._editData = row.editData;
 
-      // Store dynamic row properties (e.g. evaluated isEditable expressions)
-      const rowProps = (row as unknown as { props?: Record<string, unknown> }).props;
+      // Store dynamic row properties (e.g. evaluated isEditable expressions,
+      // and — on the primary row — isNew: this record is an unsaved insert).
+      const rowProps = row.props;
+      if (rowProps?.isNew) {
+        rowObj._isNew = true;
+        // Row-level "Add just created this record" signal, independent of any
+        // per-cell editable metadata — needed because a multiEdit row's cells
+        // no longer carry it (field editing moved to the panel), so the
+        // _editable_-scan below can never find "the new row" for such a view.
+        if (serverEditingPath == null && sel.path) serverEditingPath = sel.path;
+      }
       if (rowProps) {
         for (const [key, val] of Object.entries(rowProps)) {
           rowObj[`_prop_${key}`] = val;
@@ -1587,42 +1599,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       .map((r) => ({
         path: r._selectorPath as string,
         editData: r._editData as RowEditData | undefined,
+        // Per-row, not per-grid: deletable="?expr" and the BO's workflow rules
+        // make this a property of the record, so the panel's Elimina follows
+        // the selected row (see CORE LayoutManager.startTableRowJSON).
+        canDelete: r._prop_canDelete as boolean | undefined,
       }));
     onRecordPaths(records);
   }, [rowData, isListEdit, onRecordPaths]);
 
   // Refs and helpers for grouped hover/selection on multi-row records
   const gridApiRef = useRef<GridApi | null>(null);
-
-  // Collect all row values for an editable column and push to formValues
-  const pushColumnValues = useCallback(
-    (colIdx: number, colMeta: Record<string, unknown> | undefined) => {
-      if (!onGridChange || !colMeta) return;
-      const api = gridApiRef.current;
-      if (!api) return;
-      const fieldName = `${colMeta.name}.${ui.path || ''}`;
-      const values: string[] = [];
-      api.forEachNodeAfterFilterAndSort((node: { data?: Record<string, unknown> }) => {
-        if (node.data?._isBreakRow || node.data?._isContinuationRow) return;
-        const val = node.data?.[`col_${colIdx}`];
-        values.push(val != null ? String(val) : '');
-      });
-      onGridChange(fieldName, values);
-    },
-    [onGridChange, ui.path]
-  );
-
-  // Initialize grid formValues on mount / data change for multiEdit
-  const initGridFormValues = useCallback(() => {
-    if (!isMultiEdit || !onGridChange || !ui.columns) return;
-    const api = gridApiRef.current;
-    if (!api) return;
-    ui.columns.forEach((col, idx) => {
-      if (col.control?.editable && col.control?.name) {
-        pushColumnValues(idx, col.control as Record<string, unknown>);
-      }
-    });
-  }, [isMultiEdit, onGridChange, ui.columns, pushColumnValues]);
 
   // Extract selector info for building field names and determining click behavior
   const selectorInfo = useMemo(() => {
@@ -1641,6 +1627,42 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
   }, [ui.columns]);
   const selectorBasePath = selectorInfo.basePath;
+
+  // Collect all row values for an editable column and push to formValues, keyed
+  // by the bare list id (selectorBasePath) — the same key format the server's
+  // page-wide multiEdit post walk actually looks up (controlName + "." + the
+  // viewstate's own id). ui.path carries a row-position suffix and would either
+  // mismatch the server's lookup key or, worse, be misread as a single targeted
+  // row (see CORE ToolViewState.getCurrentEditPosition) instead of the bulk walk
+  // this array is meant for — used by the selection checkbox only now.
+  const pushColumnValues = useCallback(
+    (colIdx: number, colMeta: Record<string, unknown> | undefined) => {
+      if (!onGridChange || !colMeta) return;
+      const api = gridApiRef.current;
+      if (!api) return;
+      const fieldName = buildColumnFieldName(String(colMeta.name), selectorBasePath);
+      const values: string[] = [];
+      api.forEachNodeAfterFilterAndSort((node: { data?: Record<string, unknown> }) => {
+        if (node.data?._isBreakRow || node.data?._isContinuationRow) return;
+        const val = node.data?.[`col_${colIdx}`];
+        values.push(val != null ? String(val) : '');
+      });
+      onGridChange(fieldName, values);
+    },
+    [onGridChange, selectorBasePath]
+  );
+
+  // Initialize grid formValues on mount / data change for multiEdit
+  const initGridFormValues = useCallback(() => {
+    if (!isMultiEdit || !onGridChange || !ui.columns) return;
+    const api = gridApiRef.current;
+    if (!api) return;
+    ui.columns.forEach((col, idx) => {
+      if (col.control?.editable && col.control?.name) {
+        pushColumnValues(idx, col.control as Record<string, unknown>);
+      }
+    });
+  }, [isMultiEdit, onGridChange, ui.columns, pushColumnValues]);
 
   // Toggle a record-selection checkbox (multiEdit boolean column). setDataValue
   // updates the cell and fires onCellValueChanged → handleCellValueChanged, which
@@ -1668,13 +1690,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         event.node.data[`_raw_${colIdx}`] = event.newValue;
       }
 
-      if (isListEdit && onChange && colMeta?.name) {
+      if (isListEdit && !isMultiEdit && onChange && colMeta?.name) {
         // ListEdit: scalar value with field name = controlName.basePath
-        const fieldName = `${colMeta.name}.${selectorBasePath}`;
+        const fieldName = buildColumnFieldName(String(colMeta.name), selectorBasePath);
         const val = event.newValue;
         onChange(fieldName, val != null ? String(val) : '');
       } else {
-        // MultiEdit: array of all row values for the column
+        // MultiEdit: array of all row values for the column (in practice, only
+        // the selection checkbox reaches here now — see makeEditableCallback).
         pushColumnValues(colIdx, colMeta);
       }
 
@@ -1684,12 +1707,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (api) api.stopEditing();
         const command = (colMeta.command as string) || 'Post';
         const params: Record<string, string> = {};
-        if (ui.path) params.navpath = ui.path;
+        const reloadNavpath = resolveReloadNavpath({ isMultiEdit, selectorBasePath, uiPath: ui.path });
+        if (reloadNavpath) params.navpath = reloadNavpath;
         if (colMeta.option1) params.option1 = colMeta.option1 as string;
         onAction(command, params);
       }
     },
-    [ui.columns, ui.path, isListEdit, selectorBasePath, onChange, pushColumnValues, onAction]
+    [ui.columns, ui.path, isListEdit, isMultiEdit, selectorBasePath, onChange, pushColumnValues, onAction]
   );
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const lastHoverPath = useRef<string | null>(null);
@@ -2243,16 +2267,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     applyClassByPath(editingRowPath.current, 'record-group-selected');
   }, [rowData, isListEdit, applyClassByPath]);
 
-  // Auto-open the editor on a NEW server edit-path row (e.g. the record added
-  // by "Nuovo" on an editable list with no detail view). The legacy client
-  // rendered that row's cells as always-live <input>s and focused currField;
-  // AG Grid needs an explicit startEditingCell. Only fires when the edit-path
-  // row differs from the one we're already editing, so plain reloads of the
-  // current row don't reopen/fight the editor (SXADV-5470.2). Retries a few
-  // frames until the grid has applied the new rowData and assigned rowIndex.
+  // Auto-open the bottom edit panel on a NEW server edit-path row — the record
+  // just added by "Nuovo" on an editable list. Gated on pendingAdd (consumed
+  // once per Add): for a multiEdit list, virtually EVERY row is "in edit path"
+  // server-side (see CORE ToolViewState.isInEditPath), so without this gate the
+  // panel would auto-open on row 1 of every ordinary load/refresh, not just
+  // right after Add. pendingAddSeenRef keeps that one-shot "yes, this is from
+  // an Add" answer alive across the retry loop below, since the effect can
+  // re-run (new rowData) before the freshly-added row has a rowIndex yet, and a
+  // second pendingAdd() call would find the flag already consumed. Only fires
+  // when the edit-path row differs from the one we're already on, so plain
+  // reloads of the current row don't reopen/fight the panel (SXADV-5470.2).
+  // Retries a few frames until the grid has applied the new rowData.
+  const pendingAddSeenRef = useRef(false);
   useEffect(() => {
-    if (!isListEdit || !serverEditingPath) return;
+    if (!isListEdit || !serverEditingPath) { pendingAddSeenRef.current = false; return; }
     if (editingRowPath.current === serverEditingPath) return;
+    if (!pendingAddSeenRef.current) {
+      if (!pendingAdd?.()) return;
+      pendingAddSeenRef.current = true;
+    }
     let raf = 0;
     let tries = 0;
     const attempt = () => {
@@ -2272,16 +2306,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         return;
       }
       editingRowPath.current = serverEditingPath;
-      onEditRow?.(serverEditingPath);
+      pendingAddSeenRef.current = false;
       applyClassByPath(serverEditingPath, 'record-group-selected');
       api.ensureIndexVisible(rowIndex, 'middle');
-      if (serverEditingFirstCol != null) {
-        api.startEditingCell({ rowIndex, colKey: `col_${serverEditingFirstCol}` });
-      }
+      onSelectRecord?.(serverEditingPath);
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);
-  }, [rowData, serverEditingPath, serverEditingFirstCol, isListEdit, onEditRow, applyClassByPath]);
+  }, [rowData, serverEditingPath, isListEdit, onSelectRecord, pendingAdd, applyClassByPath]);
 
   // Returning to a list after a detail: re-highlight the originating record and
   // scroll it into view (item 5455.1C). The path is read from the module-level
