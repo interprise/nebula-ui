@@ -32,10 +32,13 @@ const PLACEHOLDER = /^\?i(\d+)$/;
 //    actionBar, buttonBar, multiselect) and entrasp custom controls;
 //  - metadata-split combos (ListUIControl / GenericListUIControl) shipping
 //    {value, displayText/displayValue, navigateAdd} per row;
+//  - a CodeTable whose table is picked per record (codeTableName="?expr"),
+//    shipping {value, codeTableName, options} — the option list belongs to the
+//    record, not to the cross-record template;
 //  - the unported-control safety net: any control not (yet) metadata-split
 //    re-emits its full renderJSON descriptor in listDataMode DATA mode.
-// Scalar values (string/number/bool/null — e.g. CodeTableUIControl's bare code)
-// fall through to `out.value` unchanged.
+// Scalar values (string/number/bool/null — e.g. a statically-named
+// CodeTableUIControl's bare code) fall through to `out.value` unchanged.
 
 type DynProps = Record<string, unknown>;
 type Values = Record<string, unknown>;

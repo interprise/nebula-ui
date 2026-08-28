@@ -1182,6 +1182,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
       });
     }
+
     // The selector's basePath is only the list's own viewstate id (e.g. "S1-11").
     // For an EMBEDDED list that drops the parent scope prefix, so the composed row
     // path ("S1-11.0") resolves the viewstate but fails the server's full-path
@@ -1200,6 +1201,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     // Helper to build selector info for a row
     const buildSelectorInfo = (row: UIRow): { command?: string; path?: string } => {
+      // L'identita' della riga e' il suo navpath, che il server manda su ogni
+      // riga primaria a prescindere da come la lista e' disegnata: il selettore
+      // e' presentazione, non identificazione (SXADV-5796.3b). La ricomposizione
+      // `basePath + "." + pos` dal selettore resta sotto come ripiego per un
+      // server che non lo manda ancora.
+      const rowPath = (row.props as Record<string, unknown> | undefined)?.path;
+      if (typeof rowPath === 'string' && rowPath) {
+        return { command: selectorCommand, path: rowPath };
+      }
       if (selectorCommand && selectorBasePath) {
         const selectorCell = row.cells.find((_c: UICell, idx: number) => selectorIndices.has(idx));
         const pos = (selectorCell as unknown as Record<string, unknown>)?.pos;
@@ -1615,8 +1625,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // canUpdate defaults to true when absent so a server that predates the flag
     // keeps opening the panel (backward compat); a newer server sends false when
     // the view is read-only for the current object (updatable="?expr").
-    if (!ui.columns) return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
-    for (const col of ui.columns) {
+    for (const col of ui.columns ?? []) {
       if (col.selector) return {
         basePath: col.selector.basePath || '',
         canEdit: !!col.selector.canEdit,
@@ -1624,8 +1633,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         command: col.selector.command || 'NavigateDetail',
       };
     }
+    // Lista listEdit dichiarata `selector="false"`: nessuna colonna selettore,
+    // quindi nessun percorso di riga e nessun permesso — e il record non si
+    // seleziona, cioe' non si modifica (SXADV-5796.3b). Il server manda le
+    // stesse informazioni a livello di lista proprio per questo caso.
+    const ps = ui.panelSelector;
+    if (ps) return {
+      basePath: '',
+      canEdit: !!ps.canEdit,
+      canUpdate: ps.canUpdate !== false,
+      command: 'NavigateDetail',
+    };
     return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
-  }, [ui.columns]);
+  }, [ui.columns, ui.panelSelector]);
   const selectorBasePath = selectorInfo.basePath;
 
   // Collect all row values for an editable column and push to formValues, keyed
@@ -1930,7 +1950,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     applyClassByPath(path ?? null, 'record-group-selected');
 
     const command = data._selectorCommand as string | undefined;
-    if (!command || !path) return;
+    if (!path) return;
+    // Il comando serve solo per NAVIGARE (liste non editabili). Una lista
+    // `selector="false"` non ne porta uno, ma la selezione per il pannello ha
+    // bisogno del solo percorso di riga (SXADV-5796.3b).
+    if (!command && !isListEdit) return;
 
     if (isListEdit) {
       // Editing lives in the bottom panel, not in the grid: AG Grid remounts
@@ -1946,7 +1970,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       return;
     }
     // Non-editable lists: the selector navigates to the detail as before.
-    onAction(command, { navpath: path });
+    if (command) onAction(command, { navpath: path });
   }, [isListEdit, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
 
   const handleRowClicked = (event: RowClickedEvent) => {

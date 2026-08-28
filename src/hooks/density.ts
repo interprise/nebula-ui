@@ -97,6 +97,15 @@ export function gridFontSizePx(): number {
   return DENSITY_GRID_FONT_SIZE[currentDensity];
 }
 
+/** Corpo del testo del FORM in px, alla densita' corrente — lo stesso valore
+ *  che `--app-font-size` dà ai controlli della layout-table. Serve a chi deve
+ *  dimensionare un campo sul numero di caratteri che deve contenere: quella
+ *  larghezza dipende dal corpo con cui il campo verrà disegnato, e una costante
+ *  scritta a mano taglia i campi appena l'utente sceglie "Ampia". */
+export function formFontSizePx(): number {
+  return DENSITY_FONT_SIZE[currentDensity];
+}
+
 /* L'attributo si scrive già al caricamento del modulo, prima del primo render:
    applicandolo solo in un effect la pagina lampeggerebbe alla densità di
    default per un frame prima di assestarsi su quella scelta. */

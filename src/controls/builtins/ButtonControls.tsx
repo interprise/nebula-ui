@@ -5,9 +5,20 @@ import type { ControlComponent } from '../types';
 import { triggerDownload, uploadFile } from '../../services/api';
 import { SidContext } from '../../components/ViewRenderer';
 
+/** Un bottone la cui didascalia e' una lettera o due non e' un'azione
+ *  etichettata: e' un CONTRASSEGNO (la "S" di anagrafica sincronizzata accanto
+ *  al Codice, `controlType="ImageButton" size="2"`). La view gli assegna due
+ *  colonne di griglia — una sola cella del righello, ~24px — mentre il padding
+ *  di antd da solo ne vale 30, quindi `overflow:hidden` della cella tagliava il
+ *  contrassegno a meta' (SXADV-5796.0). Qui prende il vestito stretto che la
+ *  sua dimensione dichiarata implica. */
+const isMarkerButton = (control: { prompt?: string; icon?: string }): boolean =>
+  !control.icon && (control.prompt ?? '').trim().length <= 2;
+
 export const ButtonControl: ControlComponent = ({ control, onAction }) => (
   <Button
     id={control.id}
+    className={isMarkerButton(control) ? 'nb-btn-marker' : undefined}
     disabled={control.disabled}
     icon={control.icon ? <img src={`/entrasp/images/${control.icon}`} width={16} height={16} /> : undefined}
     onClick={() => control.action && onAction(control.action)}

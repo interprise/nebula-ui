@@ -2,7 +2,7 @@ import React from 'react';
 import { fixServerHtml } from '../services/serverHtml';
 import { App, Button, Tooltip } from 'antd';
 import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, ListHeader } from '../types/ui';
+import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
@@ -78,6 +78,23 @@ const HeaderRow: React.FC<{ headers: ListHeader[] }> = ({ headers }) => (
   </tr>
 );
 
+/** Etichetta leggibile di un controllo non editabile.
+ *
+ *  Una CodeTable resa in modalita' DATA manda il solo CODICE — la tabella delle
+ *  opzioni sta nel template, che qui e' quello della lista — quindi non ha ne'
+ *  `displayText` ne' `displayValue` e il pannello mostrava "B" dove la griglia
+ *  accanto dice "Banca" (SXADV-5796.3). Le opzioni pero' ci sono, nel
+ *  descrittore stesso: la decodifica si fa qui, senza chiedere niente al
+ *  server. */
+function decodeOption(ctrl: UIControl): string | undefined {
+  const label = ctrl.displayText ?? ctrl.displayValue;
+  if (label != null && label !== '') return String(label);
+  const value = ctrl.value;
+  if (value == null || value === '' || !Array.isArray(ctrl.options)) return undefined;
+  const hit = ctrl.options.find((o: { value: string; text: string }) => String(o.value) === String(value));
+  return hit ? hit.text : undefined;
+}
+
 const CellContent: React.FC<{
   cell: UICell;
   onChange?: (name: string, value: unknown) => void;
@@ -90,7 +107,7 @@ const CellContent: React.FC<{
   // Non-editable combos ship the human label as displayText (List) or
   // displayValue (CodeTable/GenericList); prefer either over the raw key/value
   // so a read-only FK combo shows its description, not the code (e.g. "CMO|3208").
-  const val = ctrl ? String(ctrl.displayText ?? ctrl.displayValue ?? ctrl.value ?? '') : (cell.text ?? '');
+  const val = ctrl ? String(decodeOption(ctrl) ?? ctrl.value ?? '') : (cell.text ?? '');
   if (ctrl?.type === 'html' || /<[a-z][\s\S]*>/i.test(val)) {
     return <span dangerouslySetInnerHTML={{ __html: fixServerHtml(val) }} />;
   }

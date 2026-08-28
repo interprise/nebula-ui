@@ -280,6 +280,15 @@ export interface UITree {
    *  listEdit list. The client hydrates it per selected row from row.editData. */
   panelTemplate?: PanelTemplate;
   panelTemplateKey?: string;
+  /** Permessi di riga per una lista listEdit SENZA colonna selettore
+   *  (`selector="false"`), che il client leggerebbe dal selettore. L'identita'
+   *  della riga NON e' qui: e' il navpath, che il server mette in `props.path`
+   *  sulla riga stessa. Assente quando la colonna selettore c'e'. */
+  panelSelector?: {
+    canEdit?: boolean;
+    canUpdate?: boolean;
+    deleteCommand?: string;
+  };
   documenting?: boolean;
   /** The record on screen is an unsaved new one (server insert state). The
    *  split layout opens with the testata expanded so the fields to fill in are
@@ -476,6 +485,13 @@ export interface ServerResponse {
   // state). Drives the initial testata/tabs split (SXADV-5691).
   newRecord?: boolean;
   path?: string;
+  // Tree pane: the freshly rendered label (and hint) of the node just located,
+  // for the tree the selection came from. The label is a server-side ViewInfo
+  // expression, so only the server can recompute it after an edit — the client
+  // uses it to re-title the node in place instead of reloading the tree.
+  nodeKey?: string;
+  nodeLabel?: string;
+  nodeHint?: string;
   toolbar?: ToolbarItem[];
   currField?: string;
   uiData?: UIData;

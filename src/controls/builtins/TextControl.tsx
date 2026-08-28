@@ -14,7 +14,7 @@ const TextControl: ControlComponent = ({ control, pageType, onAction, onChange }
       {...commonProps}
       value={value}
       maxLength={control.maxLength}
-      style={{ width: '100%', maxWidth: textMaxWidth, ...(isUppercase && { textTransform: 'uppercase' }) }}
+      style={{ width: textMaxWidth, maxWidth: '100%', ...(isUppercase && { textTransform: 'uppercase' }) }}
       onChange={(e) => {
         // Show the raw keystrokes (CSS uppercases visually) so the caret
         // never jumps; store the uppercased value for the server.

@@ -36,7 +36,7 @@ const FallbackTextControl: React.FC<ControlRendererProps> = ({ control, pageType
         <Input
           {...commonProps}
           value={value}
-          style={{ width: '100%', maxWidth: textMaxWidth }}
+          style={{ width: textMaxWidth, maxWidth: '100%' }}
           onChange={(e) => { setValue(e.target.value); store(e.target.value); }}
           onBlur={commit}
           onPressEnter={commit}

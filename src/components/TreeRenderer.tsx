@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect, useContext } 
 import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
-import { SidContext, TitleInBreadcrumbContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, TitleInBreadcrumbContext, PaneToolbarContext, useIsTabLabelEcho } from './ViewRenderer';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 
@@ -34,6 +34,18 @@ function toAntTreeData(nodes: TreeNode[], searchText?: string): React.ComponentP
   });
 }
 
+/** Re-title one node in place, keeping every other branch referentially equal. */
+function retitleNode(nodes: TreeNode[], key: string, title: string, hint?: string): TreeNode[] {
+  return nodes.map((n) => {
+    if (n.key === key) return { ...n, title, ...(hint !== undefined ? { hint } : null) };
+    if (n.children) {
+      const children = retitleNode(n.children, key, title, hint);
+      return children === n.children ? n : { ...n, children };
+    }
+    return n;
+  });
+}
+
 /** Collect all non-leaf keys from a tree (for expanding all after search) */
 function collectNonLeafKeys(nodes: TreeNode[]): string[] {
   const keys: string[] = [];
@@ -50,6 +62,10 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   const titleInBreadcrumb = useContext(TitleInBreadcrumbContext);
   const titleEchoesTab = useIsTabLabelEcho(ui.title);
   const sid = useContext(SidContext);
+  // Loading the pane makes ITS record the session's current viewstate, so the
+  // toolbar rendered with the tree goes stale (its Add keeps the tree's path
+  // and answers NoSession). Hand the pane's own toolbar up to the tab.
+  const setPaneToolbar = useContext(PaneToolbarContext);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loadedKeys, setLoadedKeys] = useState<string[]>([]);
@@ -60,6 +76,18 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   const [detailUi, setDetailUi] = useState<UITree | null>(null);
   const detailFormValues = useRef<Record<string, string>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A node's label is a ViewInfo expression on the record (`#descrizione#`,
+  // `#codice# - #descrizione#`, ...), so the client cannot recompute it after an
+  // edit. The server renders it for us on the LocateAndNavigate that reloads the
+  // pane — including the one that follows a save — and we re-title the node in
+  // place. An older server sends nothing and the node simply stays as it was.
+  const applyNodeLabel = useCallback((resp: { nodeKey?: string; nodeLabel?: string; nodeHint?: string }) => {
+    const { nodeKey, nodeLabel, nodeHint } = resp;
+    if (!nodeKey || nodeLabel == null) return;
+    setTreeData((prev) => retitleNode(prev, nodeKey, nodeLabel, nodeHint));
+    setFilteredData((prev) => (prev ? retitleNode(prev, nodeKey, nodeLabel, nodeHint) : prev));
+  }, []);
 
   // Extract form values from a detail UI response
   const extractDetailFormValues = useCallback((dui: UITree): Record<string, string> => {
@@ -106,10 +134,15 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
             const resp = await api.postAction('LocateAndNavigate', {
               navpath: selectedKey,
               option1: ui.navigateView!,
+              // The tree we came from, so the server can render this node's
+              // label on the record it just re-read (see applyNodeLabel).
+              option2: ui.viewName || '',
             }, undefined, sid);
             if (resp.ui) {
               setDetailUi(resp.ui);
               detailFormValues.current = extractDetailFormValues(resp.ui);
+              if (resp.toolbar) setPaneToolbar?.(resp.toolbar);
+              applyNodeLabel(resp);
             }
           } catch {
             // Fallback: show the read-only response
@@ -122,9 +155,10 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
         detailFormValues.current = extractDetailFormValues(detailResponse);
       }
     }
-  }, [detailResponse, extractDetailFormValues, selectedKey, ui.navigateView, sid]);
+  }, [detailResponse, extractDetailFormValues, selectedKey, ui.navigateView, ui.viewName, sid, setPaneToolbar, applyNodeLabel]);
 
   const navigateView = ui.navigateView;
+  const treeViewName = ui.viewName;
 
   const onExpand = useCallback((keys: React.Key[]) => {
     setExpandedKeys(keys as string[]);
@@ -168,15 +202,18 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       const resp = await api.postAction('LocateAndNavigate', {
         navpath: key,
         option1: navigateView,
+        option2: treeViewName || '',
       }, undefined, sid);
       if (resp.ui) {
         setDetailUi(resp.ui);
         detailFormValues.current = extractDetailFormValues(resp.ui);
+        if (resp.toolbar) setPaneToolbar?.(resp.toolbar);
+        applyNodeLabel(resp);
       }
     } finally {
       document.body.style.cursor = '';
     }
-  }, [navigateView, sid, extractDetailFormValues]);
+  }, [navigateView, treeViewName, sid, extractDetailFormValues, setPaneToolbar, applyNodeLabel]);
 
   // Handle detail field changes — update local ref AND Shell's formValues
   const handleDetailChange = useCallback((name: string, value: unknown) => {

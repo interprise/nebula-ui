@@ -102,7 +102,11 @@ export function registerBuiltinControls(): void {
   });
   // attachments + action render per-row in list views (download links and
   // workflow action icons, e.g. the active-invoices list — SXADV-5457).
-  registerCellRenderable('workflowStatus', 'attachments', 'action');
+  // navigateView is a link-action ViewItem, not a value: in a list its cell has
+  // nothing to print, so without a renderer the column came out blank and the
+  // link was simply missing ("Espandi..." on the prezzi personalizzati grids —
+  // SXADV-5828.2). Legacy drew the same anchor in a list cell as in a form one.
+  registerCellRenderable('workflowStatus', 'attachments', 'action', 'navigateView');
   auditRegistry();
 }
 

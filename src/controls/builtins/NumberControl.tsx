@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { InputNumber } from 'antd';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useCommitReload, useSyncedState, decodeHtmlEntities } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedState, decodeHtmlEntities, numberWidthForSize } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
@@ -119,7 +119,7 @@ export const NumberControl: ControlComponent = ({ control, pageType, onAction, o
       value={control.value}
       decimals={displayPrecision(control.format, control.decimals)}
       unitSuffix={control.unitSuffix}
-      width={control.size ? control.size * 9 + 34 : 125}
+      width={numberWidthForSize(control.size)}
       store={store}
       commit={commit}
     />,
@@ -140,7 +140,7 @@ export const MoneyControl: ControlComponent = ({ control, pageType, onAction, on
       decimals={displayPrecision(control.format, control.decimals)}
       currencySymbol={control.currencySymbol as string}
       unitSuffix={control.unitSuffix}
-      width={control.size ? control.size * 9 + 34 : 125}
+      width={numberWidthForSize(control.size)}
       store={store}
       commit={commit}
     />,

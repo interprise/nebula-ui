@@ -3,7 +3,7 @@ import { Select } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import type { UIControl } from '../../types/ui';
-import { useCommonProps, useControlChange, getTextMaxWidth, useSelectKeys, useSyncedState, useSelectOpen, getFieldName } from '../helpers';
+import { useCommonProps, useControlChange, getTextMaxWidth, comboWidthForSize, useSelectKeys, useSyncedState, useSelectOpen, getFieldName } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
 import { SidContext, PathContext } from '../../components/ViewRenderer';
@@ -183,7 +183,7 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // to (or collapsing within) the cell. Without a size, fill the cell but floor
   // the width so it can't collapse.
   const widthStyle: React.CSSProperties = control.size != null
-    ? { width: textMaxWidth, maxWidth: textMaxWidth, flexShrink: 0 }
+    ? { width: comboWidthForSize(control.size), maxWidth: '100%', flexShrink: 0 }
     : { width: '100%', maxWidth: textMaxWidth, minWidth: 160 };
 
   // Remote (server-searched) combo: the detail form flags it with `remote`; an

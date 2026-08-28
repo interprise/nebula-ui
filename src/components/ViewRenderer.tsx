@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { fixServerHtml } from '../services/serverHtml';
 import { Button, Tabs, Tooltip } from 'antd';
 import { BookOutlined, CheckCircleFilled, CloseCircleFilled, CompressOutlined, ExpandOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, UIControl, ListRecord, RowEditData } from '../types/ui';
+import type { UITree, UIRow, UICell, UIControl, ListRecord, RowEditData, ToolbarItem } from '../types/ui';
 import { hydrate } from '../services/hydrate';
 import { putPanelTemplate, getPanelTemplate } from '../services/templateCache';
 import {
@@ -14,6 +14,7 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
+import { comboWidthForSize, fieldWidthForSize, numberWidthForSize } from '../controls/helpers';
 import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID } from '../hooks/uiMode';
 import { useDensity, DENSITY_FONT_SIZE, type Density } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -67,8 +68,10 @@ function controlHardWidth(control: UIControl): number {
   switch (control.type) {
     case 'combo':
     case 'multiselect':
-      // Mirror di getTextMaxWidth + della regola di ComboControl.
-      return control.size != null ? Math.min(control.size * 8 + 16, 500) : 160;
+      // Mirror di getTextMaxWidth + della regola di ComboControl. La larghezza
+      // dal `size` si chiede al controllo stesso: e' misurata sul corpo scelto
+      // dall'utente, non su una costante (SXADV-5796).
+      return control.size != null ? comboWidthForSize(control.size) : 160;
     case 'workflowStatus':
     case 'bpmStatus':
       return 160;
@@ -78,6 +81,30 @@ function controlHardWidth(control: UIControl): number {
       return 95;
     case 'timestamp':
       return 170;
+    default:
+      return 0;
+  }
+}
+
+/** Larghezza che un controllo vorrebbe per mostrare il proprio contenuto per
+ *  intero — non incomprimibile come {@link controlHardWidth}, ma nemmeno zero:
+ *  un `<input>` che si adatta alla cella, se la cella e' piu' stretta del
+ *  `size` dichiarato, il testo lo TAGLIA (`.content-cell` ha
+ *  `overflow:hidden`), e le ultime lettere non si recuperano scorrendo perche'
+ *  a scorrere e' la tabella, non il campo. Serve a decidere quanto larga fare
+ *  la colonna quando la tabella scorre comunque (vedi `contentColFloor`). */
+function controlContentWidth(control: UIControl): number {
+  const hard = controlHardWidth(control);
+  if (hard) return hard;
+  switch (control.type) {
+    case 'text':
+    case 'password':
+    case 'durata':
+      return control.size != null ? fieldWidthForSize(control.size) : 0;
+    case 'number':
+    case 'money':
+      // Mirror di NumberControl, che ha qualche pixel in piu' di ingombro.
+      return control.size != null ? numberWidthForSize(control.size) : 0;
     default:
       return 0;
   }
@@ -119,6 +146,282 @@ const measurePromptWidth = (() => {
   };
 })();
 
+
+/** Larghezza UTILE del contenitore di una tabella: il suo box di contenuto, non
+ *  `clientWidth`, che il padding lo comprende. `.tab-content` ne ha 8px per
+ *  lato: dimensionare il righello su clientWidth produceva una tabella 16px
+ *  piu' larga dello spazio disponibile e quindi una barra di scorrimento
+ *  orizzontale per 8 pixel (SXADV-5809). Il ResizeObserver riceve gia' il box
+ *  di contenuto in `contentRect`; questa serve per la prima misura e come
+ *  ripiego. */
+function hostContentWidth(host: HTMLElement): number {
+  const cs = getComputedStyle(host);
+  return host.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+}
+/** Il righello di UNA tabella: le colonne che il server ha dichiarato, fittate
+ *  alla larghezza visibile di quella tabella.
+ *
+ *  Estratto dal corpo di `ViewRenderer` perche' nel layout split le tabelle
+ *  sono DUE — il form in alto e il contenuto del tab in basso — e fino a
+ *  SXADV-5809 la seconda riusava il righello della prima. Le due tabelle pero'
+ *  contengono righe diverse: la banda delle etichette calcolata su "Codice:" e
+ *  "Valido dal:" della testata e' meta' di quella che "Codice Attivita' 2025
+ *  Primaria" pretende nel tab, e le colonne di contenuto dichiarate per una
+ *  testata da 90 colonne (2094px) finivano in un tab largo 1210px, dove il
+ *  browser le riscalava in proporzione — banda a 12px per colonna, coda a
+ *  10px. Ogni tabella misura ora le PROPRIE righe. */
+interface LayoutRuler {
+  /** Colonne del righello: quelle delle sole righe di form (vedi `formCols`),
+   *  o il totale dichiarato dal server quando non ce ne sono. */
+  totalCols: number;
+  /** Colonne delle righe di FORM, `undefined` se la tabella non ne ha. E' anche
+   *  il colspan con cui si disegnano i separatori di sezione. */
+  formCols: number | undefined;
+  promptBandCols: number;
+  promptBandWidth: number;
+  contentColWidth: number;
+  tableWidth: number;
+  fitRuler: boolean;
+  /** La larghezza che entrerebbe e' sotto il pavimento preteso dai controlli:
+   *  la tabella non si stringe, tiene le colonne e scorre (SXADV-5677). */
+  overflows: boolean;
+  /** Griglie, tab annidati, cubi: scorrono gia' per conto loro, e allargare la
+   *  tabella oltre il contenitore rimetterebbe in campo la seconda barra di
+   *  scorrimento (SXADV-5450). */
+  hostsAutonomousContent: boolean;
+}
+
+function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalColsHint?: number, totalWidthHint?: number): LayoutRuler {
+  // Compute actual column count from form rows only (exclude container/section-header rows
+  // whose colspans include child sub-views and inflate the auto-layout table)
+  const formCols = (() => {
+    let max = 0;
+    for (const row of rows) {
+      let sum = 0;
+      let isFormRow = false;
+      for (const cell of row.cells) {
+        // Bars are autonomous flex-wrap containers (like grids): they take
+        // whatever width is available and wrap their items. Their declared
+        // colspan — e.g. the anagrafica links ButtonBar's size="120" — must
+        // not inflate the ruler width, or the table gets a huge minWidth and
+        // the bar (as wide as its cell) never wraps, silently pushing
+        // trailing links off-screen (5450.1C).
+        const ctlType = cell.control?.type;
+        if (ctlType === 'buttonBar' || ctlType === 'actionBar') continue;
+        sum += cell.colspan || 1;
+        if (cell.elementType === ELTYPE_PROMPT || cell.elementType === ELTYPE_CONTENT || cell.elementType === ELTYPE_SELECTOR) {
+          isFormRow = true;
+        }
+      }
+      if (isFormRow && sum > max) max = sum;
+    }
+    return max || undefined;
+  })();
+
+  // Ruler columns. Use formCols (form rows only) not ui.totalCols — grids render
+  // outside the table and don't constrain the ruler.
+  const totalCols = formCols || totalColsHint || 0;
+
+  // The label band is the run of leading columns every prompt cell shares. Its
+  // width is a property of the LONGEST LABEL, not of the server's column count:
+  // billed at the uniform 24px/column it came out ~240px wide against ~180px of
+  // actual text, and since prompts are right-aligned all that slack piled up on
+  // the left as dead space while the fields it pushed rightwards ran off the
+  // edge of the screen (SXADV-5742.1).
+  let promptBandCols = 0;
+  for (const row of rows) {
+    const first = row.cells[0];
+    if (first && first.elementType === ELTYPE_PROMPT) promptBandCols = Math.max(promptBandCols, first.colspan || 1);
+  }
+
+  // Sized PER COLUMN, not per band: prompt cells don't all span the same number
+  // of columns, so a band merely wide enough for the longest label leaves the
+  // rows with a shorter colspan too narrow and wraps them anyway. What every row
+  // shares is the column, so the requirement each label imposes is
+  // (its width / its colspan) and the band is the largest of those, times the
+  // widest prompt colspan in the view.
+  //
+  // Rimisurato quando cambia la densita': il corpo del carattere e' cambiato e
+  // con lui la larghezza che ogni etichetta pretende.
+  let promptBandWidth = 0;
+  if (promptBandCols) {
+    const font = layoutTableFont(density);
+    let perCol = 0;
+    for (const row of rows) {
+      const first = row.cells[0];
+      if (!first || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
+      const span = first.colspan || 1;
+      perCol = Math.max(perCol, (measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING) / span);
+    }
+    promptBandWidth = perCol ? Math.ceil(perCol * promptBandCols) : 0;
+  }
+
+  // Pavimento delle colonne di contenuto, derivato dai controlli che questa
+  // tabella contiene davvero e non da una costante: ogni cella con un controllo
+  // incomprimibile pretende (larghezza + padding) / colspan px per colonna, e la
+  // tabella non può scendere sotto la più esigente senza tagliarlo.
+  // Il tetto è DEFAULT_COL_WIDTH, la colonna del layout legacy: oltre non si
+  // sale, altrimenti una singola tendina in una cella colspan=1 (168px per
+  // colonna) gonfierebbe l'intera tabella per compiacere un campo solo.
+  //
+  // Si calcolano due pavimenti dalla stessa passata sulle celle:
+  //  - `contentColFloor`, dai controlli INCOMPRIMIBILI: e' quello che decide se
+  //    la tabella scorre, ed e' la regola invariata di 5677;
+  //  - `contentColWish`, che tiene conto anche dei campi di testo, che si
+  //    adattano alla cella ma il cui contenuto viene TAGLIATO quando la cella
+  //    e' piu' stretta del `size` dichiarato (SXADV-5796).
+  // Il secondo si usa solo quando il primo ha gia' deciso che la tabella
+  // scorre: allargare le colonne di una tabella che scorre comunque non costa
+  // niente — nessuna barra in piu' — e restituisce i caratteri tagliati. Se
+  // invece la tabella entra, si tiene la larghezza che la fa entrare, e un
+  // campo stretto resta il prezzo di non avere la barra orizzontale.
+  const { contentColFloor, contentColWish } = (() => {
+    let hardNeed = 0;
+    let wishNeed = 0;
+    for (const row of rows) {
+      for (const cell of row.cells) {
+        if (cell.elementType !== ELTYPE_CONTENT || !cell.control) continue;
+        const span = cell.colspan || 1;
+        const hard = controlHardWidth(cell.control);
+        if (hard) hardNeed = Math.max(hardNeed, (hard + CONTENT_CELL_PADDING) / span);
+        const wish = controlContentWidth(cell.control);
+        if (wish) wishNeed = Math.max(wishNeed, (wish + CONTENT_CELL_PADDING) / span);
+      }
+    }
+    const clamp = (n: number) =>
+      Math.max(MIN_CONTENT_COL, Math.min(DEFAULT_COL_WIDTH, Math.ceil(n)));
+    return { contentColFloor: clamp(hardNeed), contentColWish: clamp(wishNeed) };
+  })();
+
+  // What's left of the visible width goes to the content columns, in the
+  // proportions the server declared (colspans), so the form fills the editing
+  // area instead of overflowing it.
+  //
+  // Stringere sotto il pavimento NON si fa (SXADV-5677): il righello a larghezza
+  // visibile serve a togliere la scrollbar orizzontale, ma su una view molto
+  // larga — Fatture ha 86 colonne server, Anagrafica Unica 90 — la scrollbar
+  // resta comunque, e la stretta si è pagata solo in campi tagliati. Quando la
+  // larghezza che entrerebbe è sotto il pavimento la tabella torna quindi alle
+  // colonne che i suoi controlli chiedono e scorre, come faceva il legacy.
+  const contentCols = totalCols - promptBandCols;
+  const fitRuler = hostWidth > 0 && promptBandWidth > 0 && contentCols > 0;
+  const fittedColWidth = fitRuler
+    ? (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols
+    : 0;
+  const contentColWidth = fitRuler
+    ? (fittedColWidth >= contentColFloor ? fittedColWidth : contentColWish)
+    : DEFAULT_COL_WIDTH;
+
+  // Fallback (no measurement yet, or a table with no prompt band): the previous
+  // uniform grid. Each formCol is one server grid column, ~charWidth * gridSize
+  // px on the legacy HTML layout — typically 24–30px.
+  const uniformWidth = formCols ? formCols * DEFAULT_COL_WIDTH : (totalWidthHint || 0);
+  const tableWidth = fitRuler
+    ? Math.round(promptBandWidth + contentCols * contentColWidth)
+    : uniformWidth;
+
+  const hostsAutonomousContent = viewHasOlapCube({ rows } as UITree) || rows.some((row) =>
+    row.cells.some((cell) => {
+      const t = cell.control?.type;
+      return t === 'tab' || t === 'detailView' || t === 'embeddedView';
+    }),
+  );
+
+  return {
+    totalCols, formCols, promptBandCols, promptBandWidth, contentColWidth, tableWidth,
+    fitRuler, overflows: fitRuler && fittedColWidth < contentColFloor, hostsAutonomousContent,
+  };
+}
+
+/** Lo stile della tabella che porta questo righello.
+ *
+ *  Una tabella EMBEDDED (il form aperto dentro un tab) con il solo
+ *  `width:100%` è costretta dentro il contenitore, e con `table-layout:fixed`
+ *  il browser riscala il righello in proporzione: il pavimento non protegge
+ *  più niente e i campi si tagliano lo stesso — è il caso "Tab Indirizzi ->
+ *  Nuovo -> Cap" di SXADV-5677. Quando il righello non entra le si dà quindi
+ *  un `minWidth`, come alla tabella di pagina: meglio scorrere che tagliare.
+ *
+ *  MAI però se la tabella ospita contenuti autonomi (griglie, tab annidati):
+ *  quelli scorrono già per conto loro, e una tabella più larga del tab
+ *  rimetterebbe in campo la seconda barra di scorrimento (SXADV-5450). */
+function layoutTableStyle(ruler: LayoutRuler, embedded: boolean | undefined): React.CSSProperties {
+  if (!embedded) return { minWidth: ruler.tableWidth || '100%' };
+  return ruler.overflows && !ruler.hostsAutonomousContent
+    ? { width: '100%', minWidth: ruler.tableWidth }
+    : { width: '100%' };
+}
+
+/** La riga a altezza zero che fissa le colonne per `table-layout: fixed`. */
+function rulerRowFor(ruler: LayoutRuler): React.ReactNode {
+  const { totalCols, tableWidth, fitRuler, promptBandCols, promptBandWidth, contentColWidth } = ruler;
+  if (!(totalCols > 0 && tableWidth > 0)) return null;
+  return (
+    <tr style={{ height: 0, lineHeight: 0, fontSize: 0 }}>
+      {Array.from({ length: totalCols }, (_, i) => (
+        <td
+          key={i}
+          style={{
+            width: fitRuler
+              ? (i < promptBandCols ? promptBandWidth / promptBandCols : contentColWidth)
+              : tableWidth / totalCols,
+            padding: 0,
+            border: 'none',
+            height: 0,
+          }}
+        />
+      ))}
+    </tr>
+  );
+}
+
+/** Il contenuto di un tab nel layout split, con il righello delle PROPRIE righe.
+ *
+ *  Le righe del tab vivono nella stessa griglia master della view (i colspan
+ *  sono confrontabili), ma la tabella e' un elemento a se': fino a SXADV-5809
+ *  riusava il righello della testata, calcolato su etichette e controlli che
+ *  in questo tab non ci sono. Su Anagrafica Unica il righello della testata
+ *  dichiarava 90 colonne per 2094px dentro un tab da 1210px, e siccome qui la
+ *  tabella e' `width:100%` senza `minWidth` il browser lo comprimeva in
+ *  proporzione invece di farla scorrere: banda delle etichette a 12px per
+ *  colonna (le etichette lunghe andavano a capo) e colonne di coda a 10px.
+ *
+ *  E' un componente e non un pezzo di JSX perche' ha bisogno di hook suoi: la
+ *  larghezza del proprio contenitore, osservata come fa la tabella del form. */
+function TabContentTable({ rows, pageType, onAction, onChange, onGridChange }: {
+  rows: UIRow[];
+  pageType?: number;
+  onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
+}): React.ReactElement {
+  const { density } = useDensity();
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const [hostWidth, setHostWidth] = React.useState(0);
+  React.useEffect(() => {
+    const host = tableRef.current?.parentElement;
+    if (!host || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect.width;
+      setHostWidth(box || hostContentWidth(host));
+    });
+    ro.observe(host);
+    setHostWidth(hostContentWidth(host));
+    return () => ro.disconnect();
+  }, []);
+  const ruler = buildRuler(rows, hostWidth, density);
+  return (
+    <table ref={tableRef} className="layout-table" style={layoutTableStyle(ruler, true)}>
+      <tbody>
+        {rulerRowFor(ruler)}
+        {rows.map((cRow, cri) => (
+          <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={ruler.formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 interface ViewRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
@@ -143,6 +446,13 @@ const splitByView = new Map<string, SplitState>();
 
 // Session ID context — used by remote combos to call the server
 export const SidContext = React.createContext<string>('S1');
+
+// The tab toolbar setter, for a renderer that drives a viewstate of its own.
+// TreeRenderer loads its right pane with LocateAndNavigate, which makes the
+// pane's record the session's current viewstate: the toolbar rendered with the
+// TREE is stale from that moment on (its Add still carries the tree's path and
+// comes back NoSession), so the pane hands its own toolbar up to the tab.
+export const PaneToolbarContext = React.createContext<((toolbar: ToolbarItem[]) => void) | null>(null);
 
 // View path context — used by controls to send navpath with commands
 export const PathContext = React.createContext<string | undefined>(undefined);
@@ -725,36 +1035,6 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
 
   const hasOlapCube = viewHasOlapCube(ui);
 
-  // Compute actual column count from form rows only (exclude container/section-header rows
-  // whose colspans include child sub-views and inflate the auto-layout table)
-  const formCols = (() => {
-    let max = 0;
-    for (const row of ui.rows) {
-      let sum = 0;
-      let isFormRow = false;
-      for (const cell of row.cells) {
-        // Bars are autonomous flex-wrap containers (like grids): they take
-        // whatever width is available and wrap their items. Their declared
-        // colspan — e.g. the anagrafica links ButtonBar's size="120" — must
-        // not inflate the ruler width, or the table gets a huge minWidth and
-        // the bar (as wide as its cell) never wraps, silently pushing
-        // trailing links off-screen (5450.1C).
-        const ctlType = cell.control?.type;
-        if (ctlType === 'buttonBar' || ctlType === 'actionBar') continue;
-        sum += cell.colspan || 1;
-        if (cell.elementType === ELTYPE_PROMPT || cell.elementType === ELTYPE_CONTENT || cell.elementType === ELTYPE_SELECTOR) {
-          isFormRow = true;
-        }
-      }
-      if (isFormRow && sum > max) max = sum;
-    }
-    return max || undefined;
-  })();
-
-  // Ruler columns. Use formCols (form rows only) not ui.totalCols — grids render
-  // outside the table and don't constrain the ruler.
-  const totalCols = formCols || ui.totalCols || 0;
-
   // Width the table has to live in, tracked so the ruler follows window resize,
   // browser zoom and sidebar drags.
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -763,137 +1043,22 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   React.useEffect(() => {
     const host = tableRef.current?.parentElement;
     if (!host || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => setHostWidth(host.clientWidth));
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect.width;
+      setHostWidth(box || hostContentWidth(host));
+    });
     ro.observe(host);
-    setHostWidth(host.clientWidth);
+    setHostWidth(hostContentWidth(host));
     return () => ro.disconnect();
   }, [hasBottomPanel]);
 
-  // The label band is the run of leading columns every prompt cell shares. Its
-  // width is a property of the LONGEST LABEL, not of the server's column count:
-  // billed at the uniform 24px/column it came out ~240px wide against ~180px of
-  // actual text, and since prompts are right-aligned all that slack piled up on
-  // the left as dead space while the fields it pushed rightwards ran off the
-  // edge of the screen (SXADV-5742.1).
-  const promptBandCols = React.useMemo(() => {
-    let n = 0;
-    for (const row of ui.rows) {
-      const first = row.cells[0];
-      if (first && first.elementType === ELTYPE_PROMPT) n = Math.max(n, first.colspan || 1);
-    }
-    return n;
-  }, [ui.rows]);
-
-  // Sized PER COLUMN, not per band: prompt cells don't all span the same number
-  // of columns, so a band merely wide enough for the longest label leaves the
-  // rows with a shorter colspan too narrow and wraps them anyway. What every row
-  // shares is the column, so the requirement each label imposes is
-  // (its width / its colspan) and the band is the largest of those, times the
-  // widest prompt colspan in the view.
-  const promptBandWidth = React.useMemo(() => {
-    if (!promptBandCols) return 0;
-    // Rimisurato quando cambia la densita': il corpo del carattere e' cambiato
-    // e con lui la larghezza che ogni etichetta pretende.
-    const font = layoutTableFont(density);
-    let perCol = 0;
-    for (const row of ui.rows) {
-      const first = row.cells[0];
-      if (!first || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
-      const span = first.colspan || 1;
-      perCol = Math.max(perCol, (measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING) / span);
-    }
-    return perCol ? Math.ceil(perCol * promptBandCols) : 0;
-  }, [ui.rows, promptBandCols, density]);
-
-  // Pavimento delle colonne di contenuto, derivato dai controlli che questa
-  // tabella contiene davvero e non da una costante: ogni cella con un controllo
-  // incomprimibile pretende (larghezza + padding) / colspan px per colonna, e la
-  // tabella non può scendere sotto la più esigente senza tagliarlo.
-  // Il tetto è DEFAULT_COL_WIDTH, la colonna del layout legacy: oltre non si
-  // sale, altrimenti una singola tendina in una cella colspan=1 (168px per
-  // colonna) gonfierebbe l'intera tabella per compiacere un campo solo.
-  // Calcolato in linea come `formCols` qui sotto, non in un useMemo: questo
-  // componente tiene i suoi hook sopra i return anticipati (vedi la nota sugli
-  // hook più in alto), e un giro sulle celle costa quanto quello che già si fa.
-  const contentColFloor = (() => {
-    let need = 0;
-    for (const row of ui.rows) {
-      for (const cell of row.cells) {
-        if (cell.elementType !== ELTYPE_CONTENT || !cell.control) continue;
-        const hard = controlHardWidth(cell.control);
-        if (!hard) continue;
-        need = Math.max(need, (hard + CONTENT_CELL_PADDING) / (cell.colspan || 1));
-      }
-    }
-    return Math.max(MIN_CONTENT_COL, Math.min(DEFAULT_COL_WIDTH, Math.ceil(need)));
-  })();
-
-  // What's left of the visible width goes to the content columns, in the
-  // proportions the server declared (colspans), so the form fills the editing
-  // area instead of overflowing it.
-  //
-  // Stringere sotto il pavimento NON si fa (SXADV-5677): il righello a larghezza
-  // visibile serve a togliere la scrollbar orizzontale, ma su una view molto
-  // larga — Fatture ha 86 colonne server, Anagrafica Unica 90 — la scrollbar
-  // resta comunque, e la stretta si è pagata solo in campi tagliati. Quando la
-  // larghezza che entrerebbe è sotto il pavimento la tabella torna quindi alle
-  // colonne che i suoi controlli chiedono e scorre, come faceva il legacy.
-  const contentCols = totalCols - promptBandCols;
-  const fitRuler = hostWidth > 0 && promptBandWidth > 0 && contentCols > 0;
-  const fittedColWidth = fitRuler
-    ? (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols
-    : 0;
-  const contentColWidth = fitRuler
-    ? (fittedColWidth >= contentColFloor ? fittedColWidth : contentColFloor)
-    : DEFAULT_COL_WIDTH;
-
-  // Fallback (no measurement yet, or a table with no prompt band): the previous
-  // uniform grid. Each formCol is one server grid column, ~charWidth * gridSize
-  // px on the legacy HTML layout — typically 24–30px.
-  const uniformWidth = formCols ? formCols * DEFAULT_COL_WIDTH : (ui.totalWidth || 0);
-  const tableWidth = fitRuler
-    ? Math.round(promptBandWidth + contentCols * contentColWidth)
-    : uniformWidth;
-  // Una tabella EMBEDDED (il form aperto dentro un tab) con il solo
-  // `width:100%` è costretta dentro il contenitore, e con `table-layout:fixed`
-  // il browser riscala il righello in proporzione: il pavimento non protegge
-  // più niente e i campi si tagliano lo stesso — è il caso "Tab Indirizzi ->
-  // Nuovo -> Cap" di SXADV-5677. Quando il righello non entra le si dà quindi
-  // un `minWidth`, come alla tabella di pagina: meglio scorrere che tagliare.
-  //
-  // MAI però se la tabella ospita contenuti autonomi (griglie, tab annidati):
-  // quelli scorrono già per conto loro, e una tabella più larga del tab
-  // rimetterebbe in campo la seconda barra di scorrimento (SXADV-5450).
-  const hostsAutonomousContent = hasOlapCube || ui.rows.some((row) =>
-    row.cells.some((cell) => {
-      const t = cell.control?.type;
-      return t === 'tab' || t === 'detailView' || t === 'embeddedView';
-    }),
-  );
-  const rulerOverflows = fitRuler && fittedColWidth < contentColFloor;
-  const tableStyle: React.CSSProperties = embedded
-    ? (rulerOverflows && !hostsAutonomousContent
-        ? { width: '100%', minWidth: tableWidth }
-        : { width: '100%' })
-    : { minWidth: tableWidth || '100%' };
-
-  const rulerRow = totalCols > 0 && tableWidth > 0 ? (
-    <tr style={{ height: 0, lineHeight: 0, fontSize: 0 }}>
-      {Array.from({ length: totalCols }, (_, i) => (
-        <td
-          key={i}
-          style={{
-            width: fitRuler
-              ? (i < promptBandCols ? promptBandWidth / promptBandCols : contentColWidth)
-              : tableWidth / totalCols,
-            padding: 0,
-            border: 'none',
-            height: 0,
-          }}
-        />
-      ))}
-    </tr>
-  ) : null;
+  // Il righello di QUESTA tabella, misurato sulle sue righe. Nel layout split la
+  // tabella del form e quella del contenuto di un tab sono due elementi
+  // distinti e ognuna misura le proprie (vedi TabContentTable).
+  const ruler = buildRuler(ui.rows, hostWidth, density);
+  const formCols = ruler.formCols;
+  const tableStyle = layoutTableStyle(ruler, embedded);
+  const rulerRow = rulerRowFor(ruler);
   const edgeScroll = useEdgeScrollReveal();
 
   // Split layout: form (top) / bottom panel (tabs, embedded views).
@@ -1183,14 +1348,13 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                       {/* Same as the non-split tab path: the tab label names this
                           content, so a heading repeating it is dropped (TabLabelContext). */}
                       <TabLabelContext.Provider value={tabSelected?.prompt}>
-                        <table className="layout-table" style={{ width: '100%' }}>
-                          <tbody>
-                            {rulerRow}
-                            {(tabControl.contentRows as UIRow[]).map((cRow, cri) => (
-                              <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
-                            ))}
-                          </tbody>
-                        </table>
+                        <TabContentTable
+                          rows={tabControl.contentRows as UIRow[]}
+                          pageType={pageType}
+                          onAction={onAction}
+                          onChange={onChange}
+                          onGridChange={onGridChange}
+                        />
                       </TabLabelContext.Provider>
                     </div>
                     </InTabPanelContext.Provider>
@@ -1279,6 +1443,37 @@ const BottomPanelRow: React.FC<{
   );
 };
 
+/** Indice della cella "banda di sezione" di una riga, o -1 se non lo e'.
+ *
+ *  E' la riga che intesta una sezione del form: un solo Hint con una delle
+ *  classi legacy `section_header*` (fondo azzurro, testo centrato), a volte
+ *  preceduto da una cella di prompt vuota che fa da rientro.
+ *
+ *  Serve per allargarla a tutta la tabella (SXADV-5809). La banda dichiara nel
+ *  XML un `size` scritto a mano che non e' calcolato sulle righe che intesta e
+ *  quasi mai coincide: su titolariEffettiviDetail la banda dice `size="100"`
+ *  (20 colonne) mentre la riga "Ditta" ne usa 24, cosi' la banda finiva 211px
+ *  prima dei campi che dovrebbe contenere; su datiCciaaEmbDetail e
+ *  anVrAttivitaDetail lo stesso, di 2-4 colonne. Nessun autore di view intende
+ *  "la banda copre 20 delle 24 colonne": e' un numero approssimato a mano. */
+function sectionBandIndex(row: UIRow): number {
+  let band = -1;
+  for (let i = 0; i < row.cells.length; i++) {
+    const cell = row.cells[i];
+    const cls = (cell.control?.cls as string | undefined) || cell.cls || '';
+    if (cell.control?.type === 'hint' && /(^|\s)section_header/.test(cls)) {
+      if (band >= 0) return -1; // due bande sulla stessa riga: non e' un titolo di sezione
+      band = i;
+      continue;
+    }
+    // Tutto il resto puo' essere solo riempitivo: un prompt senza testo.
+    const isEmptyPrompt = cell.elementType === ELTYPE_PROMPT
+      && !(cell.prompt || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (!isEmptyPrompt) return -1;
+  }
+  return band;
+}
+
 const RowRenderer: React.FC<{
   row: UIRow;
   pageType?: number;
@@ -1313,10 +1508,19 @@ const RowRenderer: React.FC<{
     }
   }
 
+  // La banda di sezione prende tutta la larghezza rimasta: mai meno di quanto
+  // dichiara (si allarga soltanto), mai piu' della tabella.
+  const bandIdx = formCols ? sectionBandIndex(row) : -1;
+  let bandColSpan: number | undefined;
+  if (bandIdx >= 0 && formCols) {
+    const others = row.cells.reduce((sum, c, i) => i === bandIdx ? sum : sum + (c.colspan || 1), 0);
+    bandColSpan = Math.max(row.cells[bandIdx].colspan || 1, formCols - others);
+  }
+
   return (
     <tr id={row.id} className={row.cls || ''}>
       {row.cells.map((cell, ci) => (
-        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} colSpanOverride={ci === bandIdx ? bandColSpan : undefined} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
       ))}
     </tr>
   );
@@ -1327,10 +1531,12 @@ const CellRenderer: React.FC<{
   companion?: boolean;
   pageType?: number;
   formCols?: number;
+  /** Colspan imposto dalla riga (banda di sezione allargata, SXADV-5809). */
+  colSpanOverride?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
-}> = ({ cell, companion, pageType, formCols, onAction, onChange, onGridChange }) => {
+}> = ({ cell, companion, pageType, formCols, colSpanOverride, onAction, onChange, onGridChange }) => {
   // Two-phase pipeline: the template carries a `visible` slot for every
   // conditionally-shown cell. When `hydrate()` resolves it to false, we skip
   // the cell entirely — matching the legacy FULL-mode behavior where hidden
@@ -1341,7 +1547,7 @@ const CellRenderer: React.FC<{
   const isFullWidthCell = cell.elementType === ELTYPE_CONTAINER
     || cell.elementType === ELTYPE_SECTION_HEADER
     || cell.elementType === ELTYPE_FILLER;
-  const colSpan = isFullWidthCell && formCols ? formCols : cell.colspan;
+  const colSpan = colSpanOverride ?? (isFullWidthCell && formCols ? formCols : cell.colspan);
 
   const tdProps: React.TdHTMLAttributes<HTMLTableCellElement> = {
     id: cell.id,
@@ -1539,6 +1745,11 @@ function renderContainerControl(
           // (rows already carry per-record editData via `rows` above).
           panelTemplate: control.panelTemplate as UITree['panelTemplate'],
           panelTemplateKey: control.panelTemplateKey as string | undefined,
+          // ...e, per una lista dichiarata `selector="false"`, l'identita' di
+          // riga che il selettore non puo' dare (SXADV-5796.3b). Senza questa
+          // copia il click su una riga non seleziona nulla e il pannello non si
+          // apre mai — vale per le liste embedded, cioe' quasi tutte.
+          panelSelector: control.panelSelector as UITree['panelSelector'],
           // Server-side pagination state for the embedded grid, updated in place
           // by the detailPageOnly slim response (Shell). When present with
           // totalPages > 1, ListRenderer shows an interactive pager.

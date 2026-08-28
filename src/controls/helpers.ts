@@ -4,6 +4,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
 import { DataVersionContext } from './dataVersion';
+import { formFontSizePx } from '../hooks/density';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to a
  *  ref WITHOUT setState. A plain controlled `<Input value={control.value}>`
@@ -287,8 +288,115 @@ export function negationFieldName(wireName: string): string {
     : wireName + '$not';
 }
 
+/* Larghezza di un campo dal suo `size` (SXADV-5796) ------------------------ */
+
+/** Il carattere con cui la layout-table disegna davvero i controlli — lo stesso
+ *  di `RULER_FONT_FAMILY` in `ViewRenderer`, dove serve a misurare le etichette. */
+const FIELD_FONT_FAMILY = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+/** Ingombro fisso di un `<input>` della layout-table: 6px di padding per lato
+ *  (regola `.layout-table .ant-input`) piu' 1px di bordo per lato. Non e' spazio
+ *  per il testo e va aggiunto alla larghezza dei caratteri, altrimenti gli
+ *  ultimi caratteri finiscono sotto il bordo destro. */
+const FIELD_CHROME = 14;
+
+/** Larghezza di ripiego per un campo che non dichiara un `size`. NON e' un
+ *  tetto: il writer HTML legacy emetteva un `<input size="N">` nudo, che il
+ *  browser dimensiona su N caratteri senza alcun limite, e il tetto che stava
+ *  qui faceva uscire a 500px un campo che ne aveva dichiarati 80 (~740px) in
+ *  una cella che di posto ne aveva 778 (SXADV-5809). Il limite vero resta la
+ *  cella, via `max-width: 100%` — lo stesso ragionamento con cui il tetto era
+ *  gia' stato tolto ai combo in SXADV-5796.4. */
+const NO_SIZE_FIELD_WIDTH = 500;
+
+/** Frecce di incremento + simbolo di valuta di un `InputNumber`. */
+const NUMBER_EXTRA_CHROME = 20;
+
+let fieldMetrics: { font: string; ch: number; max: number } | null = null;
+
+/** Larghezza del carattere medio e di quello piu' largo, al corpo corrente.
+ *  Misurate su canvas (nessun nodo nel DOM, nessun reflow) e memoizzate per
+ *  font: il corpo cambia solo quando l'utente cambia preset di densita'. */
+function getFieldMetrics(): { ch: number; max: number } {
+  const px = formFontSizePx();
+  const font = `${px}px ${FIELD_FONT_FAMILY}`;
+  if (fieldMetrics && fieldMetrics.font === font) return fieldMetrics;
+  let ch = px * 0.68;
+  let max = px;
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (ctx) {
+      ctx.font = font;
+      // Non la cifra "0" (che in Inter e' anche il valore di `1ch`): i campi di
+      // questa applicazione contengono soprattutto CODICI in maiuscolo, e una
+      // maiuscola e' mediamente piu' larga di una cifra — un codice fiscale di
+      // 16 caratteri misura 143px contro i 128 che 16 cifre occuperebbero.
+      // Dimensionare sulla cifra tagliava le ultime lettere.
+      const zero = ctx.measureText('0').width;
+      const upper = ctx.measureText('ABCDEFGHIJKLMNOPQRSTUVWXYZ').width / 26;
+      ch = Math.max(zero, upper) || ch;
+      max = ctx.measureText('W').width || max;
+    }
+  } catch {
+    // Canvas negato: restano le stime proporzionali al corpo, che sbagliano di
+    // qualche pixel ma non di un carattere intero come faceva la costante 8.
+  }
+  fieldMetrics = { font, ch, max };
+  return fieldMetrics;
+}
+
+/** Larghezza in px che un campo deve avere per mostrare `size` caratteri.
+ *
+ *  Il `size` del controllo e' un numero di CARATTERI (la lunghezza utile del
+ *  dato, vedi `TextUIControl.getSize`), non dei pixel. La formula precedente
+ *  — `size * 8 + 16` — inchiodava il carattere a 8px, che e' esattamente la
+ *  larghezza della cifra "0" di Inter a 13px: giusta per i numeri, corta per
+ *  qualsiasi testo in maiuscolo (una "M" ne misura 12) e sbagliata a ogni
+ *  altro corpo, quindi anche ai preset Compatta/Ampia (SXADV-5745).
+ *  Risultato: campi tagliati di pochi pixel, sempre gli stessi a qualunque
+ *  zoom perche' zoom e corpo scalano insieme — un "MO" in un campo Provincia
+ *  da 2 caratteri chiedeva 34px e ne riceveva 32 (SXADV-5796.1B).
+ *
+ *  Qui si riproduce invece la regola con cui il browser dimensiona un
+ *  `<input size=N>`: N volte la larghezza di un carattere medio (misurato, non
+ *  supposto), piu' un carattere largo di franco, piu' l'ingombro dell'input.
+ *  Essere generosi non costa: questa e' la larghezza VOLUTA dalla view, e la
+ *  cella la limita comunque. */
+export function fieldWidthForSize(size?: number): number {
+  if (!size || size <= 0) return NO_SIZE_FIELD_WIDTH;
+  return rawFieldWidth(size);
+}
+
+function rawFieldWidth(size: number): number {
+  const { ch, max } = getFieldMetrics();
+  return Math.ceil(size * ch + max + FIELD_CHROME);
+}
+
+/** La larghezza dal `size` per un combo.
+ *
+ *  Un combo mostra una DESCRIZIONE decodificata, e quando non ci sta non la
+ *  taglia: la ellissa. Il `size` della view e' scritto apposta per contenerla
+ *  (`size="70"` su Cod.Particolarita' dell'Inps), e il vecchio tetto di 500px
+ *  la rendeva illeggibile pur avendo spazio (SXADV-5796.4). Da SXADV-5809 il
+ *  tetto non c'e' piu' nemmeno per il testo, quindi questa e' ormai identica a
+ *  {@link fieldWidthForSize} per un size dichiarato: resta separata perche' il
+ *  ripiego SENZA size e' diverso (il combo ha un suo `min-width`). */
+export function comboWidthForSize(size: number): number {
+  return rawFieldWidth(size);
+}
+
 export function getTextMaxWidth(control: UIControl): number {
-  return control.size ? Math.min(control.size * 8 + 16, 500) : 500;
+  return fieldWidthForSize(control.size);
+}
+
+/** Come {@link fieldWidthForSize}, per i campi numerici (`InputNumber`), che
+ *  hanno qualche pixel di ingombro in piu': le frecce di incremento e — per gli
+ *  importi — il simbolo di valuta in coda. Il valore e' allineato a destra,
+ *  quindi quello che si perde restringendo sono le cifre piu' significative:
+ *  meglio abbondare. Senza `size` resta il default storico di 125px. */
+export function numberWidthForSize(size?: number): number {
+  if (!size || size <= 0) return 125;
+  return fieldWidthForSize(size) + NUMBER_EXTRA_CHROME;
 }
 
 /** Parse a server-sent inline CSS string (e.g. contentStyle="text-align:center;")

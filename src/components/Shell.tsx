@@ -64,7 +64,7 @@ import type {
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, PendingAddContext, TitleInBreadcrumbContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, PendingAddContext, TitleInBreadcrumbContext, PaneToolbarContext } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -686,6 +686,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       // stay as it is. A confirmation prompt is not an outcome yet: the
       // answer replays the same request, so keep the arming for that response.
       let backTrail: string | undefined;
+      // Tree+detail routing. While a tree view holds the tab, its OWN detail
+      // view travels into TreeRenderer's right pane instead of replacing the
+      // tab (the merge itself happens at the end of this function, once the
+      // per-record flags have been applied to the detail). Anything else that
+      // lands in the tab — another view from the menu, a link action, a back —
+      // replaces the tree as usual (SXADV-5650).
+      const existingUi = tabs.find((t) => t.key === tabKey)?.ui;
+      const treeUi =
+        existingUi?.viewType === 'tree' && existingUi.navigateView ? existingUi : undefined;
+      const isTreeDetail = (ui: UITree) =>
+        !!treeUi &&
+        ui.viewType !== 'tree' &&
+        !ui.treeNodes &&
+        // Emitted on every METADATA/FULL render (it is part of the cached
+        // template too, so a hydrated view carries it as well).
+        ui.viewName === treeUi.navigateView;
       const pendingBack = pendingBreadcrumbsRef.current;
       if (pendingBack && pendingBack.tabKey === tabKey) {
         const errs = resp.errors ?? [];
@@ -776,16 +792,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         }
       }
       else if (resp.ui) {
-        // Tree+detail: when current view is a tree and response is the detail (Save/Post),
-        // store the detail in the tree UI instead of replacing the tree
-        const existingTab0 = tabs.find(t => t.key === tabKey);
-        if (existingTab0?.ui?.viewType === 'tree' && resp.ui.viewType !== 'tree' && !resp.ui.treeNodes) {
-          // Update the tree's embedded detail — TreeRenderer will pick it up
-          update.ui = { ...existingTab0.ui, _detailResponse: resp.ui } as UITree;
-          const newFormValues = extractFormValues(resp.ui);
-          formValuesRef.current[tabKey] = newFormValues;
-          update.formValues = newFormValues;
-          update.dataVersion = ++dataVersionRef.current;
+        // A slim in-place merge (row / list page / embedded detail page) patches
+        // the view the tab already holds. Inside a tree tab that view is the
+        // TREE, while the rows belong to the detail pane TreeRenderer owns —
+        // there is nothing here to patch, and applyDetailPage would walk a UI
+        // with no `rows` at all. Leave the tab untouched instead.
+        if (treeUi && (resp.ui.rowUpdate || resp.ui.pageOnly || resp.ui.detailPageOnly)) {
+          console.warn('[tree] ignoring slim update for the detail pane', resp.ui.path);
         } else if (resp.ui.rowUpdate) {
           // Incremental row update: merge single row into existing grid data
           const existingTab = tabs.find(t => t.key === tabKey);
@@ -881,6 +894,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         }
       }
       if (resp.currField) update.currField = resp.currField;
+      // Tree+detail: the response turned out to be the pane's own view, so the
+      // tab keeps the tree and TreeRenderer picks the detail up from here. This
+      // runs last so the detail carries the per-record extras (attachmentsInfo,
+      // newRecord) that were merged into it above.
+      //
+      // A brand-new record is deliberately left out: the pane re-enters edit
+      // mode by re-navigating to the SELECTED node, which a record that has no
+      // key yet cannot do — "Nuovo" keeps opening as a full page.
+      if (treeUi && update.ui && !update.ui.newRecord && isTreeDetail(update.ui)) {
+        update.ui = { ...treeUi, _detailResponse: update.ui } as UITree;
+        // The tab still IS the tree, so its manifest has to keep describing the
+        // tree. TreeRenderer re-enters edit mode with a LocateAndNavigate of its
+        // own, which allocates a fresh viewstate for the pane: adopting the
+        // response's template/bindings here would key the pane's field posts to
+        // the superseded one. Same for the toolbar — the layout on screen is
+        // unchanged, so the tree's toolbar stays.
+        delete update.templateKey;
+        delete update.bindings;
+        delete update.scopePaths;
+        delete update.toolbar;
+      }
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
@@ -1277,6 +1311,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
 
   const currentTab = getActiveTabState();
   const breadcrumbs = currentTab?.ui?.breadcrumbs;
+
+  // A pane that drives a viewstate of its own (TreeRenderer's detail) hands its
+  // toolbar up here: from the moment the pane loads, the session's current
+  // viewstate is the pane's record, and the toolbar rendered with the enclosing
+  // view is stale — its Add still carries the old path and comes back
+  // NoSession. See PaneToolbarContext.
+  const currentTabKey = currentTab?.key;
+  const setPaneToolbar = useCallback(
+    (toolbar: ToolbarItem[]) => {
+      if (currentTabKey) updateTabState(currentTabKey, { toolbar });
+    },
+    [currentTabKey, updateTabState]
+  );
 
   // Parse HTML breadcrumbs into structured items
   const parsedBreadcrumbs = useMemo(() => {
@@ -1888,6 +1935,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           {currentTab && (
             <ZoomScopeContext.Provider value={zoomScope}>
             <SidContext.Provider value={currentTab.sid}>
+            <PaneToolbarContext.Provider value={setPaneToolbar}>
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
                 {currentTab.loading && (
@@ -1993,6 +2041,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
                 )}
               </div>
             </FormValuesContext.Provider>
+            </PaneToolbarContext.Provider>
             </SidContext.Provider>
             </ZoomScopeContext.Provider>
           )}

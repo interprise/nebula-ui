@@ -79,6 +79,21 @@ html, body {
   color: #15428B;
   font-weight: bold;
 }
+/* Icona di stato "forzato": il dominio non manda un <img>, manda un div vuoto
+   che prende l'icona dal BACKGROUND della classe (ContiCorrenti.getStatoForzatura
+   -> `<div class="invalid">&nbsp;</div>`). Senza la regola la cella resta vuota
+   e la colonna "Forzato" del tab Banche perdeva il punto esclamativo rosso che
+   il legacy mostrava (SXADV-5796.7). L'URL e' assoluto perche' il documento
+   React ha base /entrasp/app/, non /entrasp/images/GRIGIO/ come il foglio di
+   stile legacy da cui la regola arriva — stesso motivo di fixServerHtml(). */
+.invalid {
+  background-image: url(/entrasp/images/icons/exclamation.png);
+  background-repeat: no-repeat;
+  background-position: center;
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+}
 .topPrompt {
   background-color: whitesmoke;
   color: #000;
@@ -236,6 +251,24 @@ html, body {
 .layout-table .ant-checkbox-wrapper {
   font-size: var(--app-font-size);
   line-height: var(--app-field-h);
+}
+
+/* Un bottone dentro una cella di form non puo' essere piu' largo della cella:
+   `.content-cell` ha `overflow:hidden`, quindi quello che sborda non si
+   accorcia, si TAGLIA — bordo destro incluso. (SXADV-5796.0) */
+.layout-table td.content-cell .ant-btn {
+  max-width: 100%;
+}
+
+/* Contrassegno di una o due lettere (vedi `isMarkerButton`): il padding di
+   antd, 15px per lato, e' piu' largo della cella che la view gli assegna.
+   Ridotto al minimo che lascia leggere la lettera, e alto quanto un campo
+   perche' stia sulla riga insieme agli altri. */
+.layout-table .ant-btn.nb-btn-marker {
+  padding-inline: 3px;
+  min-width: 0;
+  height: var(--app-field-h);
+  font-size: var(--app-font-size);
 }
 
 /* Tri-state query filter checkboxes (SXADV-5485): the indeterminate/NULL state
@@ -1339,15 +1372,27 @@ body[style*="cursor: wait"] * {
   flex-shrink: 0;
 }
 
-/* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false"):
-   don't stretch inputs to fill the cell — let them sit at their natural width.
-   NOTE: this must NOT include .ant-select — an antd Select is a <div> with no
-   intrinsic width, so width:auto collapses it to just the dropdown arrow
-   (SXADV-5461.1). Combos keep their inline width:100% + min/maxWidth instead,
-   like every non-companion combo. */
-.companion-cell .ant-input:not(textarea) {
-  width: auto !important;
-}
+/* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false").
+   NON devono allargarsi a riempire la cella — che spesso e' tutta la parte
+   destra della riga — ma restare larghi quanto il campo dichiara.
+
+   Qui c'era `width: auto !important`, e per un `<input>` "auto" NON e' la
+   larghezza del campo: e' la larghezza dell'attributo HTML `size`, che React
+   non emette, quindi il default del browser — 20 caratteri, ~216px — uguale
+   per ogni campo companion, che fosse un codice da 2 caratteri o una
+   descrizione da 70. Da qui la descrizione di "Cod.Attivita'" dell'Inps
+   tagliata a meta' (SXADV-5796.4) e il campo accanto al Codice che sbordava
+   dalla propria cella in testata (5796.0).
+
+   Non serve piu' nessuna regola: i controlli di testo portano ora
+   `width: <larghezza dichiarata>px; max-width: 100%` (vedi
+   `fieldWidthForSize` in controls/helpers.ts), che di per se' non riempie la
+   cella e non la sfora. La regola e' rimossa e non sostituita.
+
+   NOTA storica: la regola escludeva `.ant-select` perche' un Select antd e' un
+   <div> senza larghezza intrinseca e `width:auto` lo collassava sulla sola
+   freccia (SXADV-5461.1). I combo continuano ad avere il loro
+   width:100% + min/maxWidth inline. */
 
 /* MultiSelect: chips with picker button */
 .multiselect-container {
