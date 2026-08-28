@@ -1,30 +1,27 @@
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import { useRef, type ComponentRef } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
  *  a ref without setState — controlled inputs that re-apply their `value`
  *  prop after user interaction (DatePicker, TimePicker) therefore visually
  *  revert because the prop hasn't moved. We hold the picked value in local
- *  state and re-sync only when the upstream `control.value` actually
- *  changes (server round-trip), matching the behavior plain `<Input>` gets
- *  for free thanks to DOM-level value retention. */
+ *  state, parsed out of the server's formatted string.
+ *
+ *  Re-syncing on a *changed* `control.value` alone is not enough: a date the
+ *  user typed into an empty field never reached the server as a value of this
+ *  control (no `reload`, so no round-trip), so the brand-new record that
+ *  "Salva+" answers with is null exactly where the field was null before —
+ *  prop unmoved, stale date left on screen (SXADV-5810, the same shape
+ *  SXADV-5014.1 fixed for text and combos; the fields that DID clear were the
+ *  ones a server round-trip had filled in). `useSyncedDerived` therefore
+ *  re-syncs on the DataVersionContext bump too, i.e. whenever the form was
+ *  re-rendered from a server payload. */
 function useLocalDayjs(controlValue: unknown, fmt: string): [Dayjs | null, (v: Dayjs | null) => void] {
-  const parse = (v: unknown): Dayjs | null => (v ? dayjs(v as string, fmt) : null);
-  const [local, setLocal] = useState<Dayjs | null>(() => parse(controlValue));
-  const lastSeenRef = useRef<unknown>(controlValue);
-  useEffect(() => {
-    if (controlValue !== lastSeenRef.current) {
-      lastSeenRef.current = controlValue;
-      setLocal(parse(controlValue));
-    }
-    // parse() depends on `fmt` but the format is stable per control.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlValue]);
-  return [local, setLocal];
+  return useSyncedDerived(controlValue, (v) => (v ? dayjs(v as string, fmt) : null));
 }
 
 export const DateControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {

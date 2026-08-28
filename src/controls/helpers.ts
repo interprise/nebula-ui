@@ -23,15 +23,30 @@ import { formFontSizePx } from '../hooks/density';
  *  also re-sync whenever the enclosing `DataVersionContext` changes, i.e. when
  *  the form was re-rendered from a server payload rather than by React. */
 export function useSyncedState<T>(controlValue: T): [T, (v: T) => void] {
+  return useSyncedDerived(controlValue, identity);
+}
+
+const identity = <T,>(v: T): T => v;
+
+/** {@link useSyncedState} for controls whose local state is not the server
+ *  value itself but something derived from it — a `Dayjs` parsed out of the
+ *  formatted date string, say. Same re-sync rule (upstream value changed, or
+ *  the form was re-rendered from a server payload), with `derive` applied on
+ *  every re-sync (it is not a dependency: it must be a pure mapping over
+ *  inputs that are stable for the control's lifetime). */
+export function useSyncedDerived<S, T>(source: S, derive: (source: S) => T): [T, (v: T) => void] {
   const dataVersion = useContext(DataVersionContext);
-  const [local, setLocal] = useState<T>(controlValue);
-  const lastSeenRef = useRef<{ value: T; version: number }>({ value: controlValue, version: dataVersion });
+  const [local, setLocal] = useState<T>(() => derive(source));
+  const lastSeenRef = useRef<{ source: S; version: number }>({ source, version: dataVersion });
   useEffect(() => {
-    if (controlValue !== lastSeenRef.current.value || dataVersion !== lastSeenRef.current.version) {
-      lastSeenRef.current = { value: controlValue, version: dataVersion };
-      setLocal(controlValue);
+    if (source !== lastSeenRef.current.source || dataVersion !== lastSeenRef.current.version) {
+      lastSeenRef.current = { source, version: dataVersion };
+      setLocal(derive(source));
     }
-  }, [controlValue, dataVersion]);
+    // `derive` is a pure per-control mapping over stable inputs (the date
+    // format); as a dependency it would only re-run the effect for nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, dataVersion]);
   return [local, setLocal];
 }
 
