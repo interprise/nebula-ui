@@ -458,6 +458,36 @@ html, body {
   flex-direction: column;
 }
 
+/* Tab annidato nel pannello di un tab (SXADV-5812): stessa divisione in due
+   zone della pagina — campi che scorrono sopra, sotto-tab con la barra ferma
+   sotto — ma figlie dirette di `.tab-content`, che una colonna flex ad altezza
+   definita lo e' gia'. Qui si tolgono soltanto lo sfondo grigio e i margini
+   dell'area di pagina, che dentro un tab disegnerebbero una seconda cornice
+   attorno a quella del tab; e servono DOPO le regole d'area qui sopra, che
+   hanno la stessa specificita'. */
+.view-nested-form,
+.view-nested-bottom {
+  background: transparent;
+  padding: 0;
+}
+.view-nested-bottom {
+  /* Meno del pavimento di pagina: qui sopra c'e' gia' la testata della vista e
+     la barra dei tab esterni, e i 120px lascerebbero i campi senza spazio. */
+  min-height: 80px;
+}
+/* Piu' sottile e piu' chiara della maniglia di pagina: separa due zone dello
+   stesso pannello, non le due meta' della vista. */
+.view-nested-resizer {
+  flex: 0 0 3px;
+  background: var(--app-border);
+  opacity: 0.6;
+  margin: 2px 0;
+}
+.view-nested-resizer:hover,
+.view-nested-resizer:active {
+  opacity: 1;
+}
+
 /* Toolbar. The rule below already carries a bottom border, which separates it
    from the form on its own — the extra padding+margin around it was doubling
    that separation in pixels (SXADV-5742). */

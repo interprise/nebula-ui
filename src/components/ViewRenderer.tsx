@@ -422,6 +422,231 @@ function TabContentTable({ rows, pageType, onAction, onChange, onGridChange }: {
   );
 }
 
+/** Barra dei tab + contenuto del tab di un'area a due zone.
+ *
+ *  Estratto dal ramo split di `DetailFormView` perche' lo usa anche il tab
+ *  ANNIDATO (vedi `NestedTabSplit`): un secondo gruppo di tab dentro il
+ *  pannello di un tab deve avere la stessa barra ferma fuori dall'area che
+ *  scorre, non una barra che scorre via insieme ai campi.
+ *
+ *  Il pulsante di ingrandimento lo passa solo il chiamante ESTERNO: e' lo zoom
+ *  dell'AREA e ce n'e' uno solo per ambito (`PANEL_ZOOM_ID`), quindi ripeterlo
+ *  sulla barra annidata darebbe due pulsanti che fanno la stessa cosa. */
+function SplitTabPanel({ control, pageType, showBar, extraRight, onTabChange, onAction, onChange, onGridChange }: {
+  control: UIControl;
+  pageType?: number;
+  /** false mentre lo zoom di una griglia tiene collassato tutto cio' che sta
+   *  sopra di essa: li' la barra sparisce con la testata. */
+  showBar: boolean;
+  extraRight?: React.ReactNode;
+  onTabChange?: () => void;
+  onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
+}): React.ReactElement {
+  const selected = control.tabs?.find((t) => t.selected) ?? control.tabs?.[0];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+      {showBar && (
+        <div className="tab-sticky-wrapper">
+          <Tabs
+            activeKey={selected?.name}
+            onChange={(key) => {
+              onTabChange?.();
+              onAction('ChangeTab', { navpath: control.navpath as string, option1: control.controlName as string, option2: key });
+            }}
+            items={(control.tabs || []).map((tab) => ({
+              key: tab.name,
+              label: renderTabLabel(tab, onAction),
+            }))}
+            tabBarExtraContent={extraRight ? { right: extraRight } : undefined}
+          />
+        </div>
+      )}
+      {control.contentRows && (
+        <InTabPanelContext.Provider value={true}>
+        <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {/* Same as the non-split tab path: the tab label names this content, so
+              a heading repeating it is dropped (TabLabelContext). */}
+          <TabLabelContext.Provider value={selected?.prompt}>
+            <TabContentBody
+              rows={control.contentRows as UIRow[]}
+              pageType={pageType}
+              onAction={onAction}
+              onChange={onChange}
+              onGridChange={onGridChange}
+            />
+          </TabLabelContext.Provider>
+        </div>
+        </InTabPanelContext.Provider>
+      )}
+    </div>
+  );
+}
+
+/** Righe di campi seguite, in coda, da un controllo Tab: la forma di una vista
+ *  che dentro un tab ne apre altri (SXADV-5812). `null` se manca uno dei due
+ *  pezzi — un wrapper fatto del solo Tab non ha campi da cui staccare la barra,
+ *  e una vista che finisce con una griglia non e' questo caso. */
+function nestedTabSplit(rows: UIRow[]): { formRows: UIRow[]; bottomRows: UIRow[] } | null {
+  let splitIdx = rows.length;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (isBottomPanelRow(rows[i])) splitIdx = i;
+    else if (!isRowVisible(rows[i])) continue; // una riga nascosta in coda non chiude la corsa
+    else break;
+  }
+  if (splitIdx <= 0 || splitIdx >= rows.length) return null;
+  const bottomRows = rows.slice(splitIdx);
+  if (!bottomRows.some((r) => r.cells.some((c) => c.control?.type === 'tab'))) return null;
+  const formRows = rows.slice(0, splitIdx);
+  if (!formRows.some(isRowVisible)) return null;
+  return { formRows, bottomRows };
+}
+
+/** Quanto puo' prendersi, al massimo, l'area dei campi di un tab annidato prima
+ *  di mettersi a scorrere: meta' dell'altezza, cosi' i sotto-tab non nascono
+ *  gia' schiacciati. Sotto quella soglia i campi occupano la loro altezza vera
+ *  e il resto va tutto ai sotto-tab. */
+const NESTED_FORM_MAX_PCT = 50;
+
+/** Un tab dentro il pannello di un tab (SXADV-5812).
+ *
+ *  In `anVrAttivitaDetail` ("Attivita'" dell'Anagrafica Unica), in
+ *  `articoliVariantiDistinta` e in un'altra dozzina di viste il contenuto di un
+ *  tab e' una manciata di campi e, in coda, un SECONDO controllo Tab. CORE
+ *  appiattisce la vista embedded di un tab nelle righe del tab stesso
+ *  (EmbeddedViewUIControl le rende "attraverso il layout del padre"), quindi
+ *  quei sotto-tab arrivano qui come una riga come le altre e finiscono resi in
+ *  linea, DOPO i campi e dentro la stessa area che scorre: la barra scorre via
+ *  con loro, e i sotto-tab — che in React l'utente si aspetta fermi e sempre
+ *  visibili, come quelli di pagina — diventano scomodi da compilare.
+ *
+ *  Qui il contenuto del tab si divide come fa la pagina: i campi in alto in
+ *  un'area propria che scorre, i sotto-tab sotto con la barra ferma, e in mezzo
+ *  la stessa maniglia di ridimensionamento. Le due zone sono figlie DIRETTE di
+ *  `.tab-content`, che e' gia' una colonna flex ad altezza definita, quindi
+ *  nessuna misura in pixel. Lasciando la riga del Tab dov'era — nella cella
+ *  della layout-table — la catena flex si sarebbe interrotta e sarebbe servito
+ *  misurare, come fanno le griglie embedded (`fillCapHeight`). */
+const NestedTabSplit: React.FC<{
+  formRows: UIRow[];
+  bottomRows: UIRow[];
+  pageType?: number;
+  onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
+}> = ({ formRows, bottomRows, pageType, onAction, onChange, onGridChange }) => {
+  const [manualPct, setManualPct] = React.useState<number | null>(null);
+  const [resizing, setResizing] = React.useState(false);
+
+  const onResizerMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const resizer = e.currentTarget as HTMLElement;
+    const container = resizer.parentElement;
+    const formEl = resizer.previousElementSibling as HTMLElement | null;
+    if (!container || !formEl) return;
+    // Altezza del BOX DI CONTENUTO: e' quella contro cui si risolvono le
+    // percentuali dei figli, e `.tab-content` di padding ne ha.
+    const cs = getComputedStyle(container);
+    const height = container.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+    if (height <= 0) return;
+    // Si parte dall'altezza VERA dell'area campi, non da una percentuale
+    // nominale: finche' nessuno ha trascinato quell'area sta al suo contenuto
+    // (sotto il tetto), e ripartire dal tetto farebbe saltare la maniglia.
+    const startPct = (formEl.getBoundingClientRect().height / height) * 100;
+    const startY = e.clientY;
+    setResizing(true);
+    const onMove = (ev: MouseEvent) => {
+      const deltaPct = ((ev.clientY - startY) / height) * 100;
+      setManualPct(Math.min(85, Math.max(10, startPct + deltaPct)));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setResizing(false);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  return (
+    <>
+      <div
+        className={`view-split-form view-nested-form${resizing ? ' view-split-form--resizing' : ''}`}
+        style={manualPct != null
+          ? { flex: `0 0 ${manualPct}%`, maxHeight: 'none' }
+          : { maxHeight: `${NESTED_FORM_MAX_PCT}%` }}
+      >
+        <TabContentTable
+          rows={formRows}
+          pageType={pageType}
+          onAction={onAction}
+          onChange={onChange}
+          onGridChange={onGridChange}
+        />
+      </div>
+      <div
+        className="view-split-resizer view-nested-resizer"
+        onMouseDown={onResizerMouseDown}
+        title="Trascina per ridimensionare"
+      />
+      <div className="view-split-bottom view-nested-bottom">
+        {bottomRows.map((row, ri) => {
+          const tabCell = row.cells.find((c) => c.control?.type === 'tab');
+          if (tabCell?.control) {
+            return (
+              <SplitTabPanel
+                key={row.id || `ntb_${ri}`}
+                control={tabCell.control}
+                pageType={pageType}
+                showBar
+                onAction={onAction}
+                onChange={onChange}
+                onGridChange={onGridChange}
+              />
+            );
+          }
+          return (
+            <BottomPanelRow key={row.id || `ntb_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+          );
+        })}
+      </div>
+    </>
+  );
+};
+
+/** Il contenuto di un tab: una tabella sola, oppure — quando in coda c'e' un
+ *  altro Tab — le due zone di `NestedTabSplit`. La scelta sta qui e non dentro
+ *  `TabContentTable` perche' quella ha hook suoi (il righello si misura): un
+ *  ritorno anticipato al cambio di tab ne cambierebbe l'ordine. Componenti
+ *  diversi, invece, React li monta e smonta puliti. */
+function TabContentBody({ rows, pageType, onAction, onChange, onGridChange }: {
+  rows: UIRow[];
+  pageType?: number;
+  onAction: (action: string, params?: Record<string, string>) => void;
+  onChange: (name: string, value: unknown) => void;
+  onGridChange?: (name: string, values: string[]) => void;
+}): React.ReactElement {
+  const split = nestedTabSplit(rows);
+  if (!split) {
+    return <TabContentTable rows={rows} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />;
+  }
+  return (
+    <NestedTabSplit
+      formRows={split.formRows}
+      bottomRows={split.bottomRows}
+      pageType={pageType}
+      onAction={onAction}
+      onChange={onChange}
+      onGridChange={onGridChange}
+    />
+  );
+}
+
 interface ViewRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
@@ -1318,61 +1543,35 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
             // Tab rows: render tab bar + content rows in a table sharing the master grid
             const tabCell = row.cells.find((c) => c.control?.type === 'tab');
             if (tabCell?.control) {
-              const tabControl = tabCell.control;
-              const tabSelected = tabControl.tabs?.find((t) => t.selected) ?? tabControl.tabs?.[0];
-              const tabActiveTab = tabSelected?.name;
               return (
-                <div key={row.id || `bp_${ri}`} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
-                  {/* Con lo zoom di una GRIGLIA sparisce anche la barra dei tab: si
-                      resta sul tab corrente finché non si esce (Esc), e la griglia
-                      zoomata mostra il proprio titolo, normalmente soppresso perché
-                      ripete l'etichetta del tab. Con lo zoom dell'AREA la barra
-                      resta: è il contenuto del tab a prendersi lo schermo, qualunque
-                      esso sia, e cambiare tab deve continuare a funzionare. */}
-                  {(!zoomed || panelZoom) && (
-                  <div className="tab-sticky-wrapper">
-                    <Tabs
-                      activeKey={tabActiveTab}
-                      onChange={(key) => { revealBottom(); onAction('ChangeTab', { navpath: tabControl.navpath as string, option1: tabControl.controlName as string, option2: key }); }}
-                      items={(tabControl.tabs || []).map((tab) => ({
-                        key: tab.name,
-                        label: renderTabLabel(tab, onAction),
-                      }))}
-                      tabBarExtraContent={{
-                        right: (
-                          <Tooltip title={panelZoom ? 'Riduci la sezione (Esc)' : 'Ingrandisci la sezione'} placement="bottom">
-                            <Button
-                              size="small"
-                              type={panelZoom ? 'primary' : 'default'}
-                              icon={panelZoom ? <CompressOutlined /> : <ExpandOutlined />}
-                              aria-label={panelZoom ? 'Riduci la sezione' : 'Ingrandisci la sezione'}
-                              aria-pressed={panelZoom}
-                              onClick={() => zoomStore.setZoomForScope(zoomScope, panelZoom ? null : PANEL_ZOOM_ID)}
-                            />
-                          </Tooltip>
-                        ),
-                      }}
-                    />
-                  </div>
+                <SplitTabPanel
+                  key={row.id || `bp_${ri}`}
+                  control={tabCell.control}
+                  pageType={pageType}
+                  /* Con lo zoom di una GRIGLIA sparisce anche la barra dei tab: si
+                     resta sul tab corrente finché non si esce (Esc), e la griglia
+                     zoomata mostra il proprio titolo, normalmente soppresso perché
+                     ripete l'etichetta del tab. Con lo zoom dell'AREA la barra
+                     resta: è il contenuto del tab a prendersi lo schermo, qualunque
+                     esso sia, e cambiare tab deve continuare a funzionare. */
+                  showBar={!zoomed || panelZoom}
+                  extraRight={(
+                    <Tooltip title={panelZoom ? 'Riduci la sezione (Esc)' : 'Ingrandisci la sezione'} placement="bottom">
+                      <Button
+                        size="small"
+                        type={panelZoom ? 'primary' : 'default'}
+                        icon={panelZoom ? <CompressOutlined /> : <ExpandOutlined />}
+                        aria-label={panelZoom ? 'Riduci la sezione' : 'Ingrandisci la sezione'}
+                        aria-pressed={panelZoom}
+                        onClick={() => zoomStore.setZoomForScope(zoomScope, panelZoom ? null : PANEL_ZOOM_ID)}
+                      />
+                    </Tooltip>
                   )}
-                  {tabControl.contentRows && (
-                    <InTabPanelContext.Provider value={true}>
-                    <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                      {/* Same as the non-split tab path: the tab label names this
-                          content, so a heading repeating it is dropped (TabLabelContext). */}
-                      <TabLabelContext.Provider value={tabSelected?.prompt}>
-                        <TabContentTable
-                          rows={tabControl.contentRows as UIRow[]}
-                          pageType={pageType}
-                          onAction={onAction}
-                          onChange={onChange}
-                          onGridChange={onGridChange}
-                        />
-                      </TabLabelContext.Provider>
-                    </div>
-                    </InTabPanelContext.Provider>
-                  )}
-                </div>
+                  onTabChange={revealBottom}
+                  onAction={onAction}
+                  onChange={onChange}
+                  onGridChange={onGridChange}
+                />
               );
             }
             // Non-tab bottom panel rows
