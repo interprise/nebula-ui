@@ -810,6 +810,19 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     [records, selectedPath],
   );
 
+  // Selezione appesa nel vuoto: se la riga selezionata non e' piu' fra quelle
+  // della lista (cancellata, oppure sparita per un Refresh/una ricerca), si
+  // azzera anche il navpath di riga — altrimenti resterebbe puntato a un record
+  // che non c'e' piu' e i post successivi (Salva, ricarica di un campo) lo
+  // manderebbero al server. Rete di sicurezza: la cancellazione dal pannello
+  // chiude gia' il pannello da sola.
+  React.useEffect(() => {
+    if (selectedPath && records.length > 0 && !recordPaths.includes(selectedPath)) {
+      setSelectedPath(null);
+      setEditRow?.(null);
+    }
+  }, [recordPaths, records.length, selectedPath, setEditRow]);
+
   // Step to the previous/next record from the panel — pure client-side reselection.
   const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
   const navigateRecord = React.useCallback((delta: number) => {

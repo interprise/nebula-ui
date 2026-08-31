@@ -191,7 +191,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
       // Delete on the selected record, through the view's own delete command
       // when it declares one. The server's confirmation flow (if any) is
       // handled by Shell.makeConfirmReplay.
-      onOk: () => { if (path) onAction(deleteCommandOf(listUi), { navpath: path }); },
+      //
+      // option1 e' OBBLIGATORIO: DeleteCommand esce subito (`return false`, la
+      // riga resta li') se manca, e il pannello non lo mandava — l'Elimina non
+      // ha mai cancellato niente (SXADV-5649). Il legacy ci passava la CHIAVE
+      // del record (confirmDelete(path, cmd, key) dal per-row X); qui si manda
+      // il letterale "null", l'altro valore che il comando accetta: significa
+      // "il record su cui punta il navpath" (getCurrentEditDataObject per una
+      // lista listEdit, getCurrentDataObject altrimenti) — che e' esattamente
+      // il record del pannello, e vale anche per una riga nuova non ancora
+      // salvata, che una chiave non ce l'ha. E' quello che manda anche la
+      // barra strumenti quando non c'e' un record corrente (RecordNavigator).
+      // Per un customDeleteCommand (ExecuteMethodCommand) option1 e' il nome
+      // di un controllo, non una chiave: "null" non risolve nessun item e il
+      // comando lavora sul contesto del navpath, come nel legacy.
+      onOk: () => {
+        if (!path) return;
+        const command = deleteCommandOf(listUi);
+        const params: Record<string, string> = { navpath: path, option1: 'null' };
+        // Togli la riga dalla griglia se la richiesta va a buon fine: la lista
+        // risponde con il patch della SOLA riga corrente (render mode "I"), che
+        // una riga in meno non la sa dire (Shell.removeListRow). Solo per il
+        // Delete del framework: un customDeleteCommand puo' fare tutt'altro —
+        // RegAnaliticaEliminaDettaglio azzera un campo e la riga resta dov'e'.
+        if (command === 'Delete') params._removeRow = path;
+        onAction(command, params);
+        // Il record non c'e' piu': si chiude il pannello (che azzera anche il
+        // navpath di riga usato dai post successivi). I percorsi di riga sono
+        // POSIZIONALI, quindi dopo la cancellazione lo stesso percorso indica
+        // il record che ha preso il posto di quello cancellato: lasciando il
+        // pannello aperto continuerebbe a mostrare una riga, ma un'altra.
+        onClose();
+      },
     });
   };
 

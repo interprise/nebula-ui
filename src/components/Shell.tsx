@@ -61,6 +61,7 @@ import type {
   ErrorItem,
   ServerResponse,
 } from '../types/ui';
+import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
@@ -207,6 +208,70 @@ function applyToggleItem(ui: UITree, itemId: string, included: boolean): UITree 
   }
   if (!changed) return ui;
   return { ...ui, rows: newRows, headers: newHeaders };
+}
+
+/**
+ * Toglie dalla lista il record cancellato, senza far ridisegnare la pagina al
+ * server.
+ *
+ * Una view di lista invariata risponde in render mode "I"
+ * (`ToolViewRenderer.renderJSONListRow`): il patch della SOLA riga corrente.
+ * Una riga TOLTA li' non e' esprimibile, e forzare il render pieno per una
+ * cancellazione vorrebbe dire ridisegnare tutta la pagina per una riga in meno.
+ * Il client sa gia' quello che serve: quale record e' stato cancellato, e che il
+ * server dal canto suo lo ha tolto dal cursore.
+ *
+ * Oltre a togliere la riga (e le sue righe di continuazione) bisogna
+ * RINUMERARE quelle che seguono: l'identita' di una riga e' il suo navpath, che
+ * e' POSIZIONALE (`S1-11.<pos>`, vedi LayoutManager.startTableRowJSON). Il
+ * cursore lato server ha gia' scalato le posizioni, quindi senza rinumerazione
+ * il primo clic su una riga successiva aprirebbe - o cancellerebbe - il record
+ * sbagliato. Stessa cosa per il `pos` della cella selettore: e' il ripiego con
+ * cui si compone il percorso ed e' la chiave con cui si innesta un `rowUpdate`.
+ *
+ * Resta indietro il conteggio dei record nella toolbar: quello e' testo
+ * renderizzato dal server ("pag: n di N ... N righe.") e si riallinea alla
+ * prima richiesta successiva.
+ */
+function removeListRow(ui: UITree, path: string): UITree {
+  const rows = ui.rows;
+  if (!Array.isArray(rows) || rows.length === 0) return ui;
+  const pathOf = (r: UIRow): string | undefined => {
+    const p = r.props?.path;
+    return typeof p === 'string' ? p : undefined;
+  };
+  // Riga di continuazione = prima cella DUMMY (stessa regola di ListRenderer):
+  // e' la prosecuzione del record che la precede, quindi se ne va con lui.
+  const isContinuation = (r: UIRow) => r.cells.length > 0 && r.cells[0].elementType === ELTYPE_DUMMY;
+  const start = rows.findIndex((r) => pathOf(r) === path);
+  if (start < 0) return ui;
+  let end = start + 1;
+  while (end < rows.length && isContinuation(rows[end])) end++;
+
+  const m = /^(.*\.)(\d+)$/.exec(path);
+  const prefix = m ? m[1] : null;
+  const removedPos = m ? Number(m[2]) : null;
+  const shift = (r: UIRow): UIRow => {
+    if (prefix == null || removedPos == null) return r;
+    let next = r;
+    const p = pathOf(r);
+    if (p && p.startsWith(prefix)) {
+      const n = Number(p.slice(prefix.length));
+      if (Number.isInteger(n) && n > removedPos) next = { ...r, props: { ...r.props, path: `${prefix}${n - 1}` } };
+    }
+    const cells = next.cells.map((c) => {
+      const pos = (c as unknown as { pos?: number }).pos;
+      return typeof pos === 'number' && pos > removedPos ? { ...c, pos: pos - 1 } : c;
+    });
+    if (cells.some((c, i) => c !== next.cells[i])) next = { ...next, cells };
+    return next;
+  };
+
+  const newRows = [...rows.slice(0, start), ...rows.slice(end).map(shift)];
+  const paging = ui.paging
+    ? { ...ui.paging, totalRows: Math.max(0, ui.paging.totalRows - 1) }
+    : ui.paging;
+  return { ...ui, rows: newRows, paging };
 }
 
 /**
@@ -431,6 +496,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
   // crumbs before it. Armed on click with the already-truncated HTML, consumed
   // by processResponseInner once the navigation is known to have gone through.
   const pendingBreadcrumbsRef = useRef<{ tabKey: string; html: string } | null>(null);
+  // Riga da togliere dalla griglia quando la risposta conferma la cancellazione
+  // (parametro `_removeRow`, armato da handleAction). Il server risponde con il
+  // patch della sola riga corrente e non ha modo di dire "questa riga non c'e'
+  // piu'": la toglie il client, vedi removeListRow.
+  const pendingRowRemovalRef = useRef<{ tabKey: string; path: string } | null>(null);
   // Bumped on every fresh menu payload to remount the sidebar Menu. The inline
   // Menu keeps its expanded submenus in internal state, so without a remount a
   // reload (Azienda/Sede change, manual reload) would inherit the previously
@@ -498,7 +568,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
             content: err.message,
             // Refusing the prompt aborts the guarded action, so a breadcrumb-back
             // waiting on this answer never happens — un-arm it (SXADV-5659).
-            onCancel: () => { pendingBreadcrumbsRef.current = null; },
+            // Stessa cosa per la riga da togliere: la cancellazione rifiutata
+            // non avviene, e la riga deve restare in griglia.
+            onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; },
             onOk: () => {
               if (!err.mnemonic) return;
               // Answer token per CORE's message grammar (Session.addConfirmation):
@@ -840,6 +912,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
           update.dataVersion = ++dataVersionRef.current;
         }
       }
+      // Cancellazione andata a buon fine: la riga esce dalla griglia. Stessa
+      // logica del breadcrumb-back qui sopra — una CONFERMA non e' ancora un
+      // esito (la risposta alla domanda rigioca la stessa richiesta, quindi si
+      // tiene l'armamento), un ERRORE vuol dire che il record e' ancora li'.
+      const pendingRemoval = pendingRowRemovalRef.current;
+      if (pendingRemoval && pendingRemoval.tabKey === tabKey) {
+        const errs = resp.errors ?? [];
+        if (!errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) {
+          pendingRowRemovalRef.current = null;
+          if (!errs.some((e) => e.type === 'ERROR')) {
+            const base = update.ui ?? tabs.find((t) => t.key === tabKey)?.ui;
+            if (base) update.ui = removeListRow(base, pendingRemoval.path);
+          }
+        }
+      }
       // attachmentsInfo is per-record and emitted at response root (not
       // cached with the template). Merge into update.ui in all flows.
       if (resp.attachmentsInfo !== undefined && update.ui) {
@@ -1071,6 +1158,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noFormValues;
+      // Riga da togliere dalla griglia se la richiesta va a buon fine (Elimina
+      // dal pannello di una lista). Non e' un parametro del server.
+      const removeRow = params._removeRow;
+      delete serverParams._removeRow;
+      pendingRowRemovalRef.current = removeRow ? { tabKey: tab.key, path: removeRow } : null;
 
       // Two-phase pipeline: opt into the template/data protocol. If this tab
       // already holds a template, advertise its key so the server can decide
