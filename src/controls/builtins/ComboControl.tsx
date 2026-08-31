@@ -45,8 +45,16 @@ const RemoteCombo: React.FC<{
   // `defaultActiveFirstOption={false}` so no option is ever auto-selected on
   // Tab-out without a deliberate pick (SXADV-5489.2).
   const { open, setOpen, onOpenChange } = useSelectOpen();
+  // Testo di ricerca corrente e stato aperto/chiuso, in ref perche' servono
+  // dentro callback che antd invoca fuori dal ciclo di render (SXADV-5766):
+  // il testo distingue una digitazione dalla stringa vuota che antd emette
+  // quando la tendina si CHIUDE (chiudendola butta via quanto digitato).
+  const searchRef = useRef('');
+  const openRef = useRef(false);
+  useEffect(() => { openRef.current = open; }, [open]);
   const handleChange = useCallback((val: unknown) => {
     setSelected((val as string) || undefined);
+    searchRef.current = ''; // scelta fatta: il testo di ricerca non vale piu'
     if (!val) setOpen(false); // clearing (× or Canc) closes the list
     onChange(val);
   }, [onChange, setSelected, setOpen]);
@@ -84,9 +92,17 @@ const RemoteCombo: React.FC<{
   }, [navpath, controlName, sid]);
 
   const handleSearch = useCallback((query: string) => {
-    setOpen(true); // typing opens the list
+    searchRef.current = query;
+    // Solo una digitazione apre la lista. antd emette onSearch('') anche
+    // quando la tendina si chiude: riaprirla li' significava buttare via il
+    // codice appena scritto e mostrare l'elenco COMPLETO (SXADV-5766).
+    if (query) setOpen(true);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchOptions(query), 300);
+    debounceRef.current = setTimeout(() => {
+      // Stessa ragione: niente ricarica dell'elenco intero a tendina chiusa.
+      if (!query && !openRef.current) return;
+      fetchOptions(query);
+    }, 300);
   }, [fetchOptions, setOpen]);
 
   // Open the list, seeding the options with an unfiltered fetch on first open.
@@ -105,8 +121,13 @@ const RemoteCombo: React.FC<{
   const toggleFromTrigger = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (open) setOpen(false);
-    else openList();
+    if (!open) { openList(); return; }
+    // Tendina gia' aperta perche' si sta digitando: la freccia NON la chiude.
+    // Chi ha scritto "0010" e apre il lookup vuole vedere i risultati di
+    // "0010", e chiudere qui li perderebbe (antd scarta il testo di ricerca
+    // insieme alla tendina) — SXADV-5766.
+    if (searchRef.current) return;
+    setOpen(false);
   }, [open, openList, setOpen]);
 
   // Esc = undo: restore the server baseline (`value`) locally + into formValues,
@@ -115,7 +136,13 @@ const RemoteCombo: React.FC<{
     setSelected(val);
     rawOnChange(getFieldName(control), val ?? '');
   }, [control, rawOnChange, setSelected]);
-  const closeList = useCallback(() => setOpen(false), [setOpen]);
+  // Chiusura (Esc, clic fuori, scelta): il testo di ricerca se ne va con la
+  // tendina, quindi il ref torna vuoto e la freccia riprende a fare da toggle.
+  const closeList = useCallback(() => { searchRef.current = ''; setOpen(false); }, [setOpen]);
+  const handleOpenChange = useCallback((visible: boolean) => {
+    if (!visible) searchRef.current = '';
+    onOpenChange(visible);
+  }, [onOpenChange]);
   const onKeyDown = useSelectKeys(selected, value, handleChange, restore, closeList, openList);
 
   return (
@@ -132,7 +159,7 @@ const RemoteCombo: React.FC<{
       suffixIcon={<DownOutlined className="combo-chevron" onMouseDown={toggleFromTrigger} />}
       loading={fetching}
       notFoundContent={fetching ? 'Caricamento...' : (hasFetched ? 'Nessun risultato' : null)}
-      onDropdownVisibleChange={onOpenChange}
+      onDropdownVisibleChange={handleOpenChange}
       onKeyDown={onKeyDown}
       style={widthStyle}
       options={options}
@@ -155,8 +182,13 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // Open only on typing or a trigger-arrow click, never on a body/focus click
   // (ExtJS parity, SXADV-5489.2) — same treatment as the remote branch.
   const { open, setOpen, onOpenChange } = useSelectOpen();
+  // Testo digitato nel campo di ricerca (SXADV-5766) — stesso ruolo che ha
+  // nel ramo remoto: antd lo scarta insieme alla tendina quando questa si
+  // chiude, e la onSearch('') che ne segue la riaprirebbe senza filtro.
+  const searchRef = useRef('');
   const handleSelectChange = useCallback((val: unknown) => {
     setSelected((val as string) || undefined);
+    searchRef.current = '';
     if (!val) setOpen(false); // clearing (× or Canc) closes the list
     handleChange(val);
   }, [handleChange, setSelected, setOpen]);
@@ -164,15 +196,27 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   const toggleFromTrigger = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setOpen(prev => !prev);
+    if (!open) { setOpen(true); return; }
+    // Lista aperta da una digitazione: la freccia non la chiude, altrimenti
+    // il filtro appena scritto sparisce e riappare l'elenco intero.
+    if (searchRef.current) return;
+    setOpen(false);
+  }, [open, setOpen]);
+  const handleSearch = useCallback((query: string) => {
+    searchRef.current = query;
+    if (query) setOpen(true); // solo una digitazione apre la lista
   }, [setOpen]);
+  const handleOpenChange = useCallback((visible: boolean) => {
+    if (!visible) searchRef.current = '';
+    onOpenChange(visible);
+  }, [onOpenChange]);
   // Esc = undo: restore the server baseline (`control.value`) locally + into
   // formValues, no reload.
   const restore = useCallback((val: string | undefined) => {
     setSelected(val);
     onChange(getFieldName(control), val ?? '');
   }, [control, onChange, setSelected]);
-  const closeList = useCallback(() => setOpen(false), [setOpen]);
+  const closeList = useCallback(() => { searchRef.current = ''; setOpen(false); }, [setOpen]);
   const onKeyDown = useSelectKeys(selected, control.value, handleSelectChange, restore, closeList, openList);
   const textMaxWidth = getTextMaxWidth(control);
   // Width handling (SXADV-5461.1). antd Select is a <div> with no intrinsic
@@ -226,8 +270,8 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
       style={widthStyle}
       onChange={handleSelectChange}
       onKeyDown={onKeyDown}
-      onSearch={() => setOpen(true)}
-      onDropdownVisibleChange={onOpenChange}
+      onSearch={handleSearch}
+      onDropdownVisibleChange={handleOpenChange}
       options={(() => {
         const opts = (control.options || []).map((o) => ({ value: o.value, label: o.text }));
         // In list-data mode a local combo may ship only value + displayValue,

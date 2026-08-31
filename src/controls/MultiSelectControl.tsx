@@ -54,7 +54,14 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
   const sid = useContext(SidContext);
   const navpath = (control.navpath as string) || '';
   const controlName = (control.controlName as string) || control.name || '';
-  const maxItemsShown = (control.maxItemsShown as number) || 5;
+  // Zero e' un valore, non un'assenza: `maxItemsShown="0"` vuol dire "non
+  // elencare le voci" — il writer HTML legacy saltava tutto il ciclo — e la
+  // selezione si guarda e si cambia dal pannello. Con `|| 5` finiva scambiato
+  // per "non specificato" e la testata si riempiva di pastiglie (SXADV-5825).
+  const maxItemsShown = typeof control.maxItemsShown === 'number'
+    ? (control.maxItemsShown as number)
+    : 5;
+  const listsItems = maxItemsShown > 0;
 
   // Static options (code-table mode) — pre-populated by server (memoized by reference)
   const staticOptions = useMemo(
@@ -232,11 +239,18 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
   }, []);
 
   // Chip rendering: show first N, then "+K others" with expand toggle
-  const chipsToShow = expanded ? selectedKeys : selectedKeys.slice(0, maxItemsShown);
-  const hiddenCount = Math.max(0, selectedKeys.length - maxItemsShown);
+  const chipsToShow = !listsItems ? [] : expanded ? selectedKeys : selectedKeys.slice(0, maxItemsShown);
+  const hiddenCount = listsItems ? Math.max(0, selectedKeys.length - maxItemsShown) : 0;
 
   return (
-    <span className="multiselect-container" style={{ maxWidth, width: '100%' }} title={hint}>
+    <span
+      className="multiselect-container"
+      /* Senza la banda delle voci non c'e' niente da allargare: restano le
+         icone, e il campo occupa quanto loro. */
+      style={{ maxWidth, width: listsItems ? '100%' : undefined }}
+      title={hint}
+    >
+      {listsItems && (
       <span
         className="multiselect-chips"
         onClick={editable ? openDrawer : undefined}
@@ -268,7 +282,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
             +{hiddenCount} altri
           </Tag>
         )}
-        {expanded && selectedKeys.length > maxItemsShown && (
+        {listsItems && expanded && selectedKeys.length > maxItemsShown && (
           <Tag
             style={{ cursor: 'pointer', borderStyle: 'dashed' }}
             onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
@@ -277,6 +291,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
           </Tag>
         )}
       </span>
+      )}
       {editable && (
         <Tooltip title={selectedKeys.length > 0 ? 'Modifica selezione' : 'Seleziona'}>
           <Button

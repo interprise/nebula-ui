@@ -924,6 +924,20 @@ html, body {
   box-shadow: inset 0 1px 2px rgba(27, 31, 36, 0.1);
 }
 
+/* Tendina di una combo: tetto alla larghezza.
+   Le tendine non sono vincolate alla larghezza del campo
+   (`popupMatchSelectWidth={false}`, per non troncare le descrizioni piu'
+   lunghe del campo): senza un tetto crescono fino alla riga piu' lunga
+   dell'elenco -- misurati 1507px sulla lista articoli -- e antd, non
+   riuscendo piu' ad allinearle al bordo sinistro del campo, le ancora al suo
+   bordo destro facendole uscire dal lato SINISTRO della finestra, sopra il
+   menu (SXADV-5766). Il `min-width` che antd calcola sul campo e' scritto
+   inline e in CSS vince comunque su `max-width`, quindi una combo larga non
+   si stringe: il tetto limita solo la crescita sul contenuto. */
+.ant-select-dropdown {
+  max-width: min(760px, calc(100vw - 24px));
+}
+
 /* Break row (section separator) */
 tr.breakRow td {
   padding-top: 6px;
