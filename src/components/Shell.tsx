@@ -49,6 +49,7 @@ import {
   FullscreenExitOutlined,
   FontSizeOutlined,
   CheckOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -60,6 +61,7 @@ import type {
   UIData,
   ErrorItem,
   ServerResponse,
+  SessionPanel,
 } from '../types/ui';
 import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
@@ -127,10 +129,20 @@ interface TabState {
   // React re-render, so a payload that re-sends an unchanged value still
   // overrides the user's local edit (SXADV-5014.1).
   dataVersion?: number;
+  // Scheda ricostruita dopo un ricaricamento della pagina e non ancora resa:
+  // la Session esiste sul server, la videata si chiede solo quando si entra
+  // nella scheda (SXADV-5658).
+  restorePending?: boolean;
 }
 
 interface ShellProps {
   menuItems: MenuItem[];
+  /** Sessioni gia' vive sul server al caricamento della pagina (JSONMenu
+   *  `panels`). Dopo un F5 diventano le schede. */
+  initialPanels?: SessionPanel[];
+  /** Tetto alle sessioni contemporanee (JSONMenu `sessionLimit`, run property
+   *  `session.limit`). 0 o assente = nessun limite. */
+  sessionLimit?: number;
   loginInfo: LoginInfo;
   onLogout: () => void;
   onReloadMenu: () => void | Promise<void>;
@@ -442,7 +454,7 @@ const defaultTab: TabState = {
 // Lazy-load CDMS tree component (separate chunk, downloaded on demand)
 const CdmsTree = React.lazy(() => import('./CdmsTree'));
 
-const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadMenu }) => {
+const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 0, loginInfo, onLogout, onReloadMenu }) => {
   // Context-aware message/modal so toasts and dialogs inherit the ConfigProvider
   // CSS-var theme; the static antd imports render invisibly under it. (SXADV-5542)
   const { message, modal } = App.useApp();
@@ -1105,6 +1117,66 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     }
   }, [onReloadMenu, getActiveTabState, processResponse, updateTabState]);
 
+  // Rende una scheda ricostruita dopo un ricaricamento della pagina. La Session
+  // e' ancora quella di prima e conserva la sua videata corrente: `Refresh`
+  // con `full=1` la ridisegna daccapo (setViewReloaded -> risposta completa,
+  // template compreso, che dopo un reload serve perche' la cache dei template
+  // del client e' vuota). E' l'ajaxDo({action:'Refresh', full:'1'}) che faceva
+  // il client legacy in checkForRefresh (SXADV-5658).
+  const loadRestoredTab = useCallback(
+    async (tab: TabState) => {
+      updateTabState(tab.key, { restorePending: false, loading: true, progressPct: undefined });
+      document.body.style.cursor = 'wait';
+      try {
+        const resp = await api.postAction('Refresh', { full: '1', hasTemplate: '1' }, undefined, tab.sid);
+        processResponse(tab.key, resp, tab.sid);
+      } catch (e) {
+        updateTabState(tab.key, { loading: false, progressPct: undefined });
+        message.error(`Error: ${e}`);
+      } finally {
+        document.body.style.cursor = '';
+      }
+    },
+    [processResponse, updateTabState],
+  );
+
+  // Ricostruzione delle schede dopo un F5. Le Session vivono dentro
+  // l'HttpSession, quindi il ricaricamento della pagina non le tocca: il
+  // JSONMenu le elenca in `panels` (una voce per Session che ha una videata
+  // corrente). Senza questo il client ripartiva sempre da una sola scheda
+  // vuota sulla Home, e le sessioni restavano vive ma irraggiungibili — con in
+  // piu' il fatto che la scheda "nuova" successiva si riprendeva il sid di una
+  // di loro. Come il client legacy (setupPanels): si ricreano tutte le schede,
+  // si rende subito solo la prima e le altre quando ci si entra sopra.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    // Solo le sessioni di scheda: il server esclude gia' documentale ("D") e
+    // job ("J"), qui cade anche l'agenda ("A"), che in React non c'e'.
+    const panels = (initialPanels ?? []).filter((p) => /^S\d+$/.test(p.id));
+    if (panels.length === 0) return;
+    restoredRef.current = true;
+    // Si ricostruisce solo su una Shell ancora intonsa (la scheda vuota
+    // iniziale): se per qualche motivo l'elenco arrivasse a lavoro gia'
+    // avviato, sostituire le schede butterebbe via quello che c'e' dentro.
+    const start = tabsRef.current;
+    if (start.length !== 1 || start[0].ui || start[0].loading) return;
+    const fvs: Record<string, Record<string, string | string[]>> = {};
+    const restored: TabState[] = panels.map((p) => {
+      const n = Number(p.id.substring(1));
+      const key = `tab_${n}`;
+      fvs[key] = {};
+      return { key, label: p.title || `Sessione ${n}`, sid: p.id, menuId: p.menuId, formValues: fvs[key], restorePending: true };
+    });
+    // Le schede aperte dopo il ripristino non devono riusare il sid di una
+    // Session gia' viva: il contatore riparte dal massimo ricostruito.
+    tabCounter = Math.max(...restored.map((t) => Number(t.sid.substring(1))));
+    formValuesRef.current = fvs;
+    setTabs(restored);
+    setActiveTab(restored[0].key);
+    void loadRestoredTab(restored[0]);
+  }, [initialPanels, loadRestoredTab]);
+
   const handleAction = useCallback(
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
@@ -1366,16 +1438,33 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
     return was;
   }, []);
 
-  const handleTabChange = (key: string) => setActiveTab(key);
+  // Tetto alle sessioni contemporanee (run property `session.limit`; 0 =
+  // nessun limite, ed e' anche il valore che si vede su un server che non lo
+  // manda). Il legacy disabilitava il "+" della barra schede quando il conto
+  // era pieno (ui.js checkSessionLimit): qui il bottone si spegne allo stesso
+  // modo e il clic, che antd lascia comunque passare, si ferma con un avviso.
+  const atSessionLimit = sessionLimit > 0 && tabs.length >= sessionLimit;
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key);
+    // Scheda ripristinata da un reload e mai aperta finora: si rende adesso.
+    const tab = tabsRef.current.find((t) => t.key === key);
+    if (tab?.restorePending) void loadRestoredTab(tab);
+  };
 
   const handleTabEdit = (
     targetKey: React.MouseEvent | React.KeyboardEvent | string,
     action: 'add' | 'remove'
   ) => {
     if (action === 'add') {
+      if (atSessionLimit) {
+        message.warning(`Non si possono tenere aperte piu' di ${sessionLimit} sessioni: chiuderne una per aprirne un'altra.`);
+        return;
+      }
       addTab();
     } else if (action === 'remove') {
       const key = typeof targetKey === 'string' ? targetKey : '';
+      const closed = tabsRef.current.find((t) => t.key === key);
       setTabs((prev) => {
         const idx = prev.findIndex((t) => t.key === key);
         const next = prev.filter((t) => t.key !== key);
@@ -1387,6 +1476,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
         return next;
       });
       delete formValuesRef.current[key];
+      // La Session resta viva sul server finche' non gliela si chiude: senza
+      // questo si accumulano (e dopo un F5 le schede appena chiuse
+      // ricomparirebbero, ricostruite da `panels`). Come il closeSession() del
+      // client legacy.
+      if (closed) void api.postAction2('CloseSession', { sid: closed.sid }).catch(() => {});
     }
   };
 
@@ -2010,13 +2104,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, loginInfo, onLogout, onReloadM
               deve costare un tasto solo. */}
           {!immersive && (
           <Tabs
-            className="session-tabs"
+            className={atSessionLimit ? 'session-tabs session-tabs-full' : 'session-tabs'}
             type="editable-card"
             size="small"
             tabBarStyle={{ margin: 0 }}
             activeKey={activeTab}
             onChange={handleTabChange}
             onEdit={handleTabEdit}
+            addIcon={
+              <Tooltip title={atSessionLimit ? `Limite di ${sessionLimit} sessioni raggiunto` : 'Nuova sessione'}>
+                <PlusOutlined />
+              </Tooltip>
+            }
             items={tabs.map((t) => ({
               key: t.key,
               label: t.label,

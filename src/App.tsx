@@ -10,7 +10,7 @@ import LoginForm from './components/LoginForm';
 import Shell from './components/Shell';
 import { UiModeProvider } from './hooks/UiModeProvider';
 import { DensityContext, DENSITY_FONT_SIZE, useDensityStore } from './hooks/density';
-import type { LoginInfo, MenuItem } from './types/ui';
+import type { LoginInfo, MenuItem, SessionPanel } from './types/ui';
 import * as api from './services/api';
 
 // Register CORE framework controls synchronously. The application-specific
@@ -70,6 +70,14 @@ const App: React.FC = () => {
   const [loginTitle, setLoginTitle] = useState<string>();
   const [loginInfo, setLoginInfo] = useState<LoginInfo | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  // Sessioni gia' vive sul server quando la pagina si carica. Dopo un F5 le
+  // Session sopravvivono (stanno nell'HttpSession) e il JSONMenu le elenca:
+  // la Shell ci ricostruisce le schede invece di ripartire dalla Home
+  // (SXADV-5658).
+  const [sessionPanels, setSessionPanels] = useState<SessionPanel[]>([]);
+  // Tetto alle sessioni contemporanee (run property `session.limit`, 0 =
+  // nessun limite): oltre, la Shell non lascia aprire altre schede.
+  const [sessionLimit, setSessionLimit] = useState(0);
 
   const loadMenu = useCallback(async (extra: Record<string, string> = {}) => {
     try {
@@ -80,6 +88,8 @@ const App: React.FC = () => {
       }
       if (resp.loginfo) setLoginInfo(resp.loginfo);
       if (resp.children) setMenuItems(resp.children);
+      if (resp.panels) setSessionPanels(resp.panels);
+      if (resp.sessionLimit != null) setSessionLimit(resp.sessionLimit);
       setLoggedIn(true);
     } catch (e) {
       // Auto-login failed, show login form
@@ -157,6 +167,8 @@ const App: React.FC = () => {
       if (resp.children) {
         setMenuItems(resp.children);
       }
+      if (resp.panels) setSessionPanels(resp.panels);
+      if (resp.sessionLimit != null) setSessionLimit(resp.sessionLimit);
       setLoggedIn(true);
     } catch (e) {
       setLoginError(`Errore di connessione: ${e}`);
@@ -276,6 +288,8 @@ const App: React.FC = () => {
             ) : (
               <Shell
                 menuItems={menuItems}
+                initialPanels={sessionPanels}
+                sessionLimit={sessionLimit}
                 loginInfo={loginInfo!}
                 onLogout={handleLogout}
                 onReloadMenu={handleReloadMenu}

@@ -456,6 +456,21 @@ export interface MenuItem {
   iconCls?: string;
 }
 
+/** Una sessione ancora viva lato server, come la elenca JSONMenuCommand.
+ *  getPanels(): una voce per ogni Session della HttpSession che ha una
+ *  videata corrente. Serve a ricostruire le schede dopo un ricaricamento
+ *  della pagina (SXADV-5658). */
+export interface SessionPanel {
+  /** sid della Session ("S1", "S2", ...). */
+  id: string;
+  /** Titolo della videata corrente, usato come etichetta della scheda. */
+  title: string;
+  /** Voce di menu da cui la scheda era stata aperta, per rimettere l'evidenza
+   *  nel menu laterale. Assente su una scheda aperta per altra via (link,
+   *  documentale) e su un server che non la emette ancora. */
+  menuId?: string;
+}
+
 export interface ServerResponse {
   ui?: UITree;
   // Two-phase pipeline: on a fresh navigation that opts in, the server
@@ -506,6 +521,12 @@ export interface ServerResponse {
   progress?: number;
   context?: Record<string, unknown>;
   toggleItem?: { itemId: string; included: boolean };
+  // Sessioni vive lato server, emesse da JSONMenu: il client ci ricostruisce
+  // le schede dopo un F5 (SXADV-5658).
+  panels?: SessionPanel[];
+  // Numero massimo di sessioni contemporanee (run property `session.limit`,
+  // 0 = nessun limite). Emesso da JSONMenu, gating dell'apertura di schede.
+  sessionLimit?: number;
 }
 
 export interface TreeNode {

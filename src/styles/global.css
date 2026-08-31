@@ -542,6 +542,15 @@ html, body {
   min-height: 0 !important;
 }
 
+/* Limite di sessioni raggiunto (run property `session.limit`): il "+" si
+   spegne come faceva il client legacy. Resta cliccabile - antd non sa
+   disabilitare questo bottone - e il clic si ferma in handleTabEdit con un
+   avviso, che e' anche l'unico modo per dire PERCHE' non si apre. */
+.session-tabs-full .ant-tabs-nav-add {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Tab content area */
 .tab-content {
   background: #fff;
