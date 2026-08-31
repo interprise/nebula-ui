@@ -82,7 +82,7 @@ const MoneyInput: React.FC<{
         // tastiera, che e' la stessa funzione con un altro innesco.
         controls={false}
         keyboard={false}
-        style={{ width }}
+        style={{ width, ...commonProps.style }}
         // Commit the `reload` round-trip once, on blur — not per keystroke,
         // which raced the server recalc and snapped the value back.
         onBlur={commit}

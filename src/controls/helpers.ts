@@ -448,6 +448,8 @@ export interface CommonInputProps {
   title?: string;
   disabled: boolean;
   status?: 'error';
+  /** contentStyle del ViewItem, gia' convertito (vedi useCommonProps). */
+  style?: CSSProperties;
 }
 
 export function useCommonProps(control: UIControl): CommonInputProps {
@@ -468,6 +470,16 @@ export function useCommonProps(control: UIControl): CommonInputProps {
     title: hint,
     disabled: isDisabled,
     status: showMandatory && !value ? 'error' as const : undefined,
+    // contentStyle del ViewItem (allineamento, corsivo, grassetto). Il writer
+    // legacy lo scriveva solo sulla <td> della cella di LISTA: nella form il
+    // suo `<input>` prendeva `inputStyle`, e un `contentStyle` dichiarato su un
+    // campo di dettaglio non faceva nulla — cosi' `totSchedaContabile` chiedeva
+    // `text-align:right` da vent'anni senza ottenerlo. Qui l'attributo vale
+    // anche nella form, dove allinea il TESTO dentro il riquadro: sulla cella
+    // sposterebbe il riquadro invece del valore. Sono ~6 campi in tutto
+    // (SXADV-5734). I control che si impongono uno `style` proprio devono
+    // fonderlo per ultimo, cosi' quello che la view chiede vince.
+    style: parseInlineStyle(control.style as string | undefined),
   };
 }
 

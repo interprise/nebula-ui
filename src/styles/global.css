@@ -42,6 +42,19 @@ html, body {
   padding: 2px 4px;
   text-align: right;
 }
+/* Numeri e importi a destra nelle celle di LISTA. Nel legacy ogni controllo
+   Number/Money (UMNumber ed ExtMoney compresi) metteva la classe `number` sulla
+   <td> della cella — createInputClass() — e `.number { text-align: right }` del
+   foglio GRIGIO la allineava in OGNI banda della riga. Nel JSON il client
+   ricavava l'allineamento dal tipo di controllo, che pero' esiste solo per la
+   PRIMA banda (`ui.columns`): quantita' e importi mandati a capo restavano a
+   sinistra (SXADV-5734.1a). Ora la classe viaggia in `cls` e questa regola la
+   onora sia sulla cella AG Grid sia sullo <span> di una banda di
+   continuazione. Vale solo in lista: nella form il controllo allinea il
+   proprio input, mentre allineare la cella sposterebbe il riquadro. */
+.number {
+  text-align: right;
+}
 .master_header {
   background-color: #D9E1EA;
   color: black;

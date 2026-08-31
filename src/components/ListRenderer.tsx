@@ -494,6 +494,29 @@ function scheduleRowHeightFlush(api: GridApi): void {
   });
 }
 
+/** Una cella di una banda di continuazione, come la costruisce
+ *  `buildContinuationCells`. `cls`/`style` sono il contentClass e il
+ *  contentStyle della cella, piu' le classi che il writer legacy metteva sulla
+ *  <td> (`number`): nella prima banda l'allineamento si ricava dal tipo di
+ *  controllo di `ui.columns`, che per le bande successive non esiste. */
+type ContCell = {
+  html?: string;
+  text?: string;
+  colspan?: number;
+  control?: UIControl;
+  cls?: string;
+  style?: string;
+};
+
+/** Una cella di continuazione e' allineata a destra? Le due sorgenti sono le
+ *  stesse della prima banda: la classe `number` che ogni controllo Number/Money
+ *  porta con se' e un `contentStyle="text-align:right"` del ViewItem
+ *  (SXADV-5734.1a). */
+function isContCellRightAligned(cell: ContCell): boolean {
+  if (cell.cls && /(^|\s)number(\s|$)/.test(cell.cls)) return true;
+  return !!cell.style && /text-align\s*:\s*right/i.test(cell.style);
+}
+
 // Render a single continuation cell. Custom (cell-renderable) controls
 // delegate to the registered React component — main cols are served by
 // AG Grid's cellRenderer pipeline, but continuation cells sit outside
@@ -505,12 +528,18 @@ const ContinuationCell = ({
   onChange,
   rowPath,
 }: {
-  cell: { html?: string; text?: string; colspan?: number; control?: UIControl };
+  cell: ContCell;
   style: React.CSSProperties;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
   rowPath?: string;
 }) => {
+  // Classi e stile della cella (contentClass/contentStyle piu' le classi
+  // legacy del controllo) sopra il box calcolato dal renderer: nella prima
+  // banda ci pensano cellClass/cellStyle di AG Grid, qui non si passa di la'.
+  const merged: React.CSSProperties = cell.style
+    ? { ...style, ...(parseInlineStyle(cell.style) as React.CSSProperties) }
+    : style;
   if (cell.control && cell.control.type && isCellRenderable(cell.control.type)) {
     const Component = getControl(cell.control.type);
     if (Component) {
@@ -523,21 +552,17 @@ const ContinuationCell = ({
       // areas of the cell, not when interacting with embedded controls.
       const stop = (e: React.MouseEvent | React.PointerEvent) => e.stopPropagation();
       return (
-        <span className="list-cell-control" style={style} onClick={stop} onMouseDown={stop} onPointerDown={stop}>
+        <span className="list-cell-control" style={merged} onClick={stop} onMouseDown={stop} onPointerDown={stop}>
           <Component control={cell.control} onAction={dispatchAction} onChange={onChange} />
         </span>
       );
     }
   }
   if (cell.html) {
-    return <span style={style} dangerouslySetInnerHTML={{ __html: fixServerHtml(cell.html) }} />;
+    return <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: fixServerHtml(cell.html) }} />;
   }
-  return <span style={style}>{cell.text}</span>;
+  return <span className={cell.cls} style={merged}>{cell.text}</span>;
 };
-
-/** Una cella di una banda di continuazione, come la costruisce
- *  `buildContinuationCells`. */
-type ContCell = { html?: string; text?: string; colspan?: number; control?: UIControl };
 
 /** Colonne bloccate in modalità una-riga quando il server non dice nulla. Lo
  *  dice con `<View pinnedCols="...">`; questo è solo la rete per un server che
@@ -612,7 +637,7 @@ const FlatContinuationRenderer = (params: ICellRendererParams) => {
 // variable (set by the parent on AG Grid bodyScroll events) so continuation
 // content stays aligned with the scrolled main columns.
 const ContinuationRowRenderer = (params: ICellRendererParams) => {
-  const cells = params.data?._continuationCells as Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> | undefined;
+  const cells = params.data?._continuationCells as ContCell[] | undefined;
   // Grow the row to its tallest wrapped cell. A continuation row is a FULL-WIDTH
   // row, so the per-column autoHeight that sizes main rows never sees it: its
   // height comes from getRowHeight, which can only count <br>s — it can't know
@@ -1233,8 +1258,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // Cells carrying a custom (cell-renderable) control — reportBar and the
     // like — preserve the full control so the continuation renderer can
     // delegate to the registered React component.
-    const buildContinuationCells = (row: UIRow): Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> => {
-      const cells: Array<{ html?: string; text?: string; colspan?: number; control?: UIControl }> = [];
+    const buildContinuationCells = (row: UIRow): ContCell[] => {
+      const cells: ContCell[] = [];
       row.cells.forEach((cell: UICell, idx: number) => {
         if (cell.elementType === ELTYPE_SELECTOR) return;
         if (cell.elementType === ELTYPE_PROMPT) return;
@@ -1242,14 +1267,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const colspan = (cell as unknown as Record<string, unknown>).colspan as number | undefined;
         if (cell.control) {
           const ctrlType = cell.control.type;
+          // cls/style della cella: nella prima banda AG Grid li applica da
+          // cellClass/cellStyle, qui vanno portati a mano o l'allineamento a
+          // destra dei numeri (classe `number`) e ogni contentStyle si perdono
+          // per tutte le bande dopo la prima (SXADV-5734.1a).
+          const cls = cell.control.cls as string | undefined;
+          const style = cell.control.style as string | undefined;
           if (ctrlType && isCellRenderable(ctrlType)) {
-            cells.push({ colspan, control: cell.control });
+            cells.push({ colspan, control: cell.control, cls, style });
             return;
           }
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
           const hasHtml = ctrlType === 'html' || /<[a-z][\s\S]*>/i.test(val);
-          cells.push(hasHtml ? { html: val, colspan } : { text: val, colspan });
+          cells.push(hasHtml ? { html: val, colspan, cls, style } : { text: val, colspan, cls, style });
         } else {
           cells.push({ text: '', colspan });
         }
@@ -1267,7 +1298,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
        stessa coordinata su cui il server allinea celle ed etichette
        (`colspan` cumulativo), quindi è anche ciò che permette di ritrovare
        l'etichetta giusta per ognuna. */
-    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean };
+    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean; rightAlign: boolean };
     const flatCols = new Map<string, FlatCol>();
 
     // Build row data, detecting continuation rows (first cell is DUMMY elementType 9)
@@ -1312,9 +1343,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
                 target[field] = text;
                 target[`_contcell_${field}`] = cell;
               }
+              const right = isContCellRightAligned(cell);
               const known = flatCols.get(field);
-              if (known) known.hasContent = known.hasContent || filled;
-              else flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled });
+              if (known) {
+                known.hasContent = known.hasContent || filled;
+                known.rightAlign = known.rightAlign || right;
+              } else {
+                flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled, rightAlign: right });
+              }
               unit += span;
             }
           }
@@ -1535,7 +1571,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             // della riga principale, e queste colonne non esistono per lui.
             sortable: false,
             cellRenderer: FlatContinuationRenderer,
-            headerClass: 'continuation-flat-header',
+            // L'intestazione segue il dato, come nella prima banda: sopra una
+            // colonna di quantità o importi sta a destra (SXADV-5734.1a).
+            headerClass: m.rightAlign
+              ? 'continuation-flat-header ag-right-aligned-header'
+              : 'continuation-flat-header',
           });
         });
     }
@@ -2114,6 +2154,38 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return map;
   }, [ui.headers]);
 
+  /* Le UNITÀ di ogni banda di continuazione occupate da un dato allineato a
+     destra — serve all'intestazione iniettata, che altrimenti resterebbe a
+     sinistra sopra quantità e importi allineati a destra (SXADV-5734.1a).
+     L'unità (colspan cumulativo) e non l'indice di cella, perché celle ed
+     etichette di una banda sono due sequenze indipendenti sulla stessa
+     coordinata: un'etichetta può coprirne più d'una, ed è il criterio con cui
+     `bandInfoFor` le riaccoppia in modalità una-riga. Unione su tutti i record,
+     non solo sul primo: una banda può essere vuota nel primo (il server emette
+     celle di riempimento) e portare il dato nel secondo. */
+  const contRightAlignByBand = useMemo(() => {
+    const bands: Array<Set<number>> = [];
+    let band = 0;
+    for (const row of ui.rows ?? []) {
+      if (row.cls === 'breakRow') continue;
+      if (!isContinuationRow(row)) { band = 0; continue; }
+      const acc = bands[band] ?? (bands[band] = new Set<number>());
+      let unit = 0;
+      row.cells.forEach((c, i) => {
+        if (c.elementType === ELTYPE_SELECTOR || c.elementType === ELTYPE_PROMPT) return;
+        if (i === 0 && c.elementType === ELTYPE_DUMMY) return;
+        const span = (c as unknown as Record<string, unknown>).colspan as number | undefined;
+        const width = span || 1;
+        if (isContCellRightAligned({ cls: c.control?.cls, style: c.control?.style })) {
+          for (let u = unit; u < unit + width; u++) acc.add(u);
+        }
+        unit += width;
+      });
+      band++;
+    }
+    return bands;
+  }, [ui.rows]);
+
   // Inject continuation header rows AFTER the ag-header. Each row is a
   // clipped viewport whose inner track has width = total cols width and
   // translates via --grid-scroll-x, mirroring the continuation cells.
@@ -2138,7 +2210,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     const selectorPad = isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0;
     let insertAfter: Element = agHeader;
-    contHeaders.forEach((rowHeaders) => {
+    contHeaders.forEach((rowHeaders, bandIdx) => {
+      const rightUnits = contRightAlignByBand[bandIdx];
+      let headerUnit = 0;
       const wrapper = document.createElement('div');
       wrapper.className = 'continuation-header-row';
       // flex:0 0 auto — the wrapper is a flex child of AG Grid's .ag-root
@@ -2169,6 +2243,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         } else {
           cell.style.cssText = `flex:${hdr.colspan || 1};padding:1px 4px;`;
         }
+        // L'etichetta segue il dato che intesta: a destra se una qualunque
+        // delle unità che copre porta un valore allineato a destra.
+        const hdrSpan = hdr.colspan || 1;
+        if (rightUnits) {
+          for (let u = headerUnit; u < headerUnit + hdrSpan; u++) {
+            if (rightUnits.has(u)) { cell.style.textAlign = 'right'; break; }
+          }
+        }
+        headerUnit += hdrSpan;
         cell.textContent = hdr.text || '';
         track.appendChild(cell);
       });
@@ -2176,7 +2259,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine]);
+  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine, contRightAlignByBand]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll

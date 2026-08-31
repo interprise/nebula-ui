@@ -43,7 +43,7 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
       value={value}
       format={dateFmt}
       placeholder=""
-      style={{ minWidth: 96 }}
+      style={{ minWidth: 96, ...commonProps.style }}
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
@@ -68,7 +68,7 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
       value={value}
       format="HH:mm"
       placeholder=""
-      style={{ minWidth: 95 }}
+      style={{ minWidth: 95, ...commonProps.style }}
       onChange={(t, timeStr) => {
         setValue(t);
         handleChange(timeStr);
@@ -102,7 +102,7 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
       value={value}
       format={tsFmt}
       placeholder=""
-      style={{ minWidth: 170 }}
+      style={{ minWidth: 170, ...commonProps.style }}
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}

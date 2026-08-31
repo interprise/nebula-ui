@@ -21,7 +21,7 @@ const TextAreaControl: ControlComponent = ({ control, pageType, onChange, onActi
       {...commonProps}
       value={value}
       rows={rows}
-      style={{ width: '100%', maxHeight: '50vh', resize: 'vertical' }}
+      style={{ width: '100%', maxHeight: '50vh', resize: 'vertical', ...commonProps.style }}
       onChange={(e) => {
         setValue(e.target.value);
         store(e.target.value);

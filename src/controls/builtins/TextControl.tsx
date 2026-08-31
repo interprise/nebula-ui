@@ -14,7 +14,8 @@ const TextControl: ControlComponent = ({ control, pageType, onAction, onChange }
       {...commonProps}
       value={value}
       maxLength={control.maxLength}
-      style={{ width: textMaxWidth, maxWidth: '100%', ...(isUppercase && { textTransform: 'uppercase' }) }}
+      // contentStyle per ultimo: quello che la view chiede vince (SXADV-5734).
+      style={{ width: textMaxWidth, maxWidth: '100%', ...(isUppercase && { textTransform: 'uppercase' }), ...commonProps.style }}
       onChange={(e) => {
         // Show the raw keystrokes (CSS uppercases visually) so the caret
         // never jumps; store the uppercased value for the server.
