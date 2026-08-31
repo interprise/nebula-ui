@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { InputNumber } from 'antd';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedState, decodeHtmlEntities, numberWidthForSize } from '../helpers';
@@ -43,7 +43,8 @@ function toItalian(v: number | null | undefined, decimals: number | undefined): 
   });
 }
 
-/** Shared input for number/money — shows currency prefix only when blurred and value non-empty. */
+/** Shared input for number/money — il simbolo di valuta e' un'etichetta a
+ *  destra, FUORI dal riquadro di editing. */
 const MoneyInput: React.FC<{
   commonProps: CommonInputProps;
   value: unknown;
@@ -54,29 +55,18 @@ const MoneyInput: React.FC<{
   store: (val: unknown) => void;
   commit: () => void;
 }> = ({ commonProps, value, decimals, currencySymbol, unitSuffix, width, store, commit }) => {
-  const [focused, setFocused] = useState(false);
   // Hold the edited value locally: store() writes to a ref without setState,
-  // so a controlled `value` prop would revert keystrokes — and the
-  // blur-driven re-render below (setFocused) would re-apply the stale server
-  // value, mangling what was typed and blocking clears. Re-sync only on a
+  // so a controlled `value` prop would revert keystrokes. Re-sync only on a
   // real server round-trip. (SXADV-5494)
   const [local, setLocal] = useSyncedState<number | null>(toNumber(value));
   const symbol = currencySymbol !== undefined ? decodeHtmlEntities(String(currencySymbol || '€')) : undefined;
-  // Simbolo di valuta DOPO il numero, non prima: i campi numerici sono
-  // allineati a destra (vedi `.ant-input-number-input` in global.css, che
-  // ripristina il `.number { text-align: right }` che il legacy applicava a
-  // ogni controllo Number/Money via createInputClass). Come prefisso il simbolo
-  // sarebbe rimasto incollato a sinistra con il valore a filo destro e un vuoto
-  // in mezzo; come suffisso si legge `1.220,00 €`, che è esattamente quello che
-  // mostrava il legacy — lì il simbolo faceva parte del valore formattato.
-  const showSymbol = symbol && !focused && local != null;
   return (
     // maxWidth sull'involucro, non sul solo InputNumber: essendo un inline-flex
     // che si dimensiona sul contenuto, un `max-width:100%` sul figlio si
-    // risolverebbe sulla larghezza del contenitore stesso (cioè su se stesso) e
+    // risolverebbe sulla larghezza del contenitore stesso (cioe' su se stesso) e
     // non vincolerebbe nulla. Vincolato qui, il campo si restringe alla cella
     // invece di sforare ed essere tagliato — con il valore a destra la parte
-    // tagliata è proprio quella che conta.
+    // tagliata e' proprio quella che conta.
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
       <InputNumber
         {...commonProps}
@@ -84,13 +74,18 @@ const MoneyInput: React.FC<{
         precision={decimals}
         // Server sends/expects Italian: comma is the decimal separator.
         decimalSeparator=","
-        suffix={showSymbol ? symbol : undefined}
-        placeholder={symbol || undefined}
+        // Niente frecce di incremento (SXADV-5653.2): su un importo con
+        // decimali il passo cadeva comunque sull'ultima cifra INTERA, e la
+        // colonna delle frecce compariva sopra il valore proprio entrando nel
+        // campo, nascondendo le cifre che si stavano per correggere.
+        // `keyboard={false}` toglie lo stesso passo alle frecce su/giu' da
+        // tastiera, che e' la stessa funzione con un altro innesco.
+        controls={false}
+        keyboard={false}
         style={{ width }}
-        onFocus={() => setFocused(true)}
         // Commit the `reload` round-trip once, on blur — not per keystroke,
         // which raced the server recalc and snapped the value back.
-        onBlur={() => { setFocused(false); commit(); }}
+        onBlur={commit}
         onPressEnter={commit}
         // antd gives a JS number; store it back in Italian format so the server
         // parses it correctly (else "225.5" reads as thousands → 2255).
@@ -103,6 +98,13 @@ const MoneyInput: React.FC<{
           if (text === '' || text == null) { setLocal(null); store(null); }
         }}
       />
+      {/* Il simbolo di valuta sta a destra e FUORI dal campo, come nella linea
+          legacy (SXADV-5653.3): dentro il riquadro — prima come prefisso, poi
+          come suffisso antd — rubava spazio alle cifre e non corrispondeva a
+          quello che l'utente vedeva prima. Fuori non c'e' piu' nulla che balli
+          tra fuoco e non fuoco, quindi si mostra sempre, anche a campo vuoto o
+          disabilitato (dove resta a piena leggibilita', non sbiadito). */}
+      {!!symbol && <span className="currency-suffix">{symbol}</span>}
       {!!unitSuffix && (
         <span className="unit-suffix">{String(unitSuffix)}</span>
       )}

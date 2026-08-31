@@ -320,12 +320,11 @@ html, body {
 }
 
 /* InputNumber (money/number) was NOT covered by the rules above — its disabled
- * inner input is `.ant-input-number-input` inside `.ant-input-number-disabled`,
- * and the € prefix lives in `.ant-input-number-prefix`. Confirmed-document
- * amounts therefore stayed at antd's faint rgba(0,0,0,0.25) and were illegible
- * (SXADV-5543). */
-.layout-table .ant-input-number-disabled .ant-input-number-input,
-.layout-table .ant-input-number-disabled .ant-input-number-prefix {
+ * inner input is `.ant-input-number-input` inside `.ant-input-number-disabled`.
+ * Confirmed-document amounts therefore stayed at antd's faint rgba(0,0,0,0.25)
+ * and were illegible (SXADV-5543). Il simbolo di valuta non e' piu' dentro il
+ * riquadro (SXADV-5653.3): sta accanto al campo e non passa mai da disabilitato. */
+.layout-table .ant-input-number-disabled .ant-input-number-input {
   color: var(--app-text-readonly) !important;
   -webkit-text-fill-color: var(--app-text-readonly) !important;
 }
@@ -1178,6 +1177,18 @@ tr.breakRow td {
 .ant-input-number.ant-input-number-mode-spinner .ant-input-number-input {
   text-align: right;
   font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Etichetta della valuta accanto a un campo importo: nella linea legacy il
+   simbolo stava a destra e FUORI dal riquadro di editing, e li' e' tornato
+   (SXADV-5653.3). Non si comprime — a cedere e' il campo, che ha gia' il
+   `max-width` sotto — e non va a capo, se no una cella stretta lo staccherebbe
+   dal numero che qualifica. */
+.currency-suffix,
+.unit-suffix {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: var(--app-font-size);
 }
 
 /* La larghezza del campo viene da `size` e puo' superare quella della cella,

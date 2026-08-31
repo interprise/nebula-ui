@@ -324,8 +324,11 @@ const FIELD_CHROME = 14;
  *  gia' stato tolto ai combo in SXADV-5796.4. */
 const NO_SIZE_FIELD_WIDTH = 500;
 
-/** Frecce di incremento + simbolo di valuta di un `InputNumber`. */
-const NUMBER_EXTRA_CHROME = 20;
+/** Spazio dell'etichetta con il simbolo di valuta, che da SXADV-5653.3 sta
+ *  FUORI dal riquadro dell'`InputNumber` (simbolo piu' il divario di 4px con
+ *  cui l'involucro lo stacca dal campo). Le frecce di incremento, che prima
+ *  chiedevano la loro parte di questo ingombro, non ci sono piu' (5653.2). */
+const CURRENCY_GUTTER = 20;
 
 let fieldMetrics: { font: string; ch: number; max: number } | null = null;
 
@@ -404,14 +407,23 @@ export function getTextMaxWidth(control: UIControl): number {
   return fieldWidthForSize(control.size);
 }
 
-/** Come {@link fieldWidthForSize}, per i campi numerici (`InputNumber`), che
- *  hanno qualche pixel di ingombro in piu': le frecce di incremento e — per gli
- *  importi — il simbolo di valuta in coda. Il valore e' allineato a destra,
- *  quindi quello che si perde restringendo sono le cifre piu' significative:
- *  meglio abbondare. Senza `size` resta il default storico di 125px. */
+/** Come {@link fieldWidthForSize}, per i campi numerici (`InputNumber`). Il
+ *  riquadro non ospita piu' nulla oltre alle cifre — ne' le frecce (5653.2) ne'
+ *  il simbolo di valuta (5653.3, ora accanto al campo: vedi
+ *  {@link moneyWidthForSize}) — quindi vale la larghezza del testo. Il valore
+ *  e' allineato a destra, quindi quello che si perde restringendo sono le cifre
+ *  piu' significative. Senza `size` resta il default storico di 125px. */
 export function numberWidthForSize(size?: number): number {
   if (!size || size <= 0) return 125;
-  return fieldWidthForSize(size) + NUMBER_EXTRA_CHROME;
+  return fieldWidthForSize(size);
+}
+
+/** Ingombro TOTALE di un importo: il campo piu' l'etichetta della valuta che
+ *  gli sta accanto. Serve al righello, che deve tenere conto anche di quello
+ *  che sta fuori dal riquadro; il controllo passa all'`InputNumber` la sola
+ *  {@link numberWidthForSize}. */
+export function moneyWidthForSize(size?: number): number {
+  return numberWidthForSize(size) + CURRENCY_GUTTER;
 }
 
 /** Parse a server-sent inline CSS string (e.g. contentStyle="text-align:center;")

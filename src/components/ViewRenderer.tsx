@@ -14,7 +14,7 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
-import { comboWidthForSize, fieldWidthForSize, numberWidthForSize } from '../controls/helpers';
+import { comboWidthForSize, fieldWidthForSize, moneyWidthForSize, numberWidthForSize } from '../controls/helpers';
 import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID } from '../hooks/uiMode';
 import { useDensity, DENSITY_FONT_SIZE, type Density } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -102,9 +102,11 @@ function controlContentWidth(control: UIControl): number {
     case 'durata':
       return control.size != null ? fieldWidthForSize(control.size) : 0;
     case 'number':
-    case 'money':
-      // Mirror di NumberControl, che ha qualche pixel in piu' di ingombro.
       return control.size != null ? numberWidthForSize(control.size) : 0;
+    case 'money':
+      // Mirror di MoneyControl: oltre al campo c'e' l'etichetta della valuta,
+      // che sta FUORI dal riquadro e vuole la sua parte di colonna (5653.3).
+      return control.size != null ? moneyWidthForSize(control.size) : 0;
     default:
       return 0;
   }

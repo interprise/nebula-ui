@@ -77,6 +77,11 @@ export const NumberCellEditor = React.forwardRef(
         value={value}
         onChange={(v) => setValue(v)}
         precision={precision}
+        // Come nella form (SXADV-5653.2): niente frecce di incremento, ne' col
+        // mouse ne' con su/giu' da tastiera — in una cella coprivano il valore
+        // e il passo cadeva sulla parte intera anche con i decimali.
+        controls={false}
+        keyboard={false}
         size="small"
         style={{ width: '100%' }}
       />
