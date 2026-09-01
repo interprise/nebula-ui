@@ -1302,7 +1302,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       updateTabState(tab.key, { label: opts.title, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
       document.body.style.cursor = 'wait';
       try {
-        const params: Record<string, string> = { viewName: opts.viewName, title: opts.title };
+        // Ingresso di primo livello (barra del documentale, cartella dell'albero):
+        // la scheda riparte da zero, quindi il percorso non deve accodarsi a
+        // quello della funzione precedente (SXADV-5783).
+        const params: Record<string, string> = { viewName: opts.viewName, title: opts.title, newTask: '1' };
         if (opts.filter) params.filter = opts.filter;
         if (opts.orderBy) params.orderBy = opts.orderBy;
         const resp = await api.postAction(opts.action || 'ListPage', params, undefined, tab.sid);
@@ -1389,6 +1392,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       }
     },
     [menuItems, handleMenuClick, handleAction],
+  );
+
+  // Ingresso di primo livello che NON ha una voce di menu (Gestione Profili
+  // Menu, Aggiungi Albero): fa quello che fa handleMenuClick — intitola la
+  // scheda alla funzione che si sta aprendo e chiede al server di ripartire da
+  // zero (newTask), cosi' il percorso non si accoda a quello di prima
+  // (SXADV-5783).
+  const openFunctionByAction = useCallback(
+    (label: string, action: string, params?: Record<string, string>) => {
+      const tab = getActiveTabState();
+      if (!tab || tab.loading) return;
+      updateTabState(tab.key, { label });
+      handleAction(action, { ...params, newTask: '1' });
+    },
+    [getActiveTabState, updateTabState, handleAction],
   );
 
   // Request notification permission once on mount
@@ -1767,9 +1785,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi, active: activeMenuId === 'menu.avvisi' },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true, active: activeMenuId === 'menu.notifications' },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Avvisi e notifiche', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
-    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => handleAction('ProfileManager', { navpath: 'menu' }), visible: true },
-    { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleAction('CommStats'), visible: true },
-    { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleAction('JDBCStats'), visible: true },
+    // Le tre funzioni qui sotto sono ingressi di primo livello come una voce di
+    // menu, e come quelle devono intitolare la scheda e far ripartire il
+    // percorso da zero: le prime due sono voci di menu invisibili (menu.xml,
+    // `_$commstatList`/`_$jdbcstatList`) e il client legacy le apriva per id, la
+    // terza non ha voce di menu e passa da openFunctionByAction (SXADV-5783).
+    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => openFunctionByAction('Gestione Profili Menu', 'ProfileManager', { navpath: 'menu' }), visible: true },
+    { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleMenuClick('menu._$commstatList', 'Comandi in esecuzione'), visible: true, active: activeMenuId === 'menu._$commstatList' },
+    { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleMenuClick('menu._$jdbcstatList', 'Connessioni attive'), visible: true, active: activeMenuId === 'menu._$jdbcstatList' },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true, active: activeMenuId === 'menu.expBuilderList' },
   ];
 
@@ -1782,7 +1805,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     ...commonBarButtons,
     { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsView('cdmsProfiliList', 'Gestione Profili'), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsView('cdmsUtentiList', 'Gestione Utenti'), visible: !!loginInfo.cdmsAdmin },
-    { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => handleAction('AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => openFunctionByAction('Aggiungi Albero', 'AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsTrash', icon: <DeleteOutlined />, tooltip: 'Cestino', onClick: () => openCdmsView('cdmsRisorseListCestino', 'Cestino'), visible: true },
     { key: 'cdmsWiki', icon: <ReadOutlined />, tooltip: 'Aiuto', onClick: () => window.open(loginInfo.wikiUrl, '_blank', 'noopener'), visible: !!loginInfo.wikiUrl },
   ];
