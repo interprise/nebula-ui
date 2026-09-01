@@ -52,7 +52,7 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
         setUploading(false);
       }
     },
-    [sid, onRefresh],
+    [sid, onRefresh, message],
   );
 
   const handleListClick = useCallback(() => {
@@ -65,7 +65,7 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
       return;
     }
     setDrawerOpen(true);
-  }, [info.count, info.single, sid]);
+  }, [info.count, info.single, sid, message]);
 
   const showUpload = info.allowAdd;
   const showList = info.allowList;

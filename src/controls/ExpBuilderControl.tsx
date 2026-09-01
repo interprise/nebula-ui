@@ -4,6 +4,10 @@ import * as api from '../services/api';
 import type { MetadataRow } from '../services/api';
 import type { UIControl } from '../types/ui';
 
+/** Elenco vuoto condiviso: identita' stabile, cosi' il `filtered` memoizzato
+ *  non si ricalcola a ogni render finche' non arriva un elenco vero. */
+const NO_ITEMS: MetadataRow[] = [];
+
 const VALID = /[A-Za-z0-9_]/;
 const VALID_OR_DOT = /[A-Za-z0-9_.]/;
 
@@ -129,12 +133,21 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
   const boName = (control.boName as string) || '';
   const allowMethods = !!control.allowMethods;
 
-  const [items, setItems] = useState<MetadataRow[]>([]);
+  // L'elenco caricato vale per un BO preciso: lo si tiene INSIEME alla chiave
+  // che lo qualifica, invece di azzerarlo in un effetto quando il BO cambia.
+  // Cosi' il cambio di BO e' una derivazione (chiave diversa = nessun elenco),
+  // non un secondo giro di render, e una risposta arrivata in ritardo per il BO
+  // precedente non puo' piu' finire nella tendina di quello nuovo.
+  const [fetched, setFetched] = useState<{ key: string; queryPath: string | null; rows: MetadataRow[] }>(
+    { key: '', queryPath: null, rows: [] },
+  );
   const [filter, setFilter] = useState('');
   const [highlight, setHighlight] = useState(0);
   const [open, setOpen] = useState(false);
   const [popupPos, setPopupPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
-  const lastQueryRef = useRef<string | null>(null);
+  const metaKey = `${boName}|${allowMethods}`;
+  const items = fetched.key === metaKey ? fetched.rows : NO_ITEMS;
+  const lastQuery = fetched.key === metaKey ? fetched.queryPath : null;
 
   const updatePopupPos = useCallback(() => {
     const ta = textareaRef.current;
@@ -153,34 +166,28 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
     return items.filter(it => it.name.toLowerCase().startsWith(f));
   }, [items, filter]);
 
-  useEffect(() => {
-    setHighlight(h => (h >= filtered.length ? 0 : h));
-  }, [filtered.length]);
-
-  useEffect(() => {
-    lastQueryRef.current = null;
-    setItems([]);
-  }, [boName, allowMethods]);
+  // Indice evidenziato: si ricalcola sull'elenco filtrato invece di essere
+  // rimesso in riga da un effetto. Quando il filtro accorcia la lista, un indice
+  // fuori intervallo torna a zero nello stesso render, non al giro dopo.
+  const highlightIdx = highlight >= filtered.length ? 0 : highlight;
 
   // Keep highlighted item visible
   useEffect(() => {
     const ul = listRef.current;
     if (!ul || !open) return;
-    const el = ul.children[highlight] as HTMLElement | undefined;
+    const el = ul.children[highlightIdx] as HTMLElement | undefined;
     if (el) el.scrollIntoView({ block: 'nearest' });
-  }, [highlight, open]);
+  }, [highlightIdx, open]);
 
   const doFetch = useCallback(async (queryPath: string) => {
     if (!boName) return;
     try {
       const rows = await api.fetchMetadata(boName, allowMethods, queryPath);
-      setItems(rows);
-      lastQueryRef.current = queryPath;
+      setFetched({ key: metaKey, queryPath, rows });
     } catch {
-      setItems([]);
-      lastQueryRef.current = queryPath;
+      setFetched({ key: metaKey, queryPath, rows: [] });
     }
-  }, [boName, allowMethods]);
+  }, [boName, allowMethods, metaKey]);
 
   const trigger = useCallback((value: string, caret: number) => {
     const queryPath = getQueryPath(value.substring(0, caret));
@@ -189,8 +196,8 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
     setOpen(true);
     setHighlight(0);
     updatePopupPos();
-    if (queryPath !== lastQueryRef.current) doFetch(queryPath);
-  }, [doFetch, updatePopupPos]);
+    if (queryPath !== lastQuery) doFetch(queryPath);
+  }, [doFetch, updatePopupPos, lastQuery]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value;
@@ -226,20 +233,20 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
     if (!open) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlight(h => (filtered.length ? (h + 1) % filtered.length : 0));
+      setHighlight(filtered.length ? (highlightIdx + 1) % filtered.length : 0);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setHighlight(h => (filtered.length ? (h - 1 + filtered.length) % filtered.length : 0));
+      setHighlight(filtered.length ? (highlightIdx - 1 + filtered.length) % filtered.length : 0);
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       if (filtered.length > 0) {
         e.preventDefault();
-        insertItem(filtered[highlight]);
+        insertItem(filtered[highlightIdx]);
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setOpen(false);
     }
-  }, [open, filtered, highlight, insertItem, trigger]);
+  }, [open, filtered, highlightIdx, insertItem, trigger]);
 
   const handleBlur = useCallback(() => {
     // Delay so clicks on popup items register before we close
@@ -306,7 +313,7 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
               style={{
                 padding: '3px 8px',
                 cursor: 'pointer',
-                background: i === highlight ? '#e6f4ff' : 'transparent',
+                background: i === highlightIdx ? '#e6f4ff' : 'transparent',
                 borderRadius: 2,
                 display: 'flex',
                 justifyContent: 'space-between',

@@ -2,7 +2,7 @@ import React, { useCallback, useContext } from 'react';
 import { Input } from 'antd';
 import type { UIControl } from '../types/ui';
 import { PathContext, ViewNameContext } from '../components/ViewRenderer';
-import { getControl } from './registry';
+import { controls } from './registry';
 import { useCommonProps, useCommitReload, useSyncedValue, getTextMaxWidth } from './helpers';
 import { withPostDecorations } from './decorations';
 
@@ -64,7 +64,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
     onAction(action, p);
   }, [onAction, viewPath]);
 
-  const Component = control.type ? getControl(control.type) : undefined;
+  const Component = control.type ? controls[control.type] : undefined;
   if (Component) {
     return <Component control={control} pageType={pageType} onAction={doAction} onChange={onChange} />;
   }

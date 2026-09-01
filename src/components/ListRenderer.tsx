@@ -6,7 +6,7 @@ import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
 import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
-import { getControl, isCellRenderable } from '../controls/registry';
+import { controls, isCellRenderable } from '../controls/registry';
 import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } from './ViewRenderer';
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
@@ -314,7 +314,7 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
   const idx = field.replace('col_', '');
   const controlType = params.data?.[`_type_${idx}`] as string | undefined;
   if (!controlType) return null;
-  const CustomComponent = isCellRenderable(controlType) ? getControl(controlType) : undefined;
+  const CustomComponent = isCellRenderable(controlType) ? controls[controlType] : undefined;
   if (!CustomComponent) return null;
   const colMeta = params.data?.[`_meta_${idx}`] as Record<string, unknown> | undefined;
   const rowCtrl = params.data?.[`_ctrl_${idx}`] as Record<string, unknown> | undefined;
@@ -541,7 +541,7 @@ const ContinuationCell = ({
     ? { ...style, ...(parseInlineStyle(cell.style) as React.CSSProperties) }
     : style;
   if (cell.control && cell.control.type && isCellRenderable(cell.control.type)) {
-    const Component = getControl(cell.control.type);
+    const Component = controls[cell.control.type];
     if (Component) {
       const dispatchAction = (action: string, extra?: Record<string, string>) => {
         const merged = rowPath ? { navpath: rowPath, ...(extra ?? {}) } : (extra ?? {});
@@ -1637,7 +1637,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
 
     return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec]);
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, ui.path, sid, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec]);
 
   // Report the ordered records (main rows: path + onboard edit data) so the
   // edit panel hydrates on selection and steps prev/next — all client-side,

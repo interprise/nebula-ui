@@ -215,14 +215,14 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
     const nextValue = next.join(',');
     setLocalValue(nextValue);
     onChange(nextValue);
-  }, [editable, selectedKeys, onChange]);
+  }, [editable, selectedKeys, onChange, setLocalValue]);
 
   const applySelection = useCallback(() => {
     const nextValue = pendingKeys.join(',');
     setLocalValue(nextValue);
     onChange(nextValue);
     setDrawerOpen(false);
-  }, [pendingKeys, onChange]);
+  }, [pendingKeys, onChange, setLocalValue]);
 
   const togglePending = useCallback((key: string) => {
     setPendingKeys((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);

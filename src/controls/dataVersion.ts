@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 /**
  * "The form on screen was re-rendered from a server payload" signal.
@@ -26,11 +26,19 @@ export const DataVersionContext = createContext<number>(0);
  *  tree, hydrated client-side on row selection): bumps whenever `payload`
  *  changes identity. */
 export function usePayloadVersion(payload: unknown): number {
-  const ref = useRef<{ payload: unknown; version: number }>({ payload, version: 0 });
-  if (ref.current.payload !== payload) {
-    ref.current = { payload, version: ref.current.version + 1 };
+  // Ultimo payload visto + contatore in STATO, non in una ref. Un
+  // aggiornamento di stato durante il render React lo assorbe rieseguendo
+  // subito il componente prima di dipingere, e non lo conta due volte in
+  // StrictMode; una ref scritta durante il render e' invece una mutazione che
+  // sopravvive anche ai render che React butta via, quindi puo' far avanzare il
+  // contatore per un render mai avvenuto.
+  const [seen, setSeen] = useState<{ payload: unknown; version: number }>({ payload, version: 0 });
+  if (seen.payload !== payload) {
+    const next = seen.version + 1;
+    setSeen({ payload, version: next });
+    return next;
   }
-  return ref.current.version;
+  return seen.version;
 }
 
 /** Composed version for a nested payload: changes when either the enclosing

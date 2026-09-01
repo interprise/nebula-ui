@@ -27,18 +27,21 @@ import { viewHasOlapCube } from './olap/detect';
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
 function useEdgeScrollReveal() {
-  const ref = useRef<HTMLDivElement>(null);
+  // Niente ref: l'elemento da decorare e' quello a cui i due gestori sono
+  // attaccati, cioe' il `currentTarget` dell'evento. Tenerlo in una ref
+  // obbligava a passarla con `ref=` durante il render, e una funzione che legge
+  // una ref "sporca" tutto l'oggetto restituito dall'hook: il compilatore React
+  // non distingue una ref letta in un gestore di eventi (legittima) da una
+  // letta durante il render, e segnalava ogni uso di questi tre valori.
   const onMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const distFromBottom = rect.bottom - e.clientY;
+    const el = e.currentTarget;
+    const distFromBottom = el.getBoundingClientRect().bottom - e.clientY;
     el.classList.toggle('scrollbar-visible', distFromBottom <= SCROLL_REVEAL_ZONE);
   }, []);
-  const onMouseLeave = useCallback(() => {
-    ref.current?.classList.remove('scrollbar-visible');
+  const onMouseLeave = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.currentTarget.classList.remove('scrollbar-visible');
   }, []);
-  return { ref, onMouseMove, onMouseLeave };
+  return { onMouseMove, onMouseLeave };
 }
 
 /* Layout-table ruler sizing (SXADV-5742.1) ---------------------------------- */
@@ -1315,6 +1318,12 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   const BOTTOM_FOCUS_PCT = 22;
   const [focusZone, setFocusZone] = React.useState<'form' | 'bottom' | null>(null);
   const focusZoneRef = React.useRef<'form' | 'bottom' | null>(null);
+  // Specchio di `focusZone` per i gestori di eventi (setZone confronta la zona
+  // corrente senza rientrare nel render). Si aggiorna QUI, dopo il commit, e non
+  // durante il render: scrivere una ref mentre si renderizza e' proprio cio' che
+  // rende il render non ripetibile, e i due punti che lo facevano — cambio di
+  // view e apertura di un nuovo record — ora passano dallo stato.
+  React.useEffect(() => { focusZoneRef.current = focusZone; }, [focusZone]);
   const [manualPct, setManualPct] = React.useState<number | null>(null);
   const [resizing, setResizing] = React.useState(false);
   const splitContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -1325,11 +1334,10 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // the previous view's. Done during render rather than in an effect so the very
   // first paint of the restored view is already at the right ratio.
   const splitKey = `${splitSid}|${ui.viewName ?? ui.path ?? ''}`;
-  const splitKeyRef = React.useRef(splitKey);
-  if (splitKeyRef.current !== splitKey) {
-    splitKeyRef.current = splitKey;
+  const [prevSplitKey, setPrevSplitKey] = React.useState(splitKey);
+  if (prevSplitKey !== splitKey) {
+    setPrevSplitKey(splitKey);
     const saved = splitByView.get(splitKey);
-    focusZoneRef.current = saved?.zone ?? null;
     setFocusZone(saved?.zone ?? null);
     setManualPct(saved?.manualPct ?? null);
   }
@@ -1350,11 +1358,10 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   const newRecordKey = ui.newRecord ? `${splitSid}|${ui.path ?? ''}` : null;
   // Seeded with `undefined` (not the current key) so a tab that mounts straight
   // onto a new record — the common "Nuovo" case — still applies it.
-  const newRecordKeyRef = React.useRef<string | null | undefined>(undefined);
-  if (newRecordKeyRef.current !== newRecordKey) {
-    newRecordKeyRef.current = newRecordKey;
+  const [prevNewRecordKey, setPrevNewRecordKey] = React.useState<string | null | undefined>(undefined);
+  if (prevNewRecordKey !== newRecordKey) {
+    setPrevNewRecordKey(newRecordKey);
     if (newRecordKey) {
-      focusZoneRef.current = 'form';
       setFocusZone('form');
       setManualPct(null);
     }
@@ -1509,7 +1516,6 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
           <>
             <div
               className={`view-split-form${resizing ? ' view-split-form--resizing' : ''}`}
-              ref={edgeScroll.ref}
               onMouseMove={edgeScroll.onMouseMove}
               onMouseLeave={edgeScroll.onMouseLeave}
               style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
@@ -1599,7 +1605,6 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
     ? { className: bodyClassName }
     : {
         className: bodyClassName,
-        ref: edgeScroll.ref,
         onMouseMove: edgeScroll.onMouseMove,
         onMouseLeave: edgeScroll.onMouseLeave,
       };

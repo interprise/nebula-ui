@@ -190,7 +190,9 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     } finally {
       document.body.style.cursor = '';
     }
-  }, [ui.path, sid]);
+  // `ui.viewName` viaggia con la richiesta: sta nelle dipendenze insieme al
+  // percorso, non per rimbalzo.
+  }, [ui.path, ui.viewName, sid]);
 
   // Handle node click — load detail in right pane
   const onSelect = useCallback(async (keys: React.Key[]) => {
@@ -256,7 +258,11 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
         document.body.style.cursor = '';
       }
     }, 400);
-  }, [ui.path, sid]);
+  // `ui.treeNodes`: svuotare la ricerca rimette in griglia i nodi del payload
+  // corrente. Senza la dipendenza restavano quelli del primo render — e un
+  // ricaricamento dell'albero NON cambia `ui.path`, che e' lo stesso viewstate,
+  // quindi tornavano fuori i nodi di prima.
+  }, [ui.path, ui.viewName, ui.treeNodes, sid]);
 
   const displayData = filteredData ?? treeData;
   const isFiltered = filteredData !== null;

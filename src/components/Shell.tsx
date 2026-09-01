@@ -376,6 +376,21 @@ function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
   return result;
 }
 
+/** Etichetta di una voce di menu dal suo id (ricorsiva sull'albero). Fuori dal
+ *  componente: non usa niente dello stato, e dentro sarebbe una funzione nuova
+ *  a ogni render — quindi o falsa le dipendenze dei callback che la usano o li
+ *  fa ricreare per nulla. */
+function findMenuLabel(items: MenuItem[], id: string): string | undefined {
+  for (const item of items) {
+    if (item.id === id) return item.description;
+    if (item.children) {
+      const found = findMenuLabel(item.children, id);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+}
+
 function collectOpenKeys(items: MenuItem[]): string[] {
   const keys: string[] = [];
   for (const item of items) {
@@ -606,7 +621,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           break;
       }
     }
-  }, [getActiveTabState]);
+  }, [getActiveTabState, message, modal]);
 
   // Changing Azienda/Sede di accesso wipes the whole server session pool
   // (CambioAziendaCommand: clearSession + sessions.clear()). The legacy client
@@ -1021,7 +1036,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // captured by useControlChange right before the reload fired.
       restoreFocus(consumePendingFocus());
     },
-    [handleErrors, updateTabState, extractFormValues]
+    // `tabs`: ogni percorso di merge (hydrate da template in cache, rowUpdate,
+    // pageOnly, detailPageOnly, instradamento albero+dettaglio) legge la scheda
+    // com'e' adesso. Finora ci arrivava di rimbalzo — handleErrors dipende da
+    // getActiveTabState, che dipende da tabs — quindi bastava stabilizzare
+    // handleErrors per congelare qui un elenco di schede vecchio e far ripartire
+    // i merge da dati superati, senza che niente lo segnalasse.
+    [handleErrors, updateTabState, extractFormValues, tabs, message]
   );
 
   processResponseInnerRef.current = processResponseInner;
@@ -1062,7 +1083,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       };
       return replay;
     },
-    [processResponse, updateTabState]
+    [processResponse, updateTabState, message]
   );
 
   const handleMenuClick = useCallback(
@@ -1099,7 +1120,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay]
+    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay, message]
   );
 
   // After an identity change (impersonate), reload the menu and refresh the
@@ -1137,7 +1158,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [processResponse, updateTabState],
+    [processResponse, updateTabState, message],
   );
 
   // Ricostruzione delle schede dopo un F5. Le Session vivono dentro
@@ -1283,7 +1304,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, handleErrors, onReloadMenu, makeConfirmReplay]
+    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, message]
   );
 
   // CDMS: open one of the documentale views (ricerca, document list, cestino,
@@ -1317,7 +1338,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [updateTabState, processResponse],
+    [updateTabState, processResponse, message],
   );
 
   const openCdmsView = useCallback(
@@ -1500,17 +1521,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // client legacy.
       if (closed) void api.postAction2('CloseSession', { sid: closed.sid }).catch(() => {});
     }
-  };
-
-  const findMenuLabel = (items: MenuItem[], id: string): string | undefined => {
-    for (const item of items) {
-      if (item.id === id) return item.description;
-      if (item.children) {
-        const found = findMenuLabel(item.children, id);
-        if (found !== undefined) return found;
-      }
-    }
-    return undefined;
   };
 
   const currentTab = getActiveTabState();

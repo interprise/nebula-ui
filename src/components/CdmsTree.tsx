@@ -102,6 +102,10 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
       }
     })();
     return () => { cancelled = true; };
+    // Solo al montaggio: `message` e' un appiglio stabile di App.useApp(),
+    // metterlo qui direbbe che questo caricamento puo' ripartire — e se un
+    // domani non fosse piu' stabile ripartirebbe davvero.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounce filter
@@ -148,7 +152,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
     } catch (e) {
       message.error(`Errore espansione nodo: ${e}`);
     }
-  }, []);
+  }, [message]);
 
   // Node click → open document list filtered by this folder
   const onSelect = useCallback(
@@ -226,7 +230,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [reloadNode],
+    [reloadNode, message, modal],
   );
 
   const handleRename = useCallback(
@@ -259,7 +263,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [],
+    [message, modal],
   );
 
   const handleDelete = useCallback(
@@ -288,7 +292,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [],
+    [message, modal],
   );
 
   const contextMenuItems = useMemo(() => {

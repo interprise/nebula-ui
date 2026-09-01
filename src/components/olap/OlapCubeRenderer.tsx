@@ -70,13 +70,6 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
   // (`active: true`) once meta arrives.
   const [enabledMeasures, setEnabledMeasures] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (meta && enabledMeasures.size === 0) {
-      const names = meta.measures.filter((m) => m.active).map((m) => m.name);
-      if (names.length > 0) setEnabledMeasures(new Set(names));
-    }
-  }, [meta, enabledMeasures.size]);
-
   // Per-dim axis assignment (task #15). Lets the user move dims between X
   // (rows), Y (columns), Z (filters), and "hidden". Initialised from
   // meta.layout when the cube loads. We keep it as a flat dim → axis map
@@ -84,17 +77,26 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
   // demand.
   type Axis = 'x' | 'y' | 'z' | 'hidden';
   const [axisAssignment, setAxisAssignment] = useState<Record<string, Axis>>({});
-  useEffect(() => {
-    if (!meta) return;
-    const initial: Record<string, Axis> = {};
-    for (const d of meta.dimensions) {
-      if (meta.layout?.x?.includes(d.name)) initial[d.name] = 'x';
-      else if (meta.layout?.y?.includes(d.name)) initial[d.name] = 'y';
-      else if (meta.layout?.z?.includes(d.name)) initial[d.name] = 'z';
-      else initial[d.name] = 'hidden';
+
+  // Misure abilitate e assegnazione degli assi sono la configurazione INIZIALE
+  // che arriva col cubo: si impostano quando `meta` cambia, durante il render.
+  // Erano due effetti, cioè due giri di render in più appena caricato il cubo,
+  // con la griglia dipinta una volta senza misure e senza assi.
+  const [prevMeta, setPrevMeta] = useState(meta);
+  if (prevMeta !== meta) {
+    setPrevMeta(meta);
+    if (meta) {
+      setEnabledMeasures(new Set(meta.measures.filter((m) => m.active).map((m) => m.name)));
+      const initial: Record<string, Axis> = {};
+      for (const d of meta.dimensions) {
+        if (meta.layout?.x?.includes(d.name)) initial[d.name] = 'x';
+        else if (meta.layout?.y?.includes(d.name)) initial[d.name] = 'y';
+        else if (meta.layout?.z?.includes(d.name)) initial[d.name] = 'z';
+        else initial[d.name] = 'hidden';
+      }
+      setAxisAssignment(initial);
     }
-    setAxisAssignment(initial);
-  }, [meta]);
+  }
 
   const effectiveLayout = useMemo(() => {
     const x: string[] = [];
@@ -140,16 +142,22 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
   const pivoted = useMemo(() => {
     if (!meta) return { rows: [] as PivotedRow[], columnDefs: [], colPaths: [], prefixPaths: new Map<string, (string | null)[]>() };
     return pivot(meta, filteredRows, { enabledMeasures, layout: effectiveLayout, drillThrough });
-  }, [meta, filteredRows, enabledMeasures, effectiveLayout]);
+  }, [meta, filteredRows, enabledMeasures, effectiveLayout, drillThrough]);
 
   // Row-tree state. `expandedRowKeys` holds the `__key` of every group row
   // the user has expanded; a row is visible iff every entry in its
   // `__ancestorKeys` is in this set. Reset whenever the cube data changes
   // so stale keys from a previous pivot don't leak through.
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(new Set());
-  useEffect(() => {
+  // Le chiavi aperte appartengono al pivot che le ha prodotte: cambiato quello,
+  // l'albero riparte chiuso. Durante il render e non in un effetto, altrimenti
+  // il primo fotogramma del nuovo pivot lo si dipinge con le aperture del
+  // vecchio.
+  const [prevPivoted, setPrevPivoted] = useState(pivoted);
+  if (prevPivoted !== pivoted) {
+    setPrevPivoted(pivoted);
     setExpandedRowKeys(new Set());
-  }, [pivoted]);
+  }
 
   const toggleRowKey = useCallback((key: string) => {
     setExpandedRowKeys((prev) => {

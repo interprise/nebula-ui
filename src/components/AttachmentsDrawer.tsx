@@ -96,7 +96,7 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
         .triggerDownload('DocDownload', { key: row.key }, sid, row.fileName, true)
         .catch((e) => message.error((e as Error).message || 'Download fallito'));
     },
-    [sid],
+    [sid, message],
   );
 
   const handleDelete = useCallback(
@@ -119,7 +119,7 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
         },
       });
     },
-    [sid, load, onRefresh],
+    [sid, load, onRefresh, message, modal],
   );
 
   return (
