@@ -3,7 +3,7 @@ import { fixServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
-import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined } from '@ant-design/icons';
+import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
@@ -934,6 +934,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // pager wired to DetailPage (slim, updates just this grid). Top-level lists
   // keep paging in their toolbar, so this is embedded-only.
   const showDetailPager = !!embedded && !!ui.path && !!pageInfo && pageInfo.totalPages > 1;
+  const goToDetailPage = (page: number) => {
+    if (!ui.path || !pageInfo) return;
+    const target = Math.min(Math.max(page, 1), pageInfo.totalPages);
+    if (target === pageInfo.currentPage) return;
+    onAction('DetailPage', { navpath: ui.path, page: String(target) });
+  };
 
   // Build editable column metadata map from ui.columns (stable across renders)
   // Stable handle to onAction for the selector cell renderer, so injecting the
@@ -2792,8 +2798,22 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           numbers (TableNavigator emits "pag: [n] di N … N righe."), so the band
           was spending a row of grid on a second copy (SXADV-5770.3A). */}
       {showDetailPager && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderTop: '1px solid #e8e8e8' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderTop: '1px solid #e8e8e8' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>{pageInfo!.totalRows} record</Text>
+          {/* Prima e ultima pagina. La paginazione antd `simple` si ferma a
+              precedente/successiva, e su una fattura da 231 righi arrivare in
+              fondo voleva dire dieci clic: la barra delle liste a tutta pagina
+              (`TableNavigator`) i due salti li ha da sempre, questa griglia no
+              (SXADV-5737.0). */}
+          <Tooltip title="Prima pagina" placement="top">
+            <Button
+              size="small"
+              type="text"
+              icon={<VerticalRightOutlined />}
+              disabled={pageInfo!.currentPage <= 1}
+              onClick={() => goToDetailPage(1)}
+            />
+          </Tooltip>
           <Pagination
             size="small"
             simple
@@ -2801,8 +2821,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             total={pageInfo!.totalRows}
             pageSize={pageInfo!.pageSize}
             showSizeChanger={false}
-            onChange={(page) => onAction('DetailPage', { navpath: ui.path!, page: String(page) })}
+            onChange={goToDetailPage}
           />
+          <Tooltip title="Ultima pagina" placement="top">
+            <Button
+              size="small"
+              type="text"
+              icon={<VerticalLeftOutlined />}
+              disabled={pageInfo!.currentPage >= pageInfo!.totalPages}
+              onClick={() => goToDetailPage(pageInfo!.totalPages)}
+            />
+          </Tooltip>
         </div>
       )}
 
