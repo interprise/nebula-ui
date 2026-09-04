@@ -2,7 +2,7 @@ import { useRef, type ComponentRef } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus, pickerWidthForFormat } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
@@ -43,7 +43,7 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
       value={value}
       format={dateFmt}
       placeholder=""
-      style={{ minWidth: 96, ...commonProps.style }}
+      style={{ minWidth: pickerWidthForFormat(dateFmt, 10), ...commonProps.style }}
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}
@@ -68,7 +68,7 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
       value={value}
       format="HH:mm"
       placeholder=""
-      style={{ minWidth: 95, ...commonProps.style }}
+      style={{ minWidth: pickerWidthForFormat('HH:mm', 5), ...commonProps.style }}
       onChange={(t, timeStr) => {
         setValue(t);
         handleChange(timeStr);
@@ -102,7 +102,7 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
       value={value}
       format={tsFmt}
       placeholder=""
-      style={{ minWidth: 170, ...commonProps.style }}
+      style={{ minWidth: pickerWidthForFormat(tsFmt, 16), ...commonProps.style }}
       preserveInvalidOnBlur
       onChange={(d, dateStr) => { commit(d, dateStr as string); restorePickerFocus(); }}
       onBlur={onBlur}

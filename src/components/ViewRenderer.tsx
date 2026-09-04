@@ -14,7 +14,7 @@ import {
   ELTYPE_CONTAINER,
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
-import { comboWidthForSize, fieldWidthForSize, moneyWidthForSize, numberWidthForSize } from '../controls/helpers';
+import { comboWidthForSize, fieldWidthForSize, javaToDayjsFormat, moneyWidthForSize, numberWidthForSize, pickerWidthForFormat } from '../controls/helpers';
 import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID } from '../hooks/uiMode';
 import { useDensity, DENSITY_FONT_SIZE, type Density } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -70,6 +70,14 @@ const CONTENT_CELL_PADDING = 8;
 function controlHardWidth(control: UIControl): number {
   switch (control.type) {
     case 'combo':
+      // In sola lettura il combo non e' piu' un Select: e' un blocco di testo
+      // che si adatta alla cella e va a capo (vedi `.readonly-value`), quindi
+      // non pretende niente. Chiedere la larghezza del `size` per un campo che
+      // ormai la usa solo come suggerimento gonfiava il righello — e a farne le
+      // spese erano i campi VERI della stessa tabella, che si trovavano la
+      // colonna piu' stretta (SXADV-5874.4).
+      if (control.editable === false) return 0;
+      return control.size != null ? comboWidthForSize(control.size) : 160;
     case 'multiselect':
       // Mirror di getTextMaxWidth + della regola di ComboControl. La larghezza
       // dal `size` si chiede al controllo stesso: e' misurata sul corpo scelto
@@ -78,12 +86,14 @@ function controlHardWidth(control: UIControl): number {
     case 'workflowStatus':
     case 'bpmStatus':
       return 160;
+    // Le stesse misure che i picker si danno da soli (vedi DateControl):
+    // caratteri del formato piu' l'icona che gli sta dentro, al corpo corrente.
     case 'date':
-      return 96;
+      return pickerWidthForFormat(javaToDayjsFormat(control.format), 10);
     case 'time':
-      return 95;
+      return pickerWidthForFormat('HH:mm', 5);
     case 'timestamp':
-      return 170;
+      return pickerWidthForFormat(javaToDayjsFormat(control.format), 16);
     default:
       return 0;
   }
@@ -420,7 +430,7 @@ function TabContentTable({ rows, pageType, onAction, onChange, onGridChange }: {
       <tbody>
         {rulerRowFor(ruler)}
         {rows.map((cRow, cri) => (
-          <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={ruler.formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+          <RowRenderer key={cRow.id || `tc_${cri}`} row={cRow} pageType={pageType} formCols={ruler.formCols} colWidth={ruler.contentColWidth} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
         ))}
       </tbody>
     </table>
@@ -1592,7 +1602,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                   {rulerRow}
                   {formRows.map((row, ri) => (
                     <React.Fragment key={row.id || ri}>
-                      <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+                      <RowRenderer row={row} pageType={pageType} formCols={formCols} colWidth={ruler.contentColWidth} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
                       {ri === lastHeaderRowIdx && (
                         <tr className="header-separator-row">
                           <td colSpan={formCols || 100}>
@@ -1687,7 +1697,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
             {rulerRow}
             {ui.rows.map((row, ri) => (
               <React.Fragment key={row.id || ri}>
-                <RowRenderer row={row} pageType={pageType} formCols={formCols} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+                <RowRenderer row={row} pageType={pageType} formCols={formCols} colWidth={ruler.contentColWidth} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
                 {ri === lastHeaderRowIdx && (
                   <tr className="header-separator-row">
                     <td colSpan={formCols || 100}>
@@ -1719,6 +1729,16 @@ const BottomPanelRow: React.FC<{
     <>
       {row.cells.map((cell, ci) => {
         if (!cell.control) return null;
+        // Una cella nascosta non prende una fetta dell'area: qui ogni cella e'
+        // un `flex: 1`, quindi finche' si disegnavano anche quelle invisibili
+        // l'altezza si divideva per TUTTE. Su Eventi Clienti le DetailView sono
+        // cinque — "Azioni" piu' le quattro Cerved, visibili una per tipo evento
+        // — e quella buona si ritrovava un quinto dell'area: 32px, che se ne
+        // andavano interi nella barra "Nuovo/Esporta/Stampa", lasciando la
+        // griglia alta zero. Dopo il salvataggio sembrava che il tab "Azioni"
+        // non comparisse affatto (SXADV-5874.5); era li', schiacciato.
+        // Stessa regola che CellRenderer applica dentro la tabella.
+        if (cell.visible === false) return null;
         return (
           <div key={cell.id || ci} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             {renderContainerControl(cell.control, onAction, onChange, onGridChange)}
@@ -1764,11 +1784,15 @@ const RowRenderer: React.FC<{
   row: UIRow;
   pageType?: number;
   formCols?: number;
+  /** Larghezza di una colonna di contenuto secondo il righello di QUESTA
+   *  tabella: serve a convertire in pixel le colonne che la riga lascia
+   *  libere (vedi `freeRight`). */
+  colWidth?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
   asDiv?: boolean;
-}> = ({ row, pageType, formCols, onAction, onChange, onGridChange, asDiv }) => {
+}> = ({ row, pageType, formCols, colWidth, onAction, onChange, onGridChange, asDiv }) => {
   if (!isRowVisible(row)) return null;
   if (asDiv) {
     // Render outside table context (e.g. sticky action bar)
@@ -1803,10 +1827,36 @@ const RowRenderer: React.FC<{
     bandColSpan = Math.max(row.cells[bandIdx].colspan || 1, formCols - others);
   }
 
+  // Le colonne che la riga NON usa: a destra dell'ultima cella non c'e'
+  // nient'altro, quindi quello spazio e' del campo che ci sta davanti.
+  //
+  // La tabella e' `table-layout: fixed` e ogni cella e' larga quanto dice il
+  // suo colspan; se il controllo chiede di piu' — un combo `size="60"` in una
+  // cella da 12 colonne, un campo data che deve contenere anche l'icona del
+  // calendario — `overflow:hidden` gli taglia la coda e le decorazioni che
+  // seguono (la stella dell'obbligatorio). Nel legacy la tabella era ad auto
+  // layout: la cella si allargava sullo spazio che restava e il campo si
+  // vedeva intero. Qui si ottiene lo stesso senza toccare il righello: la
+  // cella tiene il suo colspan (allargarlo stirerebbe i controlli a
+  // `width:100%`), ma le si toglie il taglio e le si dice fin dove puo'
+  // sconfinare — mai oltre le colonne libere, quindi mai sopra un'altra cella
+  // e mai fuori dalla tabella. (SXADV-5874.2 / .3)
+  let freeRightIdx = -1;
+  let freeRightWidth = 0;
+  if (formCols && colWidth && bandIdx < 0) {
+    const used = row.cells.reduce((sum, c) => sum + (c.colspan || 1), 0);
+    const surplus = formCols - used;
+    const last = row.cells[row.cells.length - 1];
+    if (surplus > 0 && last && last.elementType === ELTYPE_CONTENT && last.visible !== false) {
+      freeRightIdx = row.cells.length - 1;
+      freeRightWidth = Math.floor(((last.colspan || 1) + surplus) * colWidth) - CONTENT_CELL_PADDING;
+    }
+  }
+
   return (
     <tr id={row.id} className={row.cls || ''}>
       {row.cells.map((cell, ci) => (
-        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} colSpanOverride={ci === bandIdx ? bandColSpan : undefined} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
+        <CellRenderer key={cell.id || ci} cell={cell} companion={noPrecedingPrompt.has(ci)} pageType={pageType} formCols={formCols} colSpanOverride={ci === bandIdx ? bandColSpan : undefined} freeRight={ci === freeRightIdx ? freeRightWidth : undefined} onAction={onAction} onChange={onChange} onGridChange={onGridChange} />
       ))}
     </tr>
   );
@@ -1819,10 +1869,13 @@ const CellRenderer: React.FC<{
   formCols?: number;
   /** Colspan imposto dalla riga (banda di sezione allargata, SXADV-5809). */
   colSpanOverride?: number;
+  /** Pixel fin dove questa cella puo' sconfinare a destra, quando la riga
+   *  lascia libere le colonne che le stanno dopo (vedi RowRenderer). */
+  freeRight?: number;
   onAction: (action: string, params?: Record<string, string>) => void;
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
-}> = ({ cell, companion, pageType, formCols, colSpanOverride, onAction, onChange, onGridChange }) => {
+}> = ({ cell, companion, pageType, formCols, colSpanOverride, freeRight, onAction, onChange, onGridChange }) => {
   // Two-phase pipeline: the template carries a `visible` slot for every
   // conditionally-shown cell. When `hydrate()` resolves it to false, we skip
   // the cell entirely — matching the legacy FULL-mode behavior where hidden
@@ -1879,7 +1932,13 @@ const CellRenderer: React.FC<{
       // (una checkbox ne occupa una sola, ~24px) l'icona finirebbe oltre il
       // bordo e l'`overflow:hidden` la mangerebbe — vedi global.css.
       const hasSideIcons = !!(docIcon || configureIcon);
-      const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${hasSideIcons ? 'has-side-icons' : ''} ${cell.cls || ''}`;
+      // `cell-free-right`: la riga finisce qui e a destra ci sono colonne
+      // libere — il campo puo' prendersele invece di farsi tagliare.
+      const canSpill = !!freeRight && !isCompact;
+      if (canSpill) {
+        tdProps.style = { ...tdProps.style, ['--cell-free' as string]: `${freeRight}px` } as React.CSSProperties;
+      }
+      const cellClass = `content-cell ${companion ? 'companion-cell' : ''} ${hasSideIcons ? 'has-side-icons' : ''} ${canSpill ? 'cell-free-right' : ''} ${cell.cls || ''}`;
       return (
         <td {...tdProps} className={cellClass}>
           {cell.control ? (

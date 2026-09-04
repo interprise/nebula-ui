@@ -160,6 +160,25 @@ html, body {
   overflow: hidden;
 }
 
+/* L'ultima cella di una riga che non arriva in fondo alla tabella: a destra
+ * ci sono solo colonne vuote, quindi il campo puo' sconfinarci invece di
+ * farsi tagliare. `--cell-free` e' il limite, calcolato dal RowRenderer sulle
+ * colonne effettivamente libere: fin li' e non oltre, cosi' non si finisce mai
+ * sopra un'altra cella ne' fuori dalla tabella.
+ *
+ * `flex-shrink: 0` sui figli: dentro `.post-decorations` il controllo cede
+ * spazio alle icone quando la cella e' stretta (vedi piu' avanti), ma qui la
+ * cella stretta non e' un vincolo vero — meglio tenere la larghezza dichiarata
+ * dalla view e uscire nello spazio libero, che e' quello che faceva il legacy
+ * con la sua tabella ad auto layout (SXADV-5874.2 / .3). */
+.layout-table td.content-cell.cell-free-right {
+  overflow: visible;
+}
+.layout-table td.content-cell.cell-free-right .post-decorations > * {
+  flex-shrink: 0;
+  max-width: var(--cell-free) !important;
+}
+
 /* Prompt cells (labels) */
 .prompt-cell {
   text-align: right;
@@ -342,6 +361,34 @@ html, body {
   -webkit-text-fill-color: var(--app-text-readonly) !important;
 }
 
+/* Valore di un List/CodeTable in sola lettura: testo, non un riquadro con la
+ * freccia. E' la resa del legacy (`renderHTMLReadOnly` → `ea-readonly`, cioe'
+ * il fondo del campo senza bordo), e soprattutto e' quella che VA A CAPO: la
+ * descrizione decodificata di un lookup non ha un tetto di caratteri, e in un
+ * Select disabilitato — largo quanto dice il `size`, o quanto la cella — la
+ * coda si perdeva nei puntini (Ateco e Azienda su Eventi Clienti, SXADV-5874).
+ * Occupa tutta la cella, cosi' il testo usa lo spazio che la riga ha davvero.
+ * `min-height` tiene l'allineamento con i campi veri che gli stanno accanto
+ * sulla stessa riga, e la banda resta visibile anche a valore vuoto. */
+.layout-table .readonly-value {
+  /* Il riquadro si stringe sul testo e va a capo solo quando la cella finisce,
+     come faceva la `<td>` del legacy in una tabella ad auto layout: una banda
+     grigia larga quanto la riga per scriverci tre parole non la disegnava
+     nessuno. */
+  display: inline-block;
+  max-width: 100%;
+  min-height: var(--app-field-h);
+  padding: 0 6px;
+  font-size: var(--app-font-size);
+  line-height: var(--app-field-line-h);
+  color: var(--app-text-readonly);
+  background: var(--ant-color-bg-container-disabled, var(--app-surface-muted));
+  border: none;
+  border-radius: var(--app-action-chip-radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Filler cells — collapse in auto layout so they don't absorb extra width */
 .filler-cell {
   width: 0;
@@ -360,6 +407,14 @@ html, body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* Nome di una griglia incorporata, scritto accanto ai suoi bottoni nella
+   stessa banda — la resa del legacy, che li teneva sullo stesso rigo. */
+.grid-actions-title {
+  margin-left: var(--app-chrome-pad-x);
+  font-size: var(--app-font-size);
+  font-weight: 600;
 }
 
 .view-title {
@@ -1371,6 +1426,18 @@ body[style*="cursor: wait"] * {
   align-items: center;
   gap: 3px;
   width: 100%;
+}
+/* Il campo cede i pochi pixel che servono alle icone, non viceversa.
+ * Un elemento flex non scende sotto il proprio min-content, e per un controllo
+ * con una larghezza dichiarata in pixel il min-content E' quella larghezza:
+ * l'involucro si fermava al bordo della cella e il campo gli usciva da sotto,
+ * spingendo fuori le decorazioni — che `overflow:hidden` della cella cancella.
+ * Cosi' spariva la stella dell'obbligatorio dell'"Id" di Eventi Clienti
+ * (SXADV-5874.1), un campo largo 170px in una cella da 151. Le icone hanno gia'
+ * `flex-shrink: 0`, quindi restringere puo' solo il controllo, e solo di quanto
+ * serve a rientrare. */
+.post-decorations > * {
+  min-width: 0;
 }
 .post-prompt {
   white-space: nowrap;

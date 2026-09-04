@@ -82,7 +82,15 @@ const MoneyInput: React.FC<{
         // tastiera, che e' la stessa funzione con un altro innesco.
         controls={false}
         keyboard={false}
-        style={{ width, ...commonProps.style }}
+        // `maxWidth` anche qui, non solo sull'involucro: il `width` in pixel
+        // rende il campo incomprimibile in flex (il min-content di un elemento
+        // con larghezza dichiarata e' quella larghezza), quindi l'involucro si
+        // fermava al bordo della cella e il campo gli usciva da sotto,
+        // portandosi via lo spazio della stella dell'obbligatorio — che
+        // `overflow:hidden` della cella poi cancella (SXADV-5874.1). Insieme al
+        // `min-width: 0` di `.post-decorations` il campo cede i pochi pixel che
+        // servono alle icone.
+        style={{ width, maxWidth: '100%', ...commonProps.style }}
         // Commit the `reload` round-trip once, on blur — not per keystroke,
         // which raced the server recalc and snapped the value back.
         onBlur={commit}

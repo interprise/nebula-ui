@@ -407,6 +407,26 @@ export function getTextMaxWidth(control: UIControl): number {
   return fieldWidthForSize(control.size);
 }
 
+/** L'icona del calendario/orologio di un `DatePicker`, che sta DENTRO il
+ *  riquadro insieme al testo, piu' lo stacco con cui antd la separa. Il legacy
+ *  il pulsantino del calendario ce l'aveva fuori dall'`<input>`, quindi non
+ *  toglieva un carattere alla data: qui va aggiunto, o la data ci sta per un
+ *  pelo e l'ultima cifra finisce sotto l'icona. */
+const PICKER_SUFFIX = 18;
+
+/** Larghezza di un campo data/ora/timestamp: i caratteri del FORMATO che la
+ *  view dichiara (`dd/MM/yyyy` = 10) piu' l'icona che gli sta dentro.
+ *
+ *  Erano tre costanti scritte a mano — 96, 95 e 170 px — cioe' la stessa
+ *  scommessa sul corpo del carattere che {@link fieldWidthForSize} ha gia'
+ *  smesso di fare: giuste a 13px e strette a 14 (preset "Ampia"), dove
+ *  "04/09/2026" perdeva l'ultima cifra sotto il calendario (SXADV-5874.2).
+ *  Misurate sul corpo corrente, invece, valgono a ogni preset e a ogni zoom. */
+export function pickerWidthForFormat(format: string | undefined, fallbackChars: number): number {
+  const chars = format && format.length > 0 ? format.length : fallbackChars;
+  return rawFieldWidth(chars) + PICKER_SUFFIX;
+}
+
 /** Come {@link fieldWidthForSize}, per i campi numerici (`InputNumber`). Il
  *  riquadro non ospita piu' nulla oltre alle cifre — ne' le frecce (5653.2) ne'
  *  il simbolo di valuta (5653.3, ora accanto al campo: vedi

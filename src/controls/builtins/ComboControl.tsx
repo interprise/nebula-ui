@@ -226,9 +226,59 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // legacy UI: render the combo at its size-derived width instead of stretching
   // to (or collapsing within) the cell. Without a size, fill the cell but floor
   // the width so it can't collapse.
+  // Niente `flexShrink: 0`: dentro `.post-decorations` il combo divide la cella
+  // con le icone che gli stanno a destra (stella dell'obbligatorio, catenella,
+  // lente di ricerca), e un elemento che non cede spazio se la prende tutta —
+  // le icone finivano oltre il bordo, dove `overflow:hidden` della cella le
+  // cancella (SXADV-5874.1, la stessa causa della stella mancante su "Id"). Con
+  // la cedevolezza normale il combo restringe di quei pochi pixel e le icone
+  // restano visibili; non puo' collassare, perche' flex toglie solo quanto
+  // serve a rientrare, e il motivo per cui `flexShrink: 0` era stato messo —
+  // il combo che si riduceva a un carattere (SXADV-5461.1) — riguardava
+  // l'assenza di una larghezza propria, che qui invece c'e'.
   const widthStyle: React.CSSProperties = control.size != null
-    ? { width: comboWidthForSize(control.size), maxWidth: '100%', flexShrink: 0 }
+    ? { width: comboWidthForSize(control.size), maxWidth: '100%' }
     : { width: '100%', maxWidth: textMaxWidth, minWidth: 160 };
+
+  // Un List/CodeTable NON modificabile non disegna un widget: scrive il proprio
+  // testo. E' quello che fa il legacy — `GenericListUIControl` e
+  // `CodeTableUIControl` hanno un `renderHTMLReadOnly` che emette
+  // `<td|div class="… ea-readonly">descrizione</div>`, cioe' un blocco di testo
+  // che VA A CAPO e fa crescere la riga in altezza. Un Select disabilitato no:
+  // la sua larghezza e' fissa (derivata dal `size`, o il 100% della cella con un
+  // tetto) e quello che non ci sta lo taglia con i puntini. Su Eventi Clienti
+  // usciva mutilato tanto "Azienda" (nessun `size`, 37 caratteri in 218px)
+  // quanto "Ateco" (`size="50"` per un testo di 74 caratteri, che nel legacy
+  // andava su due righe) — SXADV-5874.0 e .4. Vale per QUALSIASI combo in sola
+  // lettura, compresi quelli che lo diventano per stato del record (documento
+  // confermato), esattamente come nel legacy.
+  if (control.editable === false) {
+    const fromOptions = (control.options || []).find((o) => o.value === selected)?.text;
+    const roText = (control.displayText ?? control.displayValue ?? fromOptions ?? selected ?? '') as string;
+    return withPostDecorations(
+      // Il non-breaking space tiene in piedi la banda grigia di un campo vuoto:
+      // il legacy la disegnava comunque (lo "Stato Giuridico" senza valore e' un
+      // riquadro vuoto, non una riga che sparisce) — vedi anche SXADV-5543.
+      // A valore vuoto il riquadro si stringerebbe sul solo spazio unificatore
+      // e resterebbe un quadratino grigio: il legacy disegnava comunque una
+      // banda larga quanto il campo (lo "Stato Giuridico" senza valore), che e'
+      // il modo in cui si vede che li' c'e' un campo. Con un valore invece la
+      // larghezza la fa il testo, come nella tabella ad auto layout del legacy.
+      <span
+        className="readonly-value"
+        title={roText || undefined}
+        style={roText
+          ? commonProps.style
+          : { width: control.size != null ? comboWidthForSize(control.size) : 160, ...commonProps.style }}
+      >
+        {roText || ' '}
+      </span>,
+      control,
+      pageType,
+      onAction,
+      onChange,
+    );
+  }
 
   // Remote (server-searched) combo: the detail form flags it with `remote`; an
   // editable combo inside a list row (list-data mode) omits that flag but is

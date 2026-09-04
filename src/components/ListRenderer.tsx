@@ -2683,6 +2683,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             )}
           </Space>
           )}
+          {/* Il nome della griglia, accanto ai bottoni della stessa banda come
+              lo scriveva il legacy ("Azioni" sotto la testata di Eventi
+              Clienti). Il server non lo manda quando la griglia sta dentro un
+              tab, che l'etichetta ce l'ha gia'. */}
+          {gridActions?.title && !titleEchoesTab && (
+            <span className="grid-actions-title">{gridActions.title}</span>
+          )}
           {/* Comandi di layout della griglia, in coda a destra.
               - una-riga: le bande di continuazione diventano colonne, il record
                 sta su una linea e si scorre in orizzontale con le prime colonne

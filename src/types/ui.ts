@@ -233,6 +233,9 @@ export interface GridActions {
   addLabel?: string;
   xlsCommand?: string;
   printCommand?: string;
+  /** Come si chiama questa griglia (il prompt dell'item che la incorpora).
+   *  Vuoto dentro un tab, che l'etichetta ce l'ha gia' sopra. */
+  title?: string;
 }
 
 export interface ListFooter {
