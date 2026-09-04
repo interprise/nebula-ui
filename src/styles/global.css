@@ -1165,7 +1165,15 @@ tr.breakRow td {
    to the tallest label via `autoHeaderHeight`, never below the configured 28px. */
 .ag-header-cell-wrap-text .ag-header-cell-comp-wrapper {
   line-height: 14px;
-  word-break: break-word;
+  /* `word-break: break-word` equivale a `overflow-wrap: anywhere`, che oltre a
+     spezzare una parola troppo lunga dichiara una larghezza MINIMA di un
+     carattere: dentro la riga flex di ServerSortHeader l'etichetta si lasciava
+     quindi schiacciare dalla freccia di ordinamento e andava a capo a meta'
+     parola. Con `break-word` la parola piu' lunga resta il minimo, quindi la
+     freccia non la comprime; una parola che davvero non entra si spezza lo
+     stesso, che e' il caso per cui la regola c'era (SXADV-5759.5). */
+  overflow-wrap: break-word;
+  word-break: normal;
   /* Shrink-wrap the label instead of stretching to the header row (AG Grid drops
      its own `height:100%` for auto-height cells, leaving the flex default): the
      measured height is then the label's own, and a one-line label stays centred
@@ -1382,6 +1390,22 @@ body[style*="cursor: wait"] * {
   flex-shrink: 0;
 }
 .nav-icon:hover { color: #4096ff; }
+
+/* Catenella NavigateView dentro una cella di lista (SXADV-5759.3). Il valore
+   puo' andare a capo su piu' righe: l'icona resta accanto all'ULTIMA parola,
+   come faceva la <td> che il legacy scriveva dopo il valore, e non si stringe
+   quando la colonna e' stretta. */
+.list-cell-linked {
+  display: inline;
+}
+.list-cell-nav {
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: baseline;
+}
+.list-cell-nav .nav-icon {
+  font-size: var(--app-font-size-sm);
+}
 .lookup-icon {
   font-size: var(--app-font-size-lg);
   color: #1677ff;

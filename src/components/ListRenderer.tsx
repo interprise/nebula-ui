@@ -3,7 +3,7 @@ import { fixServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
-import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined } from '@ant-design/icons';
+import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
@@ -140,6 +140,16 @@ function parseInlineStyle(css: string): Record<string, string> {
  *  visible at any zoom. */
 const HEADER_LABEL_PAD = 8;  // 4px horizontal cell padding per side
 const HEADER_LABEL_SLACK = 6; // absorbs zoom-dependent rasterization drift
+/* Quello che divide l'intestazione CON l'etichetta. La freccia di ordinamento e
+   il pallino di configurazione non stanno accanto alla colonna: stanno nella
+   stessa riga flex dell'etichetta (ServerSortHeader), quindi la larghezza che
+   l'etichetta ha davvero e' quella della colonna meno la loro. Fissare la
+   colonna a filo dell'etichetta misurata voleva dire lasciarla senza quei
+   pixel, e un'etichetta che non entra si spezza a META' PAROLA — "Ultima
+   Interazi/one" (SXADV-5759.5). Vale anche prima che l'utente ordini: la
+   freccia compare dopo, e la colonna non si rimisura. */
+const HEADER_SORT_ICON_WIDTH = 14;   // freccia (10px) + gap (4px)
+const HEADER_CONFIG_ICON_WIDTH = 17; // pallino (13px) + margine (4px)
 let headerMeasureCtx: CanvasRenderingContext2D | null | undefined;
 let headerMeasureFont: { size: number; font: string } | null = null;
 function headerLabelMinWidth(text: string): number {
@@ -233,28 +243,110 @@ const gridTheme = themeAlpine.withParams({
   cellHorizontalPadding: 4,
 });
 
-// Cell renderer for HTML content (addresses, contacts, etc.)
-const HtmlCellRenderer = (params: ICellRendererParams) => {
+/** I tag che possono arrivare in un valore di cella: quelli composti dai lookup
+ *  (`#br#` -> `<br />`, `#b#` -> `<b>`, `#nobr#`) e quelli che il dominio scrive
+ *  a mano in un getter (le icone-di-stato, `<div class="invalid">`, `<img>`). */
+const HTML_TAG_NAMES = /^(?:br|b|i|u|em|strong|nobr|small|sub|sup|span|div|p|a|img|font|table|tbody|thead|tr|td|th|ul|ol|li|dl|dt|dd|pre|code|hr|h[1-6]|center|blockquote|s|strike|del|ins|mark|caption|label|input|button|select|option|textarea)$/i;
+
+/** Un valore di cella che PORTA markup, non che lo racconta. Le descrizioni dei
+ *  lookup sono composte dal server con `#br#`/`#b#` (UIUtils.extractToken), e la
+ *  `<td>` legacy le scriveva grezze: in React finivano nel testo, quindi
+ *  l'utente leggeva il tag invece di andare a capo (SXADV-5759.2).
+ *  Il tag va ELENCATO, non basta "qualcosa fra < e >": il toString di un BO e'
+ *  un dump XML, e un dump finito per sbaglio in una cella deve restare VISIBILE
+ *  — ingoiarlo come markup lo farebbe sembrare un dato mancante. */
+const looksLikeServerHtml = (val: string): boolean => {
+  const m = /<\/?([a-z][a-z0-9]*)\b/i.exec(val);
+  return !!m && HTML_TAG_NAMES.test(m[1]);
+};
+
+/** Descrittore della catenella NavigateView che il server appende alla cella. */
+type CellNavDescriptor = { command: string; navpath: string; controlName: string };
+
+/** La catenella di una cella di lista. Sta dentro `.list-cell-control` perche'
+ *  e' quello il gancio con cui i gestori di click della griglia riconoscono un
+ *  bersaglio interattivo e non attivano la riga (stopPropagation da solo non
+ *  basta: AG Grid ascolta il click nativo prima di React). */
+const CellNavIcon: React.FC<{
+  nav: CellNavDescriptor;
+  rowPath?: string;
+  onAction?: (action: string, params?: Record<string, string>) => void;
+}> = ({ nav, rowPath, onAction }) => {
+  const stop = (e: React.MouseEvent | React.PointerEvent) => e.stopPropagation();
+  return (
+    <span className="list-cell-control list-cell-nav" onMouseDown={stop} onPointerDown={stop}>
+      <LinkOutlined
+        className="nav-icon"
+        title="Apri dettaglio"
+        onClick={(e) => {
+          e.stopPropagation();
+          // option1 = nome NUDO del controllo (getItemByName fa match esatto);
+          // navpath = quello della RIGA, non quello impacchettato nel controllo,
+          // che e' della lista.
+          onAction?.(nav.command, { navpath: rowPath ?? nav.navpath, option1: nav.controlName });
+        }}
+      />
+    </span>
+  );
+};
+
+/** Parametri che le colonne passano ai propri renderer di cella. `colIdx` e'
+ *  l'indice con cui la riga indicizza i suoi extra (`_nav_`, `_display_`, ...);
+ *  `asHtml` dice se il valore va scritto come markup. */
+type ValueCellParams = ICellRendererParams & { colIdx?: number; asHtml?: boolean };
+
+/** Accoda alla cella la catenella NavigateView, se il server l'ha emessa per
+ *  questa riga. Tutti i renderer di valore ci passano attraverso: il legacy la
+ *  disegnava dopo il valore qualunque cosa la cella contenesse. */
+const withCellNav = (body: React.ReactNode, params: ValueCellParams): React.ReactNode => {
+  const nav = params.colIdx !== undefined
+    ? (params.data?.[`_nav_${params.colIdx}`] as CellNavDescriptor | undefined)
+    : undefined;
+  if (!nav) return body;
+  const ctx = params.context as { onAction?: (action: string, p?: Record<string, string>) => void } | undefined;
+  return (
+    <span className="list-cell-linked">
+      {body}
+      <CellNavIcon
+        nav={nav}
+        rowPath={params.data?._selectorPath as string | undefined}
+        onAction={ctx?.onAction}
+      />
+    </span>
+  );
+};
+
+// Cell renderer for HTML content (addresses, contacts, etc.) — and for the
+// values that merely carry composed markup (see looksLikeServerHtml). With
+// `asHtml: false` it is just the plain-text cell that carries a chain.
+const HtmlCellRenderer = (params: ValueCellParams) => {
   const val = params.value;
-  if (!val) return null;
-  return <span dangerouslySetInnerHTML={{ __html: fixServerHtml(val) }} />;
+  const text = val == null ? '' : String(val);
+  if (!text) return withCellNav(null, params);
+  return withCellNav(
+    params.asHtml === false
+      ? <span>{text}</span>
+      : <span dangerouslySetInnerHTML={{ __html: fixServerHtml(text) }} />,
+    params,
+  );
 };
 
 // Render a boolean column as server-decoded text (from BOOLEAN_CODE_TABLE)
 // instead of AG Grid's default checkbox. The checkbox belongs to the
 // cell editor (agCheckboxCellEditor) which only activates during editing;
 // the rest of the time we just want the decoded text.
-const BooleanTextRenderer = (params: ICellRendererParams) => {
+const BooleanTextRenderer = (params: ValueCellParams) => {
   const field = params.colDef?.field;
   if (!field) return null;
   const idx = field.replace('col_', '');
   const display = params.data?.[`_display_${idx}`] as string | undefined;
-  if (display !== undefined && display !== '') return display;
   const v = params.value;
-  if (typeof v === 'string') return v;
-  if (v === true) return 'Sì';
-  if (v === false) return 'No';
-  return '';
+  let text = '';
+  if (display !== undefined && display !== '') text = display;
+  else if (typeof v === 'string') text = v;
+  else if (v === true) text = 'Sì';
+  else if (v === false) text = 'No';
+  return withCellNav(text, params);
 };
 
 // Record-SELECTION multiEdit boolean column: an always-interactive checkbox on
@@ -293,14 +385,14 @@ const MultiEditCheckboxRenderer = (
 // For editable columns whose value is a key (remote combos, lookups...) but
 // the server also emits a decoded displayValue, show the displayValue when
 // not editing. The cell editor still sees the raw value via params.value.
-const DisplayValueRenderer = (params: ICellRendererParams) => {
+const DisplayValueRenderer = (params: ValueCellParams) => {
   const field = params.colDef?.field;
   if (!field) return null;
   const idx = field.replace('col_', '');
   const display = params.data?.[`_display_${idx}`] as string | undefined;
-  if (display !== undefined && display !== '') return display;
   const v = params.value;
-  return v == null ? '' : String(v);
+  const text = (display !== undefined && display !== '') ? display : (v == null ? '' : String(v));
+  return withCellNav(text, params);
 };
 
 // Cell renderer for custom controls (delegates to registered component).
@@ -927,6 +1019,34 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       });
     }
 
+    // Due cose che si vedono solo guardando i DATI, non le colonne.
+    //  - `markupColumns`: il valore porta markup composto dal server (le
+    //    descrizioni di lookup con `#br#`/`#b#`), che va scritto come tale e
+    //    non letto come testo (SXADV-5759.2). Dipende dal record, quindi si
+    //    scandiscono tutte le righe: la stessa colonna puo' avere markup solo
+    //    su alcune.
+    //  - `navColumns`: la cella porta la catenella NavigateView, che il server
+    //    emette per cella perche' `contentViewName` puo' essere un'espressione
+    //    e il bersaglio puo' non essere raggiungibile riga per riga
+    //    (SXADV-5759.3).
+    // Le colonne modificabili e quelle con un controllo proprio restano fuori
+    // dal markup: la prima deve mostrare al suo editor il valore grezzo, la
+    // seconda si disegna da se'.
+    const markupColumns = new Set<number>();
+    const navColumns = new Set<number>();
+    for (const r of uiRows) {
+      if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
+      r.cells.forEach((cell: UICell, idx: number) => {
+        const ctrl = cell.control;
+        if (!ctrl) return;
+        if (ctrl.navigateView) navColumns.add(idx);
+        if (markupColumns.has(idx) || htmlColumns.has(idx)) return;
+        if (customColumns.has(idx) || editableColumns.has(idx)) return;
+        const v = ctrl.displayValue ?? ctrl.value;
+        if (typeof v === 'string' && looksLikeServerHtml(v)) markupColumns.add(idx);
+      });
+    }
+
     // Secondary (continuation) header labels sit under the primary header at
     // the same column positions (mapped by cumulative colspan units, the same
     // model used at render time). The base width calc only looks at the primary
@@ -950,9 +1070,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           const longest = (sh.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
           const need = headerLabelMinWidth(longest);
           const covered = mainCols.filter(c => c.start < pos + span && (c.start + c.span) > pos);
-          if (covered.length > 0) {
-            const share = Math.ceil(need / covered.length);
-            for (const c of covered) secondaryMinWidth.set(c.idx, Math.max(secondaryMinWidth.get(c.idx) || 0, share));
+          // Quanto deve valere la colonna PRINCIPALE perche' questa etichetta ci
+          // stia. Una colonna spartisce la propria larghezza UNIFORMEMENTE fra le
+          // proprie unita' (`computeUnitOffsets`: `width / units`), quindi
+          // un'etichetta lunga `span` unita' dentro una colonna di `c.span` ne
+          // riceve `width * span / c.span`: perche' quella fetta valga `need`, la
+          // colonna deve valere `need * c.span / span`. Prima si divideva `need`
+          // per il NUMERO di colonne coperte, che non c'entra con la
+          // proporzione: una banda fitta sopra una colonna larga in unita' ma
+          // stretta in pixel riceveva una fetta piu' piccola dell'etichetta, e
+          // l'etichetta si spezzava a meta' parola ("Coll/i" sulle righe
+          // fattura, SXADV-5759.5).
+          for (const c of covered) {
+            const required = Math.ceil(need * c.span / span);
+            secondaryMinWidth.set(c.idx, Math.max(secondaryMinWidth.get(c.idx) || 0, required));
           }
           pos += span;
         }
@@ -968,7 +1099,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (hdr.type === 'selector') {
           return;
         }
-        const isHtml = htmlColumns.has(idx);
+        // Sia il controllo dichiarato `Html`, sia il valore che porta markup
+        // composto dal server: la cella si scrive come markup in entrambi i casi.
+        const isHtml = htmlColumns.has(idx) || markupColumns.has(idx);
+        const hasNav = navColumns.has(idx);
         const customType = customColumns.get(idx);
         const colCtrl = ui.columns?.[idx]?.control;
         const colCtrlType = colCtrl?.type as string | undefined;
@@ -1001,9 +1135,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         // L'intestazione segue anche l'allineamento imposto via contentStyle,
         // che invece non tocca le celle (già allineate dal loro stile inline).
         const isHeaderRightAlign = isRightAlign || styleRightColumns.has(idx);
-        // Minimum width based on longest word in header (measured, zoom-proof)
+        // Minimum width based on longest word in header (measured, zoom-proof),
+        // piu' cio' che condivide la riga dell'intestazione con l'etichetta.
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-        const hdrMinWidth = headerLabelMinWidth(longestWord);
+        const headerDecorWidth = (!allDataLocal && hdr.sortExpression ? HEADER_SORT_ICON_WIDTH : 0)
+          + (hdr.configureIcon ? HEADER_CONFIG_ICON_WIDTH : 0);
+        const hdrMinWidth = headerLabelMinWidth(longestWord) + headerDecorWidth;
         // Content-based min width from control.size: columns should at least
         // show their declared content width, matching form behavior. Boolean
         // (checkbox) columns are intrinsically narrow regardless of size.
@@ -1113,7 +1250,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const needsDisplayValue = !isBool && !!colMeta;
         const resolvedCellRenderer = editCellRenderer || cellRenderer
           || (isBool ? BooleanTextRenderer : undefined)
-          || (needsDisplayValue ? DisplayValueRenderer : undefined);
+          || (needsDisplayValue ? DisplayValueRenderer : undefined)
+          // Cella di solo testo che pero' porta la catenella: le serve comunque
+          // un renderer, la stampa di serie non puo' appenderle niente.
+          || (hasNav ? HtmlCellRenderer : undefined);
 
         colTokens.set(`col_${idx}`, headerTokens(hdr));
         cols.push({
@@ -1148,7 +1288,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           minWidth: Math.min(40, effectiveMinWidth),
           resizable: true,
           cellRenderer: resolvedCellRenderer,
-          cellRendererParams: editCellRenderer ? { colMeta, colIdx: idx, dynPropKey } : undefined,
+          // `colIdx` serve a OGNI renderer di valore per ritrovare gli extra
+          // che la riga porta sotto quell'indice (catenella, displayValue).
+          cellRendererParams: { colMeta, colIdx: idx, dynPropKey, asHtml: isHtml },
           // In one-line il record sta su UNA linea: niente a-capo né crescita in
           // altezza, che è ciò che fa entrare molti più record nella pagina. Le
           // colonne con un control registrato tengono l'autoHeight: il loro
@@ -1279,7 +1421,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
-          const hasHtml = ctrlType === 'html' || /<[a-z][\s\S]*>/i.test(val);
+          const hasHtml = ctrlType === 'html' || looksLikeServerHtml(val);
           cells.push(hasHtml ? { html: val, colspan, cls, style } : { text: val, colspan, cls, style });
         } else {
           cells.push({ text: '', colspan });
@@ -1426,6 +1568,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // ColDef cellClass/cellStyle callbacks.
           if (cell.control.cls) rowObj[`_cls_${idx}`] = cell.control.cls;
           if (cell.control.style) rowObj[`_style_${idx}`] = cell.control.style;
+          // Catenella NavigateView di QUESTA riga: il server la emette per
+          // cella, non per colonna (SXADV-5759.3).
+          if (cell.control.navigateView) rowObj[`_nav_${idx}`] = cell.control.navigateView;
           if (customColumns.has(idx)) {
             // Custom controls: store raw value + type + column meta for the
             // cell renderer. Also stash the full per-row control so renderers
@@ -2245,7 +2390,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // fitted to the longest WORD of these labels (secondaryMinWidth), so
           // a multi-word one only shows in full over two lines. The wrapper is
           // flex:0 0 auto, so the band grows with the tallest cell.
-          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:1px 4px;overflow:hidden;white-space:normal;word-break:break-word;line-height:14px;`;
+          // `overflow-wrap` e non `word-break: break-word`, per lo stesso motivo
+          // dell'intestazione principale (SXADV-5759.5): la cella ha larghezza
+          // fissa, quindi una parola troppo lunga si spezza comunque, ma
+          // l'etichetta non si rompe a meta' solo perche' e' al limite.
+          cell.style.cssText = `width:${w}px;min-width:${w}px;max-width:${w}px;padding:1px 4px;overflow:hidden;white-space:normal;overflow-wrap:break-word;line-height:14px;`;
         } else {
           cell.style.cssText = `flex:${hdr.colspan || 1};padding:1px 4px;`;
         }
