@@ -165,6 +165,27 @@ function hydrateCell(
     out.visible = visibleResolved as boolean | string | undefined;
   }
 
+  // Etichetta del campo e titolo di banda: come `visible`, possono essere
+  // scritti sul record (prompt="?etichettaCampoProv" — i nomi campo
+  // personalizzati di Pandora) e in quel caso il server manda un segnaposto
+  // invece del testo, cosi' una risposta DATA li riporta aggiornati. Prima
+  // restavano quelli del record su cui era nato il template: il campo che il
+  // reload aveva appena scoperto usciva senza nome, e il nome compariva solo
+  // dopo il Salva e il rientro (SXADV-5813).
+  const promptRaw = cell.prompt;
+  const promptResolved = resolvePlaceholder(promptRaw, dynProps);
+  if (promptResolved !== promptRaw) {
+    out = out ?? { ...cell };
+    out.prompt = promptResolved == null ? '' : String(promptResolved);
+  }
+
+  const textRaw = cell.text;
+  const textResolved = resolvePlaceholder(textRaw, dynProps);
+  if (textResolved !== textRaw) {
+    out = out ?? { ...cell };
+    out.text = textResolved == null ? '' : String(textResolved);
+  }
+
   if (cell.control) {
     const hc = hydrateControl(cell.control, values, dynProps, bindings, scopePaths, scope, bindScope);
     if (hc !== cell.control) {

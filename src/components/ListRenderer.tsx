@@ -1991,12 +1991,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     const command = data._selectorCommand as string | undefined;
     if (!path) return;
-    // Il comando serve solo per NAVIGARE (liste non editabili). Una lista
-    // `selector="false"` non ne porta uno, ma la selezione per il pannello ha
-    // bisogno del solo percorso di riga (SXADV-5796.3b).
-    if (!command && !isListEdit) return;
+    // La riga si modifica QUI solo se il server ha mandato il pannello. Con una
+    // detailViewName e senza inlineEdit="true" non lo manda: la modifica sta
+    // sulla pagina di dettaglio, quindi il clic sulla riga ci naviga come su una
+    // lista non modificabile. La struttura della riga la descrive la detail,
+    // `inlineEdit` dice solo dove si modifica (ToolView.isRowEditedInPanel).
+    const editsInPanel = isListEdit && !!ui.panelTemplateKey;
+    // Il comando serve solo per NAVIGARE. Una lista `selector="false"` non ne
+    // porta uno, ma la selezione per il pannello ha bisogno del solo percorso di
+    // riga (SXADV-5796.3b).
+    if (!command && !editsInPanel) return;
 
-    if (isListEdit) {
+    if (editsInPanel) {
       // Editing lives in the bottom panel, not in the grid: AG Grid remounts
       // full-width rows and destroys any stateful control (combo/date/lookup)
       // rendered in place. A row click selects the record; the panel edits it in
@@ -2011,7 +2017,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
     // Non-editable lists: the selector navigates to the detail as before.
     if (command) onAction(command, { navpath: path });
-  }, [isListEdit, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
+  }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
 
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;

@@ -3,6 +3,7 @@ import { Checkbox } from 'antd';
 import type { ControlComponent } from '../types';
 import type { UIControl } from '../../types/ui';
 import { useControlChange, useSyncedState } from '../helpers';
+import { withPostDecorations } from '../decorations';
 
 /** Boolean/checkbox needs local state because Shell's handleFieldChange only
  *  mutates a ref (no re-render). On QUERY pages non-mandatory booleans are tri-state. */
@@ -61,13 +62,22 @@ const BooleanInner: React.FC<{
 const BooleanControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
   const isDisabled = !!control.disabled || control.editable === false;
   const handleChange = useControlChange(control, onChange, onAction);
-  return (
+  // La casella di spunta passava dalle decorazioni: il postPrompt — la frase
+  // che spiega il flag, scritta alla sua destra — non usciva da nessuna parte,
+  // ed e' proprio sulle caselle di spunta che le view lo usano di piu' (il
+  // "Default" dei conti correnti, SXADV-5796.3). La stella dell'obbligatorio
+  // resta esclusa per i booleani: se ne occupa withPostDecorations.
+  return withPostDecorations(
     <BooleanInner
       control={control}
       isQuery={pageType === 0}
       isDisabled={isDisabled}
       handleChange={handleChange}
-    />
+    />,
+    control,
+    pageType,
+    onAction,
+    onChange,
   );
 };
 

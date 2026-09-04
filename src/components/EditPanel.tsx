@@ -1,6 +1,6 @@
 import React from 'react';
 import { fixServerHtml } from '../services/serverHtml';
-import { App, Button, Tooltip } from 'antd';
+import { App, Button } from 'antd';
 import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
@@ -15,20 +15,22 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
  * in the stable React tree, where antd controls (combos, dates, lookups) work —
  * unlike inside AG Grid's full-width rows which get remounted and lose state.
  *
- * Layout by flag:
- *  - inlineEdit=false → the panel mirrors the GRID record: an HTML table whose
- *    colspans come straight from the server and whose column labels reuse the
- *    grid's headers/continuationHeaders (no per-field prompts — they'd break the
- *    auto-layout and duplicate the column headers). Fields align to the grid.
- *  - inlineEdit=true → the referenced detail view's form, rendered via ViewRenderer.
+ * La STRUTTURA della riga la decide la presenza di una `detailViewName`, non
+ * `inlineEdit` — che dice solo DOVE si modifica: qui nel pannello, oppure sulla
+ * pagina di dettaglio, e in quel caso il pannello non esiste proprio.
+ *  - senza detailViewName → il pannello ricalca il record della GRIGLIA: una
+ *    tabella i cui colspan arrivano dal server e le cui etichette di colonna
+ *    riusano headers/continuationHeaders della lista (niente prompt per campo:
+ *    romperebbero l'incolonnamento e ripeterebbero le intestazioni di colonna).
+ *  - con detailViewName → la form della detail referenziata, resa da ViewRenderer.
  *
  * Edits flow through the same onChange/formValues wiring; Save/Delete post with
  * navpath = the selected row's path.
  */
 
 interface EditPanelProps {
-  /** Hydrated panel tree for the selected record. For inlineEdit=false its rows
-   *  are the grid record (main + continuation); for inlineEdit=true a detail form. */
+  /** Hydrated panel tree for the selected record: le righe del record in griglia
+   *  (principale + continuazione) senza detailViewName, la form di dettaglio con. */
   panel: UITree;
   /** The list blob — column headers, continuation headers, delete permission. */
   listUi: UITree;
@@ -42,6 +44,12 @@ interface EditPanelProps {
   onChange?: (name: string, value: unknown) => void;
   onAction: (action: string, params?: Record<string, string>) => void;
   onClose: () => void;
+  /** Forma del pannello decisa dal SERVER (buildPanelTemplate): form di
+   *  dettaglio invece della riga di griglia. Il server la manda sempre, vera o
+   *  falsa; assente solo su un server che non la conosce, e li' si ricade sulla
+   *  vecchia deduzione da inlineEdit + hasDetailView (che non coincide piu': la
+   *  form di dettaglio ora vuole inlineEdit="true" scritto nella view). */
+  formShape?: boolean;
   /** Step to the previous (-1) / next (+1) record without leaving the panel. */
   onNavigate?: (delta: number) => void;
   hasPrev?: boolean;
@@ -52,6 +60,19 @@ interface EditPanelProps {
 // it on continuation lines) so the panel matches the grid, which hides it too.
 const visibleCells = (cells: UICell[]): UICell[] =>
   cells.filter((c) => c.elementType !== ELTYPE_SELECTOR && c.elementType !== ELTYPE_DUMMY);
+
+/** Campo che questa riga non mostra. Il pannello nasce come template METADATA
+ *  (un solo record, segnaposto `?iN`) e la visibilita' la porta l'editData del
+ *  record selezionato: chi non la guarda mostra i campi che la griglia accanto
+ *  tiene nascosti - Peso, Colli, % Provv., Anno Tess. su righe che non li hanno
+ *  (SXADV-5735 h). La cella resta, vuota, cosi' le colonne restano incolonnate
+ *  sulle intestazioni della lista. */
+const isHiddenCell = (c: UICell): boolean => c.visible === false || c.control?.visible === false;
+
+/** Una banda di continuazione dove non si vede niente non si disegna (con la
+ *  sua riga di intestazioni): sarebbe una fascia vuota in mezzo al pannello. */
+const hasVisibleContent = (cells: UICell[]): boolean =>
+  visibleCells(cells).some((c) => !isHiddenCell(c) && (c.control != null || (c.text ?? '') !== ''));
 const visibleHeaders = (headers: ListHeader[]): ListHeader[] =>
   headers.filter((h) => h.type !== 'selector');
 
@@ -101,7 +122,16 @@ const CellContent: React.FC<{
   onAction: (action: string, params?: Record<string, string>) => void;
 }> = ({ cell, onChange, onAction }) => {
   const ctrl = cell.control;
+  if (isHiddenCell(cell)) return null;
   if (ctrl && ctrl.type && ctrl.editable) {
+    return <ControlRenderer control={ctrl} onAction={onAction} onChange={onChange ?? (() => {})} />;
+  }
+  // Un booleano non editabile passa comunque dal suo controllo: reso come
+  // testo diceva "true"/"false" (in DATA mode il server manda il valore nudo,
+  // il decodificato lo emette solo per le celle di lista), mentre la casella
+  // spenta e' quello che fa il legacy in pagina di dettaglio - ed e' anche
+  // quello che si vede nella griglia accanto (SXADV-5735 a).
+  if (ctrl && ctrl.type === 'boolean') {
     return <ControlRenderer control={ctrl} onAction={onAction} onChange={onChange ?? (() => {})} />;
   }
   // Non-editable combos ship the human label as displayText (List) or
@@ -114,8 +144,9 @@ const CellContent: React.FC<{
   return <span>{val}</span>;
 };
 
-/** Grid-shaped body (inlineEdit=false): render the record's main + continuation
- *  rows as an aligned table, labelled by the grid's headers — no per-field prompts. */
+/** Grid-shaped body (nessuna detailViewName): render the record's main +
+ *  continuation rows as an aligned table, labelled by the grid's headers — no
+ *  per-field prompts. */
 const GridBody: React.FC<{
   rows: UIRow[];
   listUi: UITree;
@@ -139,6 +170,7 @@ const GridBody: React.FC<{
           ))}
         </tr>
         {contRows.map((cr, ci) => (
+          !hasVisibleContent(cr.cells) ? null : (
           <React.Fragment key={ci}>
             {contHeaders[ci] && <HeaderRow headers={visibleHeaders(contHeaders[ci])} />}
             <tr>
@@ -149,6 +181,7 @@ const GridBody: React.FC<{
               ))}
             </tr>
           </React.Fragment>
+          )
         ))}
       </tbody>
     </table>
@@ -156,7 +189,7 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, canDelete: rowCanDelete, onChange, onAction, onClose, onNavigate, hasPrev, hasNext,
+  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const { modal } = App.useApp();
@@ -172,15 +205,21 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // and stealing it would break that. So Esc closes the panel only when focus
   // isn't in a field, which covers the reported case: the user clicks a row,
   // focus stays on the grid, and Esc gets them back to the rows (SXADV-5735.2).
-  useHotkey('Escape', onClose, { priority: HotkeyPriority.editPanel });
+  //
+  // allowWhileTyping acceso: appena si clicca una riga il fuoco entra in un
+  // campo, quindi l'Esc "che non funziona" era in realta' sempre dentro un
+  // campo (SXADV-5735 n). Non ruba niente a nessuno: il registro salta i tasti
+  // gia' gestiti (defaultPrevented - le combo annullano cosi' la modifica del
+  // campo) e quelli con una tendina aperta (hasOpenOverlay), e la chiusura
+  // manda al server quanto digitato invece di buttarlo via.
+  useHotkey('Escape', onClose, { priority: HotkeyPriority.editPanel, allowWhileTyping: true });
 
   const path = rowPath ?? panel.path ?? '';
-  // Mirror the server's buildPanelTemplate choice: the panel is a DETAIL FORM
-  // only when inlineEdit=true AND a detail view is bound; otherwise it's the
-  // list's own grid-shape structure. inlineEdit defaults to TRUE for listEdit
-  // views, so keying purely off inlineEdit mis-rendered the majority case
-  // (inlineEdit=true, no detailViewName → server emits grid-shape) as a form.
-  const gridShaped = !(listUi.inlineEdit && listUi.hasDetailView);
+  // La forma la decide il SERVER (buildPanelTemplate) e la manda in formShape:
+  // e' la form di dettaglio dove la lista ha una detailViewName. La deduzione
+  // qui sotto resta solo per un server che non manda formShape, e non e' piu'
+  // equivalente - guardava anche `inlineEdit`, che oggi dice un'altra cosa.
+  const gridShaped = formShape != null ? !formShape : !(listUi.inlineEdit && listUi.hasDetailView);
 
   const doDelete = () => {
     modal.confirm({
@@ -245,11 +284,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 Elimina
               </Button>
             )}
-            <Tooltip title="Chiudi il pannello e tornare ai soli righi (Esc)">
-              <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose}>
-                Chiudi
-              </Button>
-            </Tooltip>
+            <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose}>
+              Chiudi
+            </Button>
           </span>
         </div>
         <div className="edit-panel-body">

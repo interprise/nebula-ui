@@ -67,7 +67,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, PendingAddContext, TitleInBreadcrumbContext, PaneToolbarContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, TitleInBreadcrumbContext, PaneToolbarContext } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1281,10 +1281,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       } else if (editNavpathRef.current && !serverParams.navpath) {
         serverParams.navpath = editNavpathRef.current;
       }
-      if (action === 'Add') pendingAddRef.current = true;
+      // Il record nuovo lo crea "Nuovo", ma anche "Salva +" (SaveAndNew, dalla
+      // barra di navigazione record): senza armare anche quello il pannello
+      // restava sul record appena salvato invece di spostarsi su quello nuovo
+      // (SXADV-5735 p).
+      if (action === 'Add' || action === 'SaveAndNew') pendingAddRef.current = true;
 
       document.body.style.cursor = 'wait';
-      const fv = noFormValues ? undefined : formValuesRef.current[tab.key];
+      // Istantanea, non il riferimento vivo: chi manda la richiesta puo' voler
+      // ripulire subito i valori appena spediti (il pannello di riga lo fa
+      // quando cambia record) e una mutazione arrivata mentre la richiesta e'
+      // in volo si porterebbe via i valori dalla richiesta stessa.
+      const fv = noFormValues ? undefined : { ...(formValuesRef.current[tab.key] ?? {}) };
+      if (fv) dirtyFieldsRef.current.clear();
       // Replay THIS action (Save/Delete/navigation/…) with the answer appended
       // if it raises a confirmation — instead of the old hardcoded Post that
       // discarded the real action and its response (SXADV-5470.1).
@@ -1386,10 +1395,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     [openCdmsView],
   );
 
+  // Campi digitati e non ancora spediti al server. Ogni richiesta si porta
+  // dietro TUTTI i valori di form, quindi appena ne parte una l'insieme si
+  // svuota: quello che resta qui e' esattamente cio' che il server non sa.
+  const dirtyFieldsRef = useRef<Set<string>>(new Set());
+
   const handleFieldChange = useCallback(
     (name: string, value: unknown) => {
       const tab = getActiveTabState();
       if (!tab) return;
+      dirtyFieldsRef.current.add(name);
       // Preserve arrays (multi-valued form fields like `assegnaInput`
       // where the server reads parameterValues() — legacy behavior).
       const stored = Array.isArray(value)
@@ -1452,6 +1467,29 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       });
     }
   }, [loginInfo.banners, handleBannerClick]);
+
+  // Manda al server le modifiche digitate nel pannello di riga e ancora non
+  // spedite, indicando la riga a cui appartengono. Lo chiama il pannello quando
+  // cambia record o quando si chiude: prima non succedeva niente fino al Salva,
+  // e siccome i valori viaggiano con una chiave che NON dice la riga
+  // (controlName.idViewstate: la riga la dice il navpath), il digitato sul
+  // record precedente restava in mappa e finiva scritto sul record successivo
+  // (SXADV-5735 e/f).
+  //
+  // I nomi spediti escono anche dalla mappa dei valori: il server adesso li ha,
+  // e rimandarli su un'altra riga e' esattamente il travaso da evitare.
+  const flushFieldEdits = useCallback((navpath: string) => {
+    const tab = getActiveTabState();
+    if (!tab || !navpath || dirtyFieldsRef.current.size === 0) return;
+    // Con una richiesta gia' in volo handleAction non manda niente: non si
+    // tolgono valori dalla mappa che nessuno ha spedito. Restano segnati come
+    // da mandare e partiranno con la richiesta successiva.
+    if (tab.loading) return;
+    const names = [...dirtyFieldsRef.current];
+    void handleAction('Post', { navpath });
+    for (const n of names) delete tab.formValues[n];
+    formValuesRef.current[tab.key] = tab.formValues;
+  }, [getActiveTabState, handleAction]);
 
   // Track which row is being edited in listEdit mode (navpath sent with Save/Post)
   // Use a ref to avoid triggering re-renders on every row switch
@@ -2238,6 +2276,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
+                      <FlushEditsContext.Provider value={flushFieldEdits}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
                           <TitleInBreadcrumbContext.Provider value={titleIsLastCrumb}>
@@ -2251,6 +2290,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                           </TitleInBreadcrumbContext.Provider>
                         </DataVersionContext.Provider>
                       </PendingAddContext.Provider>
+                      </FlushEditsContext.Provider>
                     </EditRowContext.Provider>
                   </>
                 ) : (

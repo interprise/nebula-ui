@@ -693,6 +693,12 @@ export const PathContext = React.createContext<string | undefined>(undefined);
 // threading the callback through every RowRenderer/renderContainerControl.
 export const EditRowContext = React.createContext<((navpath: string | null) => void) | undefined>(undefined);
 
+// Provided once by Shell: manda al server, indicando la riga, le modifiche
+// digitate e non ancora spedite. Il pannello di riga lo chiama quando cambia
+// record o quando si chiude - i valori viaggiano con una chiave che non dice
+// la riga, quindi tenerli in mappa vuol dire riscriverli sul record dopo.
+export const FlushEditsContext = React.createContext<((navpath: string) => void) | undefined>(undefined);
+
 // "Was the Nuovo/Add toolbar action just dispatched?" — read-and-clear function
 // provided by Shell (pendingAddRef). Lets a listEdit/multiEdit list distinguish
 // "server just marked a row as the edit path because it was added" from "this
@@ -988,6 +994,28 @@ function renderTabLabel(
   );
 }
 
+/** C'e' almeno un campo che l'utente puo' scrivere in questo albero?
+ *
+ *  La modificabilita' e' per RECORD - regole `updatable="?..."`, stato del
+ *  workflow, privilegi - mentre il server puo' decidere una volta sola, sulla
+ *  struttura della vista, se una lista ha campi scrivibili. Cosi' il pannello si
+ *  apriva anche su record dove tutto e' bloccato (le Reg. contabili di una
+ *  fattura attiva: si apre, e dentro e' tutto in sola lettura). Qui si guarda
+ *  l'albero gia' idratato con i dati di QUESTA riga, dove `editable` e' il
+ *  valore risolto. */
+function hasEditableControl(rows: UIRow[]): boolean {
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      if (cell.visible === false) continue;
+      const ctl = cell.control;
+      if (!ctl || ctl.visible === false) continue;
+      if (ctl.editable && !ctl.noPost && !ctl.disabled) return true;
+      if (ctl.contentRows && hasEditableControl(ctl.contentRows)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * A listEdit list is rendered read-only in AG Grid; editing happens in a bottom
  * EditPanel. INSTANT: the list ships a cacheable panel FORM template
@@ -1010,9 +1038,34 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // From context (not props): embedded lists are rendered by renderContainerControl,
   // which doesn't thread onEditRow through. Shell provides it once at the top.
   const setEditRow = React.useContext(EditRowContext);
+  const flushEdits = React.useContext(FlushEditsContext);
   const [hidden, setHidden] = React.useState(false);
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<ListRecord[]>([]);
+
+  // Il pannello lavora sul record selezionato senza chiedere niente al server
+  // (si idrata dall'editData che la riga si porta dietro), quindi finche' non
+  // parte una richiesta il server non sa che il record e' stato toccato: il
+  // digitato va spedito quando si cambia record e quando si esce dalla form,
+  // altrimenti sparisce alla prima ri-idratazione e - peggio - resta in mappa
+  // per essere riscritto sulla riga successiva (SXADV-5735 e/f).
+  //
+  // Il percorso vive anche in una ref perche' serve nella chiusura dello
+  // smontaggio, dove lo stato non e' piu' leggibile.
+  const selectedPathRef = React.useRef<string | null>(null);
+  const flushRef = React.useRef<(() => void) | undefined>(undefined);
+  const flushSelected = React.useCallback((path: string | null) => {
+    if (path) flushEdits?.(path);
+  }, [flushEdits]);
+  React.useEffect(() => {
+    selectedPathRef.current = selectedPath;
+    flushRef.current = () => flushSelected(selectedPath);
+  }, [selectedPath, flushSelected]);
+  // Uscita dalla form: cambio scheda, cambio funzione, chiusura della vista.
+  // Innocuo quando le modifiche sono gia' partite con un'altra richiesta -
+  // Shell svuota l'insieme dei campi sporchi a ogni invio, e senza campi
+  // sporchi il flush non manda niente.
+  React.useEffect(() => () => { flushRef.current?.(); }, []);
 
   const recordPaths = React.useMemo(() => records.map((r) => r.path), [records]);
   const editDataByPath = React.useMemo(() => {
@@ -1022,6 +1075,11 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   }, [records]);
 
   const onSelectRecord = React.useCallback((path: string) => {
+    // Prima di lasciare il record precedente, spedisci quello che si e'
+    // digitato su di lui: la chiave dei valori non dice la riga, il navpath si.
+    const prev = selectedPathRef.current;
+    if (prev && prev !== path) flushSelected(prev);
+    selectedPathRef.current = path;
     setHidden(false);
     setSelectedPath(path);
     // Set the tab's edit navpath so Save/reload post with navpath = this row —
@@ -1029,7 +1087,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     // (Shell.handleAction injects editNavpathRef as navpath when omitted).
     setEditRow?.(path);
     // INSTANT: no Post — the panel hydrates from the row's onboard editData.
-  }, [setEditRow]);
+  }, [setEditRow, flushSelected]);
 
   // The panel's Elimina follows the SELECTED record: the right to delete is a
   // per-row property (deletable="?expr" evaluated on the row's BO, the BO's own
@@ -1056,13 +1114,15 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // Step to the previous/next record from the panel — pure client-side reselection.
   const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
   const navigateRecord = React.useCallback((delta: number) => {
-    setSelectedPath((cur) => {
-      const idx = cur ? recordPaths.indexOf(cur) : -1;
-      const next = idx >= 0 ? recordPaths[idx + delta] : undefined;
-      if (next) { setEditRow?.(next); return next; }
-      return cur;
-    });
-  }, [recordPaths, setEditRow]);
+    const cur = selectedPathRef.current;
+    const idx = cur ? recordPaths.indexOf(cur) : -1;
+    const next = idx >= 0 ? recordPaths[idx + delta] : undefined;
+    if (!next) return;
+    if (cur) flushSelected(cur);
+    selectedPathRef.current = next;
+    setEditRow?.(next);
+    setSelectedPath(next);
+  }, [recordPaths, setEditRow, flushSelected]);
 
   // The panel FORM template is cacheable (sid-free, keyed by panelTemplateKey).
   // The server ships it once and omits it on later list renders (advertised via
@@ -1091,13 +1151,19 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // version so the panel's fields adopt the newly selected record's values
   // even where they match what the user had typed on the previous one.
   const panelDataVersion = useNestedDataVersion(hydratedPanel);
+  // Un pannello dove non si puo' scrivere niente non serve: non lo si apre, e la
+  // riga resta solo selezionata (il ">" continua a portare alla mappa completa).
+  const panelIsEditable = React.useMemo(
+    () => (hydratedPanel ? hasEditableControl(hydratedPanel.rows) : false),
+    [hydratedPanel],
+  );
 
   // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
   // stays fully visible above it. Only wrap in the flex split when the panel
   // actually shows — otherwise render the grid alone so its height context is
   // unchanged. `panelShown` tells the grid to re-measure the height it fills, so
   // it gives up exactly the panel's space and takes it back when the panel closes.
-  const showPanel = isListEdit && !hidden && !!hydratedPanel;
+  const showPanel = isListEdit && !hidden && !!hydratedPanel && panelIsEditable;
   return (
     <>
       <ListRenderer
@@ -1117,11 +1183,12 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         <EditPanel
           panel={hydratedPanel}
           listUi={ui}
+          formShape={panelTemplate?.formShape}
           rowPath={selectedPath ?? undefined}
           canDelete={selectedCanDelete}
           onChange={onChange}
           onAction={onAction}
-          onClose={() => { setHidden(true); setEditRow?.(null); }}
+          onClose={() => { flushSelected(selectedPath); setHidden(true); setEditRow?.(null); }}
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
@@ -1793,7 +1860,15 @@ const CellRenderer: React.FC<{
       );
 
     case ELTYPE_CONTENT: {
-      const isCompact = cell.control?.type === 'boolean' || cell.control?.type === 'checkbox';
+      // Una casella di spunta occupa una colonna sola: le altre che il `size`
+      // le assegna le lascia a chi viene dopo. A meno che non le serva davvero:
+      // se l'item dichiara un postPrompt, la spiegazione scritta a destra della
+      // casella, il server ha gia' allargato la cella della sua lunghezza
+      // (LayoutManager: cellSize + postPromptSize). Stringerla a una colonna
+      // taglia il testo — `.content-cell` e' overflow:hidden — e la didascalia
+      // del flag "Default" dei conti correnti spariva del tutto (SXADV-5796.3).
+      const isCompact = (cell.control?.type === 'boolean' || cell.control?.type === 'checkbox')
+        && !cell.control?.postPrompt;
       if (isCompact) {
         tdProps.colSpan = 1;
         tdProps.style = { ...tdProps.style, width: '1%' };

@@ -124,6 +124,11 @@ export interface PanelTemplate {
   /** scope -> navpath, for nav/reload descriptors; the client overrides the
    *  root ("") entry with the selected row's path at hydration time. */
   scopePaths?: Record<string, string>;
+  /** Forma del pannello, decisa dal server: form di dettaglio (righe con
+   *  prompt) invece della riga di griglia incolonnata sulle intestazioni della
+   *  lista. Il client la deduceva da inlineEdit + detailViewName, rifacendo il
+   *  ragionamento del server su due proprieta' separate. */
+  formShape?: boolean;
 }
 
 export interface UIRow {
