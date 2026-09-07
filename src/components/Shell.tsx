@@ -107,6 +107,11 @@ interface TabState {
   menuId?: string;
   ui?: UITree;
   toolbar?: ToolbarItem[];
+  // Trail handed up by a pane that drives a viewstate of its own (TreeRenderer's
+  // detail). It shadows `ui.breadcrumbs` while the pane is open: the tab's `ui`
+  // is still the TREE, so its own trail knows nothing of the record on the
+  // right — and it is the pane's trail that carries the way home (SXADV-5846).
+  paneBreadcrumbs?: string;
   uiData?: UIData;
   currField?: string;
   formValues: Record<string, string | string[]>;
@@ -1029,6 +1034,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         delete update.scopePaths;
         delete update.toolbar;
       }
+      // Il trail del pannello vale finche' il pannello c'e'. Una risposta che
+      // ridisegna la vista SENZA portarsi dietro un dettaglio significa che il
+      // pannello non c'e' piu' — il ritorno dalla briciola atterra proprio cosi'
+      // — quindi il trail torna a essere quello della scheda. E' la stessa
+      // condizione con cui TreeRenderer chiude il pannello (SXADV-5846).
+      if (update.ui !== undefined
+          && (update.ui as unknown as Record<string, unknown>)._detailResponse === undefined) {
+        update.paneBreadcrumbs = undefined;
+      }
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
@@ -1562,17 +1576,26 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   };
 
   const currentTab = getActiveTabState();
-  const breadcrumbs = currentTab?.ui?.breadcrumbs;
+  // While a pane owns the current viewstate its trail wins: the tab's `ui` is
+  // still the enclosing view and its own trail stops short of the pane.
+  const breadcrumbs = currentTab?.paneBreadcrumbs ?? currentTab?.ui?.breadcrumbs;
 
   // A pane that drives a viewstate of its own (TreeRenderer's detail) hands its
   // toolbar up here: from the moment the pane loads, the session's current
   // viewstate is the pane's record, and the toolbar rendered with the enclosing
   // view is stale — its Add still carries the old path and comes back
   // NoSession. See PaneToolbarContext.
+  //
+  // The pane hands up its BREADCRUMBS through the same channel and for the same
+  // reason. Loading it pushes a history entry server-side, so the trail that
+  // comes back already carries the way home — its first crumb is a BackTo onto
+  // the enclosing view. TreeRenderer used to drop that trail, which is why a
+  // tree+detail had no way back to the full-width tree short of leaving the
+  // function and coming back (SXADV-5846).
   const currentTabKey = currentTab?.key;
   const setPaneToolbar = useCallback(
-    (toolbar: ToolbarItem[]) => {
-      if (currentTabKey) updateTabState(currentTabKey, { toolbar });
+    (toolbar: ToolbarItem[], breadcrumbs?: string) => {
+      if (currentTabKey) updateTabState(currentTabKey, { toolbar, paneBreadcrumbs: breadcrumbs });
     },
     [currentTabKey, updateTabState]
   );

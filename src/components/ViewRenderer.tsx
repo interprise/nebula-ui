@@ -692,7 +692,9 @@ export const SidContext = React.createContext<string>('S1');
 // pane's record the session's current viewstate: the toolbar rendered with the
 // TREE is stale from that moment on (its Add still carries the tree's path and
 // comes back NoSession), so the pane hands its own toolbar up to the tab.
-export const PaneToolbarContext = React.createContext<((toolbar: ToolbarItem[]) => void) | null>(null);
+export const PaneToolbarContext = React.createContext<
+  ((toolbar: ToolbarItem[], breadcrumbs?: string) => void) | null
+>(null);
 
 // View path context — used by controls to send navpath with commands
 export const PathContext = React.createContext<string | undefined>(undefined);

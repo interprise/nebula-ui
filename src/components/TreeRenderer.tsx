@@ -46,6 +46,24 @@ function retitleNode(nodes: TreeNode[], key: string, title: string, hint?: strin
   });
 }
 
+/** Del trail che torna col pannello serve una briciola sola: la PRIMA, che e'
+ *  il BackTo sull'albero — la via di casa.
+ *
+ *  Le altre non vanno mostrate, per due motivi. Il server accoda una voce di
+ *  history a ogni LocateAndNavigate, quindi ce n'e' una per ogni nodo aperto e
+ *  dopo dieci clic il percorso e' lungo dieci; e sono tutte sorelle, dettagli
+ *  dello stesso albero, non passaggi che l'utente ha davvero fatto. In piu' quel
+ *  trail e' indietro di uno — la voce del record che si sta aprendo non c'e'
+ *  ancora quando viene stampata — cosi' l'ultima briciola nomina il record
+ *  PRECEDENTE. Il record aperto lo dicono gia' il titolo del pannello e il nodo
+ *  selezionato: non serve una briciola, e una sbagliata e' peggio di nessuna. */
+function homeCrumbOnly(html: string | undefined): string | undefined {
+  if (!html) return html;
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+  const first = doc.querySelector('.breadcrumbElement');
+  return first ? first.outerHTML : html;
+}
+
 /** Collect all non-leaf keys from a tree (for expanding all after search) */
 function collectNonLeafKeys(nodes: TreeNode[]): string[] {
   const keys: string[] = [];
@@ -141,7 +159,10 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
             if (resp.ui) {
               setDetailUi(resp.ui);
               detailFormValues.current = extractDetailFormValues(resp.ui);
-              if (resp.toolbar) setPaneToolbar?.(resp.toolbar);
+              // Anche qui il trail va rimesso: questo giro e' il rientro in
+              // edit dopo un salvataggio, e senza di esso la via di ritorno
+              // all'albero sparirebbe appena si salva (SXADV-5846).
+              if (resp.toolbar) setPaneToolbar?.(resp.toolbar, homeCrumbOnly(resp.ui.breadcrumbs));
               applyNodeLabel(resp);
             }
           } catch {
@@ -209,13 +230,36 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       if (resp.ui) {
         setDetailUi(resp.ui);
         detailFormValues.current = extractDetailFormValues(resp.ui);
-        if (resp.toolbar) setPaneToolbar?.(resp.toolbar);
+        // Il trail arriva DENTRO la resa del pannello, non alla radice della
+        // risposta. Buttarlo via era il motivo per cui da qui non si tornava
+        // piu' all'albero intero: la prima briciola e' un BackTo sul viewstate
+        // dell'albero, che il server accoda gia' da se' (SXADV-5846).
+        if (resp.toolbar) setPaneToolbar?.(resp.toolbar, homeCrumbOnly(resp.ui.breadcrumbs));
         applyNodeLabel(resp);
       }
     } finally {
       document.body.style.cursor = '';
     }
   }, [navigateView, treeViewName, sid, extractDetailFormValues, setPaneToolbar, applyNodeLabel]);
+
+  // Il ritorno all'albero e' un BackTo sullo STESSO viewstate, quindi `ui.path`
+  // resta identico e il pannello non si chiuderebbe da solo. Il segnale e' un
+  // altro: e' arrivata una resa dell'albero che NON porta un `_detailResponse`,
+  // cioe' la pagina e' tornata a essere l'albero e basta. Un salvataggio fatto
+  // dal pannello passa di qui col dettaglio allegato e non lo chiude
+  // (SXADV-5846).
+  const lastUiRef = useRef(ui);
+  useEffect(() => {
+    const previous = lastUiRef.current;
+    lastUiRef.current = ui;
+    if (previous === ui) return;
+    const carriesDetail =
+      (ui as unknown as Record<string, unknown>)._detailResponse !== undefined;
+    if (!carriesDetail) {
+      setDetailUi(null);
+      setSelectedKey(null);
+    }
+  }, [ui]);
 
   // Handle detail field changes — update local ref AND Shell's formValues
   const handleDetailChange = useCallback((name: string, value: unknown) => {
