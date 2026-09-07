@@ -2553,14 +2553,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // right after Add. pendingAddSeenRef keeps that one-shot "yes, this is from
   // an Add" answer alive across the retry loop below, since the effect can
   // re-run (new rowData) before the freshly-added row has a rowIndex yet, and a
-  // second pendingAdd() call would find the flag already consumed. Only fires
-  // when the edit-path row differs from the one we're already on, so plain
-  // reloads of the current row don't reopen/fight the panel (SXADV-5470.2).
+  // second pendingAdd() call would find the flag already consumed.
   // Retries a few frames until the grid has applied the new rowData.
+  //
+  // A decidere e' SOLO pendingAdd. C'era anche una guardia "la riga in edit e'
+  // gia' quella su cui sono" (`editingRowPath`), ma il percorso di riga e'
+  // POSIZIONALE (`S1-0.5`): due record nuovi diversi, creati in momenti diversi
+  // e finiti nella STESSA posizione, hanno lo stesso percorso. Al secondo
+  // "Salva +" la guardia scambiava il record nuovo per quello gia' agganciato,
+  // usciva subito, e il pannello restava sul record precedente mentre la lista
+  // mostrava il nuovo (SXADV-5860.1). Non impediva niente che pendingAdd non
+  // impedisca gia': senza un Add appena partito qui non si entra comunque.
   const pendingAddSeenRef = useRef(false);
   useEffect(() => {
     if (!isListEdit || !serverEditingPath) { pendingAddSeenRef.current = false; return; }
-    if (editingRowPath.current === serverEditingPath) return;
     if (!pendingAddSeenRef.current) {
       if (!pendingAdd?.()) return;
       pendingAddSeenRef.current = true;
