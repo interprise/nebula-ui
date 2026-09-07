@@ -466,6 +466,16 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
  *  (ColDef width is pixels, not units). Returns offsets[u] = px from the
  *  left at unit boundary u.
  */
+/* Un clic su un elemento che AGISCE gia' per conto suo non deve valere anche
+   come clic sulla riga. Il listener di riga di AG Grid e' nativo sul `.ag-row`,
+   quindi sta SOTTO la radice di React: uno `stopPropagation()` dentro un
+   gestore sintetico arriva DOPO che AG Grid ha gia' attivato la riga, e le due
+   cose partono entrambe. L'unico filtro che regge e' questo, dalla parte di
+   AG Grid: chi disegna un comando dentro una cella lo aggiunge qui.
+   Il selettore ci e' entrato con SXADV-5861 — apriva il micro-detail per un
+   istante prima di navigare al detail integrale. */
+const ROW_ACTIVATION_IGNORE = '.list-cell-control, .selector-nav-cell, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]';
+
 /** Leftmost navigate-to-detail column for listEdit+detailView lists (the
  *  legacy "selector"). Field click edits in the panel; this icon opens the
  *  full detail page. Rendered only on main rows (continuation/break rows are
@@ -2173,7 +2183,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;
     const target = src?.target as HTMLElement | undefined;
-    if (target?.closest('.list-cell-control, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+    if (target?.closest(ROW_ACTIVATION_IGNORE)) {
       return;
     }
     activateRow(event.data as Record<string, unknown> | undefined);
@@ -2212,7 +2222,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // row navigation.
   const handleGridClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('.list-cell-control, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]')) {
+    if (target.closest(ROW_ACTIVATION_IGNORE)) {
       return;
     }
     const api = gridApiRef.current;
