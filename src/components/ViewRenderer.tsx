@@ -206,7 +206,21 @@ interface LayoutRuler {
   hostsAutonomousContent: boolean;
 }
 
-function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalColsHint?: number, totalWidthHint?: number): LayoutRuler {
+function buildRuler(allRows: UIRow[], hostWidth: number, density: Density, totalColsHint?: number, totalWidthHint?: number): LayoutRuler {
+  /* Il righello misura quello che viene DISEGNATO, non quello che il server ha
+     mandato. Da quando il template arriva intero a ogni risposta, `ui.rows`
+     contiene anche i campi condizionali spenti: `RowRenderer` li salta con
+     `isRowVisible`, ma la banda delle etichette li stava ancora misurando. Su
+     "Fatture - Nuovo Record" la banda era larga quanto "Regime split payment
+     applicato:", un campo che in quella maschera non compare: 205px invece dei
+     191px che chiede l'etichetta piu' lunga fra quelle a video, e quei 14px si
+     vedono tutti come grigio a sinistra, perche' le etichette sono allineate a
+     destra e lo slack si accumula dalla parte opposta (SXADV-5742.1).
+
+     Stesso ragionamento per il pavimento delle colonne di contenuto: un combo
+     nascosto non ha una larghezza da difendere. */
+  const rows = allRows.filter(isRowVisible);
+
   // Compute actual column count from form rows only (exclude container/section-header rows
   // whose colspans include child sub-views and inflate the auto-layout table)
   const formCols = (() => {
@@ -223,6 +237,7 @@ function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalCol
         // trailing links off-screen (5450.1C).
         const ctlType = cell.control?.type;
         if (ctlType === 'buttonBar' || ctlType === 'actionBar') continue;
+        if (cell.visible === false) continue;
         sum += cell.colspan || 1;
         if (cell.elementType === ELTYPE_PROMPT || cell.elementType === ELTYPE_CONTENT || cell.elementType === ELTYPE_SELECTOR) {
           isFormRow = true;
@@ -246,7 +261,9 @@ function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalCol
   let promptBandCols = 0;
   for (const row of rows) {
     const first = row.cells[0];
-    if (first && first.elementType === ELTYPE_PROMPT) promptBandCols = Math.max(promptBandCols, first.colspan || 1);
+    if (first && first.visible !== false && first.elementType === ELTYPE_PROMPT) {
+      promptBandCols = Math.max(promptBandCols, first.colspan || 1);
+    }
   }
 
   // Sized PER COLUMN, not per band: prompt cells don't all span the same number
@@ -264,7 +281,7 @@ function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalCol
     let perCol = 0;
     for (const row of rows) {
       const first = row.cells[0];
-      if (!first || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
+      if (!first || first.visible === false || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
       const span = first.colspan || 1;
       perCol = Math.max(perCol, (measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING) / span);
     }
@@ -296,6 +313,7 @@ function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalCol
     for (const row of rows) {
       for (const cell of row.cells) {
         if (cell.elementType !== ELTYPE_CONTENT || !cell.control) continue;
+        if (cell.visible === false) continue;
         const span = cell.colspan || 1;
         const hard = controlHardWidth(cell.control);
         if (hard) hardNeed = Math.max(hardNeed, (hard + CONTENT_CELL_PADDING) / span);
@@ -335,7 +353,11 @@ function buildRuler(rows: UIRow[], hostWidth: number, density: Density, totalCol
     ? Math.round(promptBandWidth + contentCols * contentColWidth)
     : uniformWidth;
 
-  const hostsAutonomousContent = viewHasOlapCube({ rows } as UITree) || rows.some((row) =>
+  /* Qui si guardano TUTTE le righe: una griglia o un tab spento adesso puo'
+     riaccendersi con la prossima risposta senza che il righello venga
+     ricostruito da capo, e allargare la tabella oltre il contenitore
+     rimetterebbe in campo la seconda barra di scorrimento. */
+  const hostsAutonomousContent = viewHasOlapCube({ rows: allRows } as UITree) || allRows.some((row) =>
     row.cells.some((cell) => {
       const t = cell.control?.type;
       return t === 'tab' || t === 'detailView' || t === 'embeddedView';
