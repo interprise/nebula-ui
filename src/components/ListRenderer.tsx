@@ -1031,8 +1031,33 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const st = cell.control?.style;
         if (!st) return;
         if (/white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
-        if (/text-align\s*:\s*right/i.test(st)) styleRightColumns.add(idx);
       });
+      /* L'allineamento invece si cerca su TUTTE le righe, e anche dentro il
+         valore. Due motivi, e su "Estratto conto" si presentano insieme:
+
+          - lo stile della cella il server lo mette solo dove c'e' un valore, e
+            una colonna importi puo' essere vuota proprio nella prima riga —
+            DARE valorizzata e AVERE vuota danno due intestazioni allineate in
+            modo diverso sopra due colonne che sono la stessa cosa;
+          - queste colonne non sono `money` ma `html` (dareHtml/avereHtml), e
+            l'allineamento del DATO se lo porta il valore stesso, che il server
+            confeziona come `<div style="text-align:right">…</div>`. Guardando
+            solo `control.style` si legge il contorno e si perde il contenuto.
+
+         Si accetta come indizio solo il div/span di apertura del valore, non un
+         "text-align:right" qualsiasi in mezzo al markup: quello allinea una
+         parte della cella, non la colonna (SXADV-5736.2). */
+      const VALUE_RIGHT = /^\s*<(?:div|span)[^>]*text-align\s*:\s*right/i;
+      for (const r of uiRows) {
+        if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
+        r.cells.forEach((cell: UICell, idx: number) => {
+          if (styleRightColumns.has(idx)) return;
+          const st = cell.control?.style;
+          if (st && /text-align\s*:\s*right/i.test(st)) { styleRightColumns.add(idx); return; }
+          const v = cell.control?.value;
+          if (typeof v === 'string' && VALUE_RIGHT.test(v)) styleRightColumns.add(idx);
+        });
+      }
     }
 
     // Due cose che si vedono solo guardando i DATI, non le colonne.
