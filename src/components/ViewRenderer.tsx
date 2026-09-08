@@ -875,6 +875,15 @@ function controlProducesOutput(ctl: UIControl): boolean {
     // document the whole Codice SDI…Tipo bollo block vanished (SXADV-5543).
     return true;
   }
+  if (type === 'allegati') {
+    // Il controllo Allegati, quando e' modificabile, disegna comunque il
+    // bottone di caricamento: nella resa legacy la riga c'e' sempre, anche
+    // a zero file. Senza questo caso la riga cadeva nel ramo generico e
+    // spariva proprio quando serve — quando non c'e' ancora un allegato da
+    // cui ripescare `files` (emailTemplateDetail). SXADV-5869, stessa
+    // classe di SXADV-5672.
+    return ctl.editable !== false || hasStructuredContent(ctl);
+  }
   if (type === 'contatti') {
     // Legacy omits the Contatti block entirely when no contact carries real
     // content; a placeholder contact (empty name, no phone/email) produces no

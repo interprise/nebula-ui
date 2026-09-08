@@ -21,6 +21,7 @@ import { registerBuiltinControls } from './controls/builtins';
 import { registerControl, registerControls, registerCellRenderable } from './controls/registry';
 import { loadControlPlugin } from './controls/loadPlugin';
 import type { HostAPI } from './controls/hostApi';
+import { SidContext } from './components/ViewRenderer';
 registerBuiltinControls();
 
 const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
@@ -55,6 +56,13 @@ const hostApi: HostAPI = {
   agGrid: AgGrid,
   agGridReact: AgGridReact,
   registry: { registerControl, registerControls, registerCellRenderable },
+  // Servizi che il plugin non puo' rifarsi da solo (endpoint dei download e
+  // degli upload, sid della scheda corrente). SXADV-5869.
+  services: {
+    triggerDownload: api.triggerDownload,
+    uploadFile: api.uploadFile,
+    useSid: () => React.useContext(SidContext),
+  },
 };
 
 const App: React.FC = () => {

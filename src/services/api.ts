@@ -206,7 +206,15 @@ export async function triggerDownload(
 
   const ct = resp.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
-    const json = (await resp.json()) as { uiData?: { callback?: string } };
+    const json = (await resp.json()) as {
+      uiData?: { callback?: string };
+      errors?: Array<{ message: string }>;
+    };
+    // Un comando di download che fallisce risponde con la busta degli errori,
+    // non con il file: senza questo ramo l'utente vedeva "unexpected JSON
+    // response" al posto del motivo (p.es. il file non c'e' piu' sul server).
+    // SXADV-5869.
+    if (json.errors && json.errors.length > 0) throw new Error(json.errors[0].message);
     const cb = json.uiData?.callback;
     const m = cb ? FILE_CALLBACK_RE.exec(cb) : null;
     if (!m) throw new Error('Download failed: unexpected JSON response');
