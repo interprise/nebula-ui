@@ -96,7 +96,11 @@ const App: React.FC = () => {
         window.location.href = resp.redirect;
         return;
       }
+      // Senza identita' la Shell non si puo' montare (vedi la guardia nel
+      // render): si riapre la maschera, che e' l'unica cosa sensata da
+      // mostrare a chi non risulta collegato.
       if (resp.loginfo) setLoginInfo(resp.loginfo);
+      else setShowLogin(true);
       if (resp.children) setMenuItems(resp.children);
       if (resp.panels) setSessionPanels(resp.panels);
       if (resp.sessionLimit != null) setSessionLimit(resp.sessionLimit);
@@ -171,6 +175,26 @@ const App: React.FC = () => {
         setLoginError(resp.errors.map((e) => e.message).join('\n'));
         return;
       }
+      /* Il collegamento puo' fallire anche SENZA `notLoggedIn` e senza errori:
+         CORE risponde `{changePassword:true}` quando la password e' scaduta
+         (`ChangePasswordException`) e `{loginDisabled:true}` per un'utenza
+         sospesa. In entrambi i casi non c'e' `loginfo`, ma il codice tirava
+         dritto fino a `setLoggedIn(true)` e la Shell si schiantava sul
+         `loginInfo!` nullo: schermata bianca al posto del motivo.
+
+         Sono percorsi del solo StandardAuthenticator, quindi si vedono solo
+         dove non c'e' l'SSO — in sviluppo (vedi la sezione sul collegamento nel
+         CLAUDE.md di ui-new). Costano comunque il tempo di capire se si e'
+         trovato un difetto o un incidente del banco di prova. */
+      const raw = resp as Record<string, unknown>;
+      if (raw.changePassword === true) {
+        setLoginError("La password e' scaduta: va cambiata prima di poter accedere.");
+        return;
+      }
+      if (raw.loginDisabled === true) {
+        setLoginError("Utenza non abilitata all'accesso.");
+        return;
+      }
       if (resp.loginfo) {
         setLoginInfo(resp.loginfo);
       }
@@ -208,6 +232,13 @@ const App: React.FC = () => {
     setLoggedIn(false);
     setLoginInfo(null);
     setMenuItems([]);
+    /* Dopo un auto-login (F5 con la sessione ancora viva) `showLogin` e' false,
+       perche' la maschera era stata saltata. Senza rimetterlo a true l'uscita
+       lasciava la pagina bianca: niente Shell, e nemmeno la maschera. Con l'SSO
+       non si nota, perche' il `logout` dell'autenticatore torna sempre un
+       redirect e si naviga via prima; senza SSO non c'e' redirect e la pagina
+       resta li'. */
+    setShowLogin(true);
     // For PIS (Piero) logout the server returns the OIDC end_session URL; navigating
     // there is what actually clears the OP session. Without this, the user stays
     // signed in at the IdP and the next page load silently re-authenticates.
@@ -291,7 +322,11 @@ const App: React.FC = () => {
               Sopra tutto: gli acceleratori della toolbar si registrano da dentro
               la Shell. Vedi hooks/uiMode.tsx. */}
           <UiModeProvider>
-            {!loggedIn ? (
+            {/* `loginInfo` e' obbligatorio per la Shell, che ci legge dentro
+                senza guardie: montarla senza equivale a un errore in fase di
+                render. Se manca si resta sulla maschera — un caso non previsto
+                deve degradare in qualcosa di leggibile, non nel vuoto. */}
+            {!loggedIn || !loginInfo ? (
               showLogin ? (
                 <LoginForm onLogin={handleLogin} error={loginError} loading={loginLoading} title={loginTitle} />
               ) : null /* Auto-login in progress */
@@ -300,7 +335,7 @@ const App: React.FC = () => {
                 menuItems={menuItems}
                 initialPanels={sessionPanels}
                 sessionLimit={sessionLimit}
-                loginInfo={loginInfo!}
+                loginInfo={loginInfo}
                 onLogout={handleLogout}
                 onReloadMenu={handleReloadMenu}
               />
