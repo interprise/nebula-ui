@@ -66,10 +66,6 @@ const hostApi: HostAPI = {
 };
 
 const App: React.FC = () => {
-  // Densita' tipografica scelta dall'utente (SXADV-5745). Sta qui e non piu' in
-  // basso perche' il corpo del carattere e' un token del tema antd: va noto
-  // prima che il ConfigProvider costruisca il tema, non dopo.
-  const density = useDensityStore();
   const [loggedIn, setLoggedIn] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [showLogin, setShowLogin] = useState(true);
@@ -77,6 +73,12 @@ const App: React.FC = () => {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginTitle, setLoginTitle] = useState<string>();
   const [loginInfo, setLoginInfo] = useState<LoginInfo | null>(null);
+  // Densita' tipografica scelta dall'utente (SXADV-5745). Sta qui e non piu' in
+  // basso perche' il corpo del carattere e' un token del tema antd: va noto
+  // prima che il ConfigProvider costruisca il tema, non dopo. La preferenza e'
+  // di quel login, non del browser, quindi lo store vuole sapere chi e'
+  // collegato: `loginfo.login` (SXADV-5745.E).
+  const density = useDensityStore(loginInfo?.login);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   // Sessioni gia' vive sul server quando la pagina si carica. Dopo un F5 le
   // Session sopravvivono (stanno nell'HttpSession) e il JSONMenu le elenca:

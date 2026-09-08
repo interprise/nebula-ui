@@ -60,25 +60,90 @@ export const DENSITY_GRID_FONT_SIZE: Record<Density, number> = {
   comfortable: 13,
 };
 
-const STORAGE_KEY = 'entrasp.ui.density';
+/* La preferenza e' **per login**, non per browser (SXADV-5745.E).
+ *
+ * La prima versione teneva la scelta in una sola chiave di localStorage: chiave
+ * unica per origine, quindi condivisa da chiunque usasse quel browser. Due
+ * utenti sulla stessa postazione si sovrascrivevano a vicenda — entrando con
+ * SX_DESALVO si trovava l'impostazione di SX_ISEPPI, e cambiandola la si
+ * cambiava anche all'altro. Il valore sopravviveva al logout (ed e' per questo
+ * che il punto 5745.0 risultava soddisfatto), ma sopravviveva a *chiunque*:
+ * era persistenza, non memoria dell'utente.
+ *
+ * Ora la chiave porta il login (`entrasp.ui.density.<LOGIN>`) e l'identita'
+ * arriva dal `loginfo` del server. Conseguenze volute:
+ *  - al primo accesso di un login la densita' e' il default (Normale), qualunque
+ *    cosa abbia scelto chi ha usato la postazione prima;
+ *  - la scelta di un utente non e' scrivibile finche' non e' loggato: prima del
+ *    login non c'e' un'identita' a cui attribuirla.
+ *
+ * Resta una preferenza del client: vive nel browser di quella postazione, non
+ * segue l'utente su un'altra macchina. Portarla sul server vorrebbe dire
+ * inventare un archivio di preferenze utente che il framework non ha, per un
+ * dato che non e' dell'applicazione.
+ */
+const STORAGE_PREFIX = 'entrasp.ui.density.';
+/** Chiave globale pre-5745.E: apparteneva all'ultimo che l'aveva toccata, e
+ *  lasciarla in giro significherebbe solo poterla riattribuire a qualcuno per
+ *  sbaglio. Si rimuove al primo caricamento. */
+const LEGACY_STORAGE_KEY = 'entrasp.ui.density';
+/** Ultimo login che ha usato questo browser. Serve solo a scegliere la densita'
+ *  con cui disegnare i primi frame — prima che il server dica chi e' l'utente,
+ *  con un F5 a sessione viva l'alternativa e' un lampeggio dal default alla
+ *  densita' scelta. Non e' un'identita': appena il `loginfo` arriva, il valore
+ *  viene riletto per il login vero. Il carattere `#` non puo' comparire in un
+ *  codice utente, quindi la chiave non collide con nessun login. */
+const LAST_LOGIN_KEY = 'entrasp.ui.density#lastLogin';
 const DEFAULT_DENSITY: Density = 'normal';
 
 const isDensity = (v: unknown): v is Density =>
   v === 'compact' || v === 'normal' || v === 'comfortable';
 
-/** A differenza delle modalità immersiva/zoom (`uiMode.ts`), che sono stati di
- *  lavoro e muoiono col reload, questa è una preferenza personale: se non
+/** Forma canonica dell'identita': il login del `loginfo`, normalizzato, oppure
+ *  `null` quando nessuno e' autenticato (schermata di login, post-logout). */
+export function densityIdentity(login: string | null | undefined): string | null {
+  const v = (login ?? '').trim().toUpperCase();
+  return v ? v : null;
+}
+
+/** A differenza delle modalita' immersiva/zoom (`uiMode.ts`), che sono stati di
+ *  lavoro e muoiono col reload, questa e' una preferenza personale: se non
  *  sopravvivesse al ricaricamento della pagina andrebbe riscelta a ogni accesso
- *  e non varrebbe la pena di offrirla. Resta comunque solo sul client — non è
- *  un dato dell'applicazione e non ha motivo di attraversare il protocollo. */
-function readStored(): Density {
+ *  e non varrebbe la pena di offrirla. */
+function readStored(identity: string | null): Density {
+  if (!identity) return DEFAULT_DENSITY;
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
+    const v = localStorage.getItem(STORAGE_PREFIX + identity);
     if (isDensity(v)) return v;
   } catch {
     // localStorage negato (navigazione privata, policy): si usa il default.
   }
   return DEFAULT_DENSITY;
+}
+
+function writeStored(identity: string, density: Density): void {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + identity, density);
+    localStorage.setItem(LAST_LOGIN_KEY, identity);
+  } catch {
+    // Preferenza non memorizzabile: vale per la sessione corrente.
+  }
+}
+
+function readLastLogin(): string | null {
+  try {
+    return densityIdentity(localStorage.getItem(LAST_LOGIN_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function forgetLegacyKey(): void {
+  try {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // niente da rimuovere se lo storage non e' accessibile.
+  }
 }
 
 /** Ultima densita' applicata. Esiste per chi misura testo fuori dall'albero
@@ -98,19 +163,23 @@ export function gridFontSizePx(): number {
 }
 
 /** Corpo del testo del FORM in px, alla densita' corrente — lo stesso valore
- *  che `--app-font-size` dà ai controlli della layout-table. Serve a chi deve
+ *  che `--app-font-size` da' ai controlli della layout-table. Serve a chi deve
  *  dimensionare un campo sul numero di caratteri che deve contenere: quella
- *  larghezza dipende dal corpo con cui il campo verrà disegnato, e una costante
+ *  larghezza dipende dal corpo con cui il campo verra' disegnato, e una costante
  *  scritta a mano taglia i campi appena l'utente sceglie "Ampia". */
 export function formFontSizePx(): number {
   return DENSITY_FONT_SIZE[currentDensity];
 }
 
-/* L'attributo si scrive già al caricamento del modulo, prima del primo render:
-   applicandolo solo in un effect la pagina lampeggerebbe alla densità di
-   default per un frame prima di assestarsi su quella scelta. */
+/* L'attributo si scrive gia' al caricamento del modulo, prima del primo render:
+   applicandolo solo in un effect la pagina lampeggerebbe alla densita' di
+   default per un frame prima di assestarsi su quella scelta. Qui l'identita'
+   non e' ancora nota, quindi si parte da quella dell'ultimo login su questo
+   browser: e' una previsione, non un'attribuzione, e viene corretta appena il
+   server dice chi e' collegato. */
 const initialDensity: Density = (() => {
-  const d = readStored();
+  forgetLegacyKey();
+  const d = readStored(readLastLogin());
   applyAttribute(d);
   return d;
 })();
@@ -131,24 +200,43 @@ export function useDensity(): DensityValue {
   return useContext(DensityContext);
 }
 
-/** Stato radice. Vive in un hook perché il provider stia in App, sopra il
- *  ConfigProvider di antd: il corpo del carattere è un token del tema, quindi
- *  deve essere noto prima che il tema venga costruito. */
-export function useDensityStore(): DensityValue {
+/** Stato radice. Vive in un hook perche' il provider stia in App, sopra il
+ *  ConfigProvider di antd: il corpo del carattere e' un token del tema, quindi
+ *  deve essere noto prima che il tema venga costruito.
+ *
+ *  `login` e' il `loginfo.login` corrente (`null` quando nessuno e' collegato).
+ *  Cambiarlo — accesso, logout, cambio utente — ricarica la densita' di
+ *  quell'utente: e' questo il punto in cui la preferenza smette di essere del
+ *  browser e diventa di chi lo sta usando (SXADV-5745.E). */
+export function useDensityStore(login?: string | null): DensityValue {
+  const identity = densityIdentity(login);
   const [density, setDensityState] = useState<Density>(initialDensity);
 
   useEffect(() => {
     applyAttribute(density);
   }, [density]);
 
+  /* Fuori dal login (schermata iniziale, subito dopo il logout) non si torna al
+     default: non c'e' un utente a cui attribuire una densita', e riportare la
+     pagina a "Normale" mentre si esce sarebbe solo uno sfarfallio. Quello che
+     conta e' che all'ingresso di un login la densita' sia la SUA — default
+     compreso, se non ha mai scelto. */
+  useEffect(() => {
+    if (!identity) return;
+    setDensityState(readStored(identity));
+    try {
+      localStorage.setItem(LAST_LOGIN_KEY, identity);
+    } catch {
+      // storage non accessibile: la previsione al prossimo caricamento salta.
+    }
+  }, [identity]);
+
   const setDensity = useCallback((d: Density) => {
     setDensityState(d);
-    try {
-      localStorage.setItem(STORAGE_KEY, d);
-    } catch {
-      // Preferenza non memorizzabile: vale per la sessione corrente.
-    }
-  }, []);
+    // Senza identita' la scelta vale per la pagina corrente e non viene scritta:
+    // finirebbe addosso al prossimo che si collega da questo browser.
+    if (identity) writeStored(identity, d);
+  }, [identity]);
 
   return useMemo<DensityValue>(() => ({ density, setDensity }), [density, setDensity]);
 }
