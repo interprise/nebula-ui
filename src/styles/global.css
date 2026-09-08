@@ -1161,6 +1161,50 @@ tr.breakRow td {
   background: #eaeef5;
 }
 
+/* Collapsed sidebar: the module rail (SXADV-5454.5).
+   antd fixes an inline-collapsed Menu at 80px, of which the glyph uses 14 —
+   66px of empty margin, taken twice (left and right) off the editing area.
+   Brought to 48px: the same width as the operations app bar it sits against, so
+   the two rails read as one band, and still wider than the 32px collapse button
+   in the coloured strip above, which is what sets the floor. antd recentres the
+   glyph from the item width, so no padding override is needed. */
+.sidebar .ant-menu-inline-collapsed {
+  width: 48px;
+}
+
+/* Which module is this? The flyout of a collapsed module carries the module's
+   own name as its header, in the brand band, since nothing else on screen says
+   it (SXADV-5454.6). The band colour is the login's bkColor, set inline. */
+.ant-menu-submenu-popup .ant-menu-item-group-title {
+  padding: 0 0 4px;
+  /* Long modules scroll inside the flyout; the header has to stay put, or the
+     answer to "which module is this" disappears on the first wheel click. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+}
+.menu-module-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: 600;
+  font-size: var(--app-font-size);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.menu-module-header .anticon {
+  font-size: 14px;
+  opacity: 0.9;
+}
+.menu-module-header-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Selection feedback in the sidebar menu (SXADV-5784.2).
    antd only tints the selected leaf; on click the highlight was invisible when
    the menu is collapsed (the leaf lives in a flyout that closes) or when the

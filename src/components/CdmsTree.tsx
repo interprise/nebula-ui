@@ -306,7 +306,9 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
 
   if (collapsed) {
     return (
-      <div style={{ textAlign: 'center', padding: 16, color: '#999' }}>
+      // The collapsed rail is 48px wide (SXADV-5454.5); the previous 16px
+      // horizontal padding no longer fits around the glyph.
+      <div style={{ textAlign: 'center', padding: '16px 8px', color: '#999' }}>
         <FolderOutlined style={{ fontSize: 20 }} />
       </div>
     );

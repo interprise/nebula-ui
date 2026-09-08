@@ -445,17 +445,47 @@ function moduleIconFor(id: string): React.ReactNode {
   return MODULE_ICONS[bare] ?? <AppstoreOutlined />;
 }
 
-function buildMenuItems(items: MenuItem[], level = 0): NonNullable<React.ComponentProps<typeof Menu>['items']> {
-  return items.map((item) => ({
-    key: item.id,
-    label: item.description,
-    title: item.description,
-    // Tag top-level rows so CSS can render Modules distinctly from sub-functions,
-    // and give each Module its own semantic glyph (unmapped Modules fall back to
-    // AppstoreOutlined, so nothing regresses).
-    ...(level === 0 ? { className: 'menu-module', icon: moduleIconFor(item.id) } : {}),
-    children: item.children && item.children.length > 0 ? buildMenuItems(item.children, level + 1) : undefined,
-  }));
+function buildMenuItems(
+  items: MenuItem[],
+  level = 0,
+  // Collapsed (icon-only) sidebar: the Module name is nowhere on screen, so the
+  // flyout that opens on an icon has to carry it (SXADV-5454.6). Passed down
+  // only to know we are at the root; brandBg paints the header band.
+  collapsed = false,
+  brandBg = '#1E4176',
+): NonNullable<React.ComponentProps<typeof Menu>['items']> {
+  return items.map((item) => {
+    const icon = level === 0 ? moduleIconFor(item.id) : undefined;
+    const children = item.children && item.children.length > 0
+      ? buildMenuItems(item.children, level + 1, collapsed, brandBg)
+      : undefined;
+    return {
+      key: item.id,
+      label: item.description,
+      title: item.description,
+      // Tag top-level rows so CSS can render Modules distinctly from sub-functions,
+      // and give each Module its own semantic glyph (unmapped Modules fall back to
+      // AppstoreOutlined, so nothing regresses).
+      ...(level === 0 ? { className: 'menu-module', icon } : {}),
+      // Root Module, collapsed: wrap the functions in a group whose title is the
+      // Module itself. antd renders the group title at the top of the flyout, so
+      // the popup finally says which Module it belongs to; expanded, the parent
+      // row already says it and the group would just repeat it.
+      children: children && collapsed && level === 0
+        ? [{
+            type: 'group' as const,
+            key: `${item.id}__module-header`,
+            label: (
+              <span className="menu-module-header" style={{ background: brandBg }}>
+                {icon}
+                <span className="menu-module-header-text">{item.description}</span>
+              </span>
+            ),
+            children,
+          }]
+        : children,
+    };
+  });
 }
 
 // Fixed-width header labels so the Azienda/Sede selectors line up vertically
@@ -1703,7 +1733,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   }, [measureCopyrightRoom, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth, immersive]);
 
   const APPBAR_WIDTH = 48;
-  const siderWidth = collapsed ? 80 : sidebarWidth;
+  // Collapsed, the sidebar is a rail of module glyphs: 48px, the width of the
+  // app bar beside it, instead of antd's 80px default (SXADV-5454.5). The
+  // matching Menu width override lives in global.css.
+  const siderWidth = collapsed ? 48 : sidebarWidth;
 
   // ChangePasswordModal owns the form + inline validation; opened on demand.
   const showChangePasswordDialog = useCallback(() => setChangePasswordOpen(true), []);
@@ -2015,7 +2048,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 key={menuNonce}
                 mode="inline"
                 inlineCollapsed={collapsed}
-                items={buildMenuItems(filteredMenu)}
+                items={buildMenuItems(filteredMenu, 0, collapsed, loginInfo.bkColor || '#1E4176')}
                 // Controlled selection: the internal (uncontrolled) one is lost on
                 // every remount (menuNonce) and is per-Menu, not per-tab. Keying it
                 // off the active tab keeps the open function highlighted and makes
@@ -2061,21 +2094,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             lineHeight: 'normal',
           }}
         >
-          {/* Left: product logo (brand-driven) + release + ALFA env badge.
+          {/* Left: product logo (brand-driven) + ALFA env badge + release.
               Pandora instances show the white Pandora mark; Nebula instances keep
               logo_sx.png. "Rel." sits beside the mark for topical grouping and is
-              prefixed "Rel." (SXADV-5454.2A). The ALFA badge appears only when the
-              server runs in the test environment (SXADV-5454.2B). */}
+              prefixed "Rel." (SXADV-5454.2A). ALFA goes between the two, as in the
+              classic client ("PANDORA ALFA"): it qualifies the product, not the
+              release. The server raises the flag (SXADV-5454.2B). */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
             <img
               src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
               alt={loginInfo.brand || 'Pandora'}
               style={{ height: 'var(--app-header-logo-h)', objectFit: 'contain', flexShrink: 0 }}
             />
+            {loginInfo.alfa && <span className="alfa-badge">ALFA</span>}
             {loginInfo.dbVersion && (
               <Text style={{ color: '#fff', whiteSpace: 'nowrap', opacity: 0.9, fontSize: 12 }}>Rel. {loginInfo.dbVersion}</Text>
             )}
-            {loginInfo.alfa && <span className="alfa-badge">ALFA</span>}
           </div>
 
           {/* Center: company/site selectors */}
