@@ -287,11 +287,16 @@ export async function checkProgress(sid: string = 'S1'): Promise<ServerResponse>
   return post(CMD2_URL, { action: 'JSONProgress', sid });
 }
 
+/** Una pagina dell'elenco di un lookup. `start`/`limit` sono i parametri che
+ *  `ListUIControlListCommand` gia' leggeva: servono a scorrere oltre la prima
+ *  pagina invece di fermarsi al tetto (SXADV-5642). */
 export async function fetchComboOptions(
   navpath: string,
   controlName: string,
   query: string,
-  sid: string = 'S1'
+  sid: string = 'S1',
+  start = 0,
+  limit = 100,
 ): Promise<{ value: string; text: string }[]> {
   const resp = await post(CMD_URL, {
     action: 'ListUIControlList',
@@ -299,7 +304,8 @@ export async function fetchComboOptions(
     navpath,
     option1: controlName,
     query,
-    limit: '100',
+    limit: String(limit),
+    start: String(start),
   });
   // Server returns { rows: [{ value, text }], resultSize }
   return (resp as unknown as { rows: { value: string; text: string }[] }).rows || [];

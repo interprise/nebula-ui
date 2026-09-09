@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { fixServerHtml } from '../services/serverHtml';
+import { useViewportMenuHeight } from '../hooks/menuHeight';
 import { Button, Dropdown, Space, Tooltip, App } from 'antd';
 import {
   DownOutlined,
@@ -182,6 +183,38 @@ interface ToolbarProps {
   onAction: (action: string, params?: Record<string, string>) => void;
 }
 
+/** Un pulsante della barra che apre un menu a tendina (es. "Estrazione Dati").
+ *  Vive come componente a se' perche' il tetto d'altezza della tendina va
+ *  misurato sul pulsante, e `renderToolbarItem` e' una funzione normale, non un
+ *  componente: non puo' tenere ne' ref ne' stato (SXADV-5772). */
+const ToolbarMenuButton: React.FC<{
+  item: ToolbarItem;
+  menuItems: ToolbarItem[];
+  onAction: (action: string, params?: Record<string, string>) => void;
+  modal: ModalApi;
+}> = ({ item, menuItems, onAction, modal }) => {
+  const { triggerRef, menuStyle, onOpenChange } = useViewportMenuHeight<HTMLButtonElement>();
+  return (
+    <Dropdown
+      onOpenChange={onOpenChange}
+      menu={{
+        style: menuStyle,
+        items: menuItems.map((sub, si) => ({
+          key: sub.id || `sub_${si}`,
+          label: sub.text,
+          disabled: sub.disabled,
+          onClick: () => sub.handler && invokeHandler(sub.handler, onAction, modal),
+        })),
+      }}
+    >
+      <Button ref={triggerRef} disabled={item.disabled} size="small">
+        {item.icon && iconMap[item.icon]}
+        {item.text} <DownOutlined />
+      </Button>
+    </Dropdown>
+  );
+};
+
 function renderToolbarItem(
   raw: unknown,
   idx: number,
@@ -234,22 +267,13 @@ function renderToolbarItem(
 
   if (menuItems && menuItems.length > 0) {
     return (
-      <Dropdown
+      <ToolbarMenuButton
         key={item.id || idx}
-        menu={{
-          items: menuItems.map((sub, si) => ({
-            key: sub.id || `sub_${si}`,
-            label: sub.text,
-            disabled: sub.disabled,
-            onClick: () => sub.handler && invokeHandler(sub.handler, onAction, modal),
-          })),
-        }}
-      >
-        <Button disabled={item.disabled} size="small">
-          {item.icon && iconMap[item.icon]}
-          {item.text} <DownOutlined />
-        </Button>
-      </Dropdown>
+        item={item}
+        menuItems={menuItems}
+        onAction={onAction}
+        modal={modal}
+      />
     );
   }
 

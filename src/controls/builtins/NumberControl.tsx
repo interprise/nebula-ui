@@ -1,7 +1,7 @@
 import React from 'react';
 import { InputNumber } from 'antd';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useCommitReload, useSyncedState, decodeHtmlEntities, numberWidthForSize } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedState, mandatoryStatus, decodeHtmlEntities, numberWidthForSize } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
@@ -54,7 +54,9 @@ const MoneyInput: React.FC<{
   width: number;
   store: (val: unknown) => void;
   commit: () => void;
-}> = ({ commonProps, value, decimals, currencySymbol, unitSuffix, width, store, commit }) => {
+  /** Il campo e' un obbligatorio da segnare in rosso quando resta vuoto. */
+  flagWhenEmpty?: boolean;
+}> = ({ commonProps, value, decimals, currencySymbol, unitSuffix, width, store, commit, flagWhenEmpty }) => {
   // Hold the edited value locally: store() writes to a ref without setState,
   // so a controlled `value` prop would revert keystrokes. Re-sync only on a
   // real server round-trip. (SXADV-5494)
@@ -70,6 +72,9 @@ const MoneyInput: React.FC<{
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
       <InputNumber
         {...commonProps}
+        // Il rosso segue la cifra che c'e' ORA nel campo, non quella con cui il
+        // server ha disegnato la maschera (SXADV-5754.2).
+        status={flagWhenEmpty && local == null ? 'error' : undefined}
         value={local}
         precision={decimals}
         // Server sends/expects Italian: comma is the decimal separator.
@@ -126,6 +131,7 @@ export const NumberControl: ControlComponent = ({ control, pageType, onAction, o
   return withPostDecorations(
     <MoneyInput
       commonProps={commonProps}
+      flagWhenEmpty={mandatoryStatus(control, '') === 'error'}
       value={control.value}
       decimals={displayPrecision(control.format, control.decimals)}
       unitSuffix={control.unitSuffix}
@@ -146,6 +152,7 @@ export const MoneyControl: ControlComponent = ({ control, pageType, onAction, on
   return withPostDecorations(
     <MoneyInput
       commonProps={commonProps}
+      flagWhenEmpty={mandatoryStatus(control, '') === 'error'}
       value={control.value}
       decimals={displayPrecision(control.format, control.decimals)}
       currencySymbol={control.currencySymbol as string}

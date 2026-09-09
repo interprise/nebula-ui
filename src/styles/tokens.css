@@ -61,6 +61,14 @@
    * disabled input/select/picker rules already used. */
   --app-text-readonly: #333;
 
+  /* Testo normale di un campo. Serve a rimettere a posto quello che antd v6
+   * colora di suo: con `status="error"` la Select ridipinge in rosso non solo
+   * il bordo ma anche il TESTO (`--ant-select-color`), cosa che Input, picker e
+   * InputNumber non fanno — un lookup obbligatorio si scriveva quindi in rosso
+   * mentre un testo o una data obbligatori restavano neri (SXADV-5754.1).
+   * Tenuto uguale al colorText di antd. */
+  --app-text: rgba(0, 0, 0, 0.88);
+
   /* Navigation "you are here" marks (SXADV-5784). Hover alone gave no lasting
    * clue of what had been clicked, so the open function keeps a persistent
    * highlight: in the sidebar menu (item and, when collapsed, its module icon)
@@ -167,4 +175,5 @@
   --app-action-chip-bg: rgba(255, 255, 255, 0.08);
   --app-action-chip-bg-hover: rgba(255, 255, 255, 0.14);
   --app-action-chip-border: rgba(255, 255, 255, 0.2);
+  --app-text: rgba(255, 255, 255, 0.85);
 }

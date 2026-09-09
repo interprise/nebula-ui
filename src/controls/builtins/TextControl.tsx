@@ -4,9 +4,11 @@ import { useCommonProps, useCommitReload, useSyncedValue, getTextMaxWidth } from
 import { withPostDecorations } from '../decorations';
 
 const TextControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   const [value, setValue] = useSyncedValue(control.value);
+  // `value` (non control.value): il rosso dell'obbligatorio si spegne appena il
+  // campo e' compilato, senza aspettare il server (SXADV-5754.2).
+  const commonProps = useCommonProps(control, value);
   const textMaxWidth = getTextMaxWidth(control);
   const isUppercase = !!control.uppercase;
   return withPostDecorations(

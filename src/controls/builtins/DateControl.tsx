@@ -25,10 +25,12 @@ function useLocalDayjs(controlValue: unknown, fmt: string): [Dayjs | null, (v: D
 }
 
 export const DateControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const dateFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY';
   const [value, setValue] = useLocalDayjs(control.value, dateFmt);
+  // `value` locale: il rosso dell'obbligatorio si spegne appena la data e'
+  // scelta, senza aspettare il giro col server (SXADV-5754.2).
+  const commonProps = useCommonProps(control, value);
   const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
   const commit = (d: Dayjs | null, dateStr: string) => {
@@ -56,9 +58,9 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
 };
 
 export const TimeControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const [value, setValue] = useLocalDayjs(control.value, 'HH:mm');
+  const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const pickerRef = useRef<ComponentRef<typeof TimePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
   return withPostDecorations(
@@ -83,10 +85,10 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
 };
 
 export const TimestampControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const handleChange = useControlChange(control, onChange, onAction);
   const tsFmt = javaToDayjsFormat(control.format) || 'DD/MM/YYYY HH:mm';
   const [value, setValue] = useLocalDayjs(control.value, tsFmt);
+  const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
   const commit = (d: Dayjs | null, dateStr: string) => {
@@ -115,9 +117,9 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
 };
 
 export const DurataControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   const [value, setValue] = useSyncedValue(control.value);
+  const commonProps = useCommonProps(control, value); // SXADV-5754.2
   return withPostDecorations(
     <Input
       {...commonProps}

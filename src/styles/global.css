@@ -1001,12 +1001,41 @@ tr.breakRow td {
 /* Mandatory field indicator. Dates, timestamps and numbers carry the cue too
    (legacy tagged every editable mandatory input with `nb-md`, not just text
    and combos), so the picker/number wrappers need the same override — their
-   own `.layout-table` rules would otherwise win over antd's error border. */
+   own `.layout-table` rules would otherwise win over antd's error border.
+   Il selettore della combo passa dal bordo dell'elemento stesso: in antd v6 la
+   Select non ha piu' un `.ant-select-selector` interno, disegna il bordo su di
+   se' (la vecchia regola era quindi diventata muta). */
 .ant-input-status-error,
-.ant-select-status-error .ant-select-selector,
+.ant-select-status-error,
 .ant-picker-status-error,
 .ant-input-number-status-error {
   border-color: var(--app-error) !important;
+}
+
+/* Il segno dell'obbligatorio e' il BORDO, non il testo.
+   antd v6 con `status="error"` ridipinge di rosso anche il testo della Select
+   (imposta `--ant-select-color` su colorError), mentre Input, DatePicker e
+   InputNumber lasciano nero quello che si scrive: un lookup obbligatorio si
+   digitava quindi in rosso e una data obbligatoria in nero, sulla stessa
+   maschera (SXADV-5754.1). Qui il testo torna quello di sempre; il bordo rosso,
+   che e' il segnale vero, resta. */
+/* Un lookup in sola lettura resta un testo che si puo' selezionare e copiare.
+   antd disegna il valore scelto come nodo di TESTO dentro `.ant-select-content`
+   e ci appoggia sopra un `<input>` in posizione assoluta largo quanto il campo:
+   anche quando l'input e' disabilitato, il mouse si ferma li' e il testo sotto
+   non si riesce a prendere. Togliendogli gli eventi del puntatore — non ha
+   nulla da fare, e' disabilitato — la selezione arriva al testo, che e' quello
+   che si chiede a un campo in output (SXADV-5641.1). I lookup resi come
+   `.readonly-value` (isEditable="false") sono gia' testo normale. */
+.ant-select-disabled .ant-select-input {
+  pointer-events: none;
+}
+
+.ant-select.ant-select-status-error {
+  /* `!important` e due classi: antd la dichiara su
+     `.ant-select-outlined.ant-select-status-error`, quindi una sola classe
+     perderebbe comunque. */
+  --ant-select-color: var(--app-text) !important;
 }
 
 /* Vertical app bar (general operations) */

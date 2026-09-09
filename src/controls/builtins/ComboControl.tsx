@@ -3,11 +3,15 @@ import { Select } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import type { UIControl } from '../../types/ui';
-import { useCommonProps, useControlChange, getTextMaxWidth, comboWidthForSize, useSelectKeys, useSyncedState, useSelectOpen, getFieldName } from '../helpers';
+import { useCommonProps, useControlChange, getTextMaxWidth, comboWidthForSize, useSelectKeys, useSyncedState, useSelectOpen, useComboTextField, mandatoryStatus, getFieldName } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
 import { SidContext, PathContext } from '../../components/ViewRenderer';
 import * as api from '../../services/api';
+
+/** Quante voci per pagina chiede il lookup al server. Non e' piu' un tetto:
+ *  scorrendo la tendina si chiede la pagina successiva (SXADV-5642). */
+const PAGE_SIZE = 100;
 
 /** Remote combo (ListUIControl) — fetches options from the server as the user types. */
 const RemoteCombo: React.FC<{
@@ -52,13 +56,6 @@ const RemoteCombo: React.FC<{
   const searchRef = useRef('');
   const openRef = useRef(false);
   useEffect(() => { openRef.current = open; }, [open]);
-  const handleChange = useCallback((val: unknown) => {
-    setSelected((val as string) || undefined);
-    searchRef.current = ''; // scelta fatta: il testo di ricerca non vale piu'
-    if (!val) setOpen(false); // clearing (× or Canc) closes the list
-    onChange(val);
-  }, [onChange, setSelected, setOpen]);
-
   const [options, setOptions] = useState<{ value: string; label: string }[]>(
     value ? [{ value: value as string, label: displayText || (value as string) }] : []
   );
@@ -76,23 +73,97 @@ const RemoteCombo: React.FC<{
     }
   }, [selected, displayText]);
 
+  // Didascalia del valore scelto: e' quella che deve stare NELL'input perche'
+  // sia selezionabile e copiabile col mouse (SXADV-5641.1).
+  const label = (options.find(o => o.value === selected)?.label
+    ?? displayText ?? selected ?? '') as string;
+  const { selectRef, search, setSearch, showLabel, onFocus, onBlur, focusInput } =
+    useComboTextField(label, open);
+
+  const handleChange = useCallback((val: unknown) => {
+    setSelected((val as string) || undefined);
+    searchRef.current = ''; // scelta fatta: il testo di ricerca non vale piu'
+    // Con `searchValue` controllato il testo di ricerca non se ne va da solo:
+    // senza questo, scelta la voce resterebbe scritto quello che si era
+    // digitato per trovarla, sopra il nominativo appena scelto.
+    showLabel(val ? String(options.find(o => o.value === val)?.label ?? val) : '');
+    if (!val) setOpen(false); // clearing (× or Canc) closes the list
+    onChange(val);
+  }, [onChange, setSelected, setOpen, showLabel, options]);
+
   const loadedRef = useRef(false);
 
+  // Paginazione della tendina (SXADV-5642). Prima si chiedevano 100 voci e
+  // basta: cercando "rossi" fra le anagrafiche l'elenco si fermava a ROSSI
+  // DANIELE, e le successive (fino a TORNERIA AUTOMATICA ROSSI) non erano
+  // raggiungibili in alcun modo — mentre il legacy, che la tendina la paginava,
+  // le mostrava tutte. Il comando lato server (`ListUIControlListCommand`)
+  // legge gia' `start`/`limit`: qui si scorre e si chiede la pagina dopo.
+  const pageRef = useRef({ query: '', offset: 0, done: false });
+  const fetchingRef = useRef(false);
+
   const fetchOptions = useCallback(async (query: string) => {
+    fetchingRef.current = true;
     setFetching(true);
+    pageRef.current = { query, offset: 0, done: false };
     try {
-      const results = await api.fetchComboOptions(navpath, controlName, query, sid);
+      const results = await api.fetchComboOptions(navpath, controlName, query, sid, 0, PAGE_SIZE);
       setOptions(results.map(r => ({ value: r.value, label: r.text })));
+      pageRef.current = {
+        query,
+        offset: results.length,
+        done: results.length < PAGE_SIZE,
+      };
     } catch {
       // keep existing options on error
     } finally {
+      fetchingRef.current = false;
       setFetching(false);
       setHasFetched(true);
     }
   }, [navpath, controlName, sid]);
 
+  /** Pagina successiva, accodata in fondo all'elenco gia' mostrato. */
+  const fetchMore = useCallback(async () => {
+    const page = pageRef.current;
+    if (page.done || fetchingRef.current) return;
+    fetchingRef.current = true;
+    setFetching(true);
+    try {
+      const results = await api.fetchComboOptions(
+        navpath, controlName, page.query, sid, page.offset, PAGE_SIZE,
+      );
+      // Su una pagina di QUERY il server antepone la voce "valore mancante" a
+      // OGNI pagina: dalla seconda in poi e' un duplicato.
+      const rows = results.filter(r => r.value !== 'NULL');
+      setOptions(prev => {
+        const seen = new Set(prev.map(o => o.value));
+        return prev.concat(
+          rows.filter(r => !seen.has(r.value)).map(r => ({ value: r.value, label: r.text })),
+        );
+      });
+      pageRef.current = {
+        query: page.query,
+        offset: page.offset + results.length,
+        done: results.length < PAGE_SIZE,
+      };
+    } catch {
+      pageRef.current = { ...pageRef.current, done: true };
+    } finally {
+      fetchingRef.current = false;
+      setFetching(false);
+    }
+  }, [navpath, controlName, sid]);
+
+  /** Si e' arrivati in fondo alla tendina: carica il resto. */
+  const onPopupScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) fetchMore();
+  }, [fetchMore]);
+
   const handleSearch = useCallback((query: string) => {
     searchRef.current = query;
+    setSearch(query);
     // Solo una digitazione apre la lista. antd emette onSearch('') anche
     // quando la tendina si chiude: riaprirla li' significava buttare via il
     // codice appena scritto e mostrare l'elenco COMPLETO (SXADV-5766).
@@ -103,7 +174,7 @@ const RemoteCombo: React.FC<{
       if (!query && !openRef.current) return;
       fetchOptions(query);
     }, 300);
-  }, [fetchOptions, setOpen]);
+  }, [fetchOptions, setOpen, setSearch]);
 
   // Open the list, seeding the options with an unfiltered fetch on first open.
   // Shared by the trigger-arrow click and the Ctrl+Space keyboard shortcut.
@@ -112,15 +183,20 @@ const RemoteCombo: React.FC<{
       loadedRef.current = true;
       fetchOptions('');
     }
+    // Aprendo, la didascalia esce dall'input: la lista si mostra INTERA, non
+    // filtrata su quello che e' gia' scelto (SXADV-5641.1).
+    if (!searchRef.current) setSearch('');
     setOpen(true);
-  }, [fetchOptions, setOpen]);
+  }, [fetchOptions, setOpen, setSearch]);
 
-  // Trigger-arrow click: the only mouse gesture that opens the list.
-  // preventDefault keeps focus from bouncing; stopPropagation blocks antd's own
-  // open-on-click.
+  // Clic sulla freccia: apre e, come nel legacy, porta anche il fuoco DENTRO il
+  // campo. Prima il preventDefault (che serve a non far rimbalzare il fuoco e a
+  // togliere ad antd la sua apertura al clic) lasciava il campo senza fuoco, e
+  // per scrivere bisognava premere TAB o cliccare di nuovo (SXADV-5641.3).
   const toggleFromTrigger = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    focusInput();
     if (!open) { openList(); return; }
     // Tendina gia' aperta perche' si sta digitando: la freccia NON la chiude.
     // Chi ha scritto "0010" e apre il lookup vuole vedere i risultati di
@@ -128,14 +204,26 @@ const RemoteCombo: React.FC<{
     // insieme alla tendina) — SXADV-5766.
     if (searchRef.current) return;
     setOpen(false);
-  }, [open, openList, setOpen]);
+  }, [open, openList, setOpen, focusInput]);
+
+  // Clic sul CORPO del campo: apre la tendina solo se il campo e' vuoto
+  // (SXADV-5641.4). Con un valore dentro il clic serve a mettersi nel testo per
+  // selezionarlo, e aprire li' la lista era proprio il difetto corretto a suo
+  // tempo (SXADV-5489.2); a campo vuoto invece non c'e' niente da selezionare e
+  // il gesto naturale e' "fammi vedere cosa posso scegliere".
+  const openIfEmpty = useCallback(() => {
+    if (!selected && !open) openList();
+  }, [selected, open, openList]);
 
   // Esc = undo: restore the server baseline (`value`) locally + into formValues,
   // no reload. `selected` re-syncs from the server on the next real round-trip.
   const restore = useCallback((val: string | undefined) => {
     setSelected(val);
+    // Anche l'annullamento rimette nell'input la didascalia GIUSTA: senza,
+    // resterebbe scritta quella del valore appena annullato.
+    showLabel(val ? String(options.find(o => o.value === val)?.label ?? val) : '');
     rawOnChange(getFieldName(control), val ?? '');
-  }, [control, rawOnChange, setSelected]);
+  }, [control, rawOnChange, setSelected, showLabel, options]);
   // Chiusura (Esc, clic fuori, scelta): il testo di ricerca se ne va con la
   // tendina, quindi il ref torna vuoto e la freccia riprende a fare da toggle.
   const closeList = useCallback(() => { searchRef.current = ''; setOpen(false); }, [setOpen]);
@@ -143,14 +231,23 @@ const RemoteCombo: React.FC<{
     if (!visible) searchRef.current = '';
     onOpenChange(visible);
   }, [onOpenChange]);
-  const onKeyDown = useSelectKeys(selected, value, handleChange, restore, closeList, openList);
+  const onKeyDown = useSelectKeys(selected, value, handleChange, restore, closeList, openList, open);
 
   return (
     <Select
       {...commonProps}
+      // Il rosso dell'obbligatorio segue il valore ATTUALE, non quello con cui
+      // il server ha disegnato la maschera (SXADV-5754.2).
+      status={mandatoryStatus(control, selected ?? '')}
+      ref={selectRef}
       value={selected}
       open={open}
       showSearch
+      searchValue={search}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onMouseDown={openIfEmpty}
+      onPopupScroll={onPopupScroll}
       defaultActiveFirstOption={false}
       filterOption={false}
       // Same as the local combo: don't clip the option popup to a narrow
@@ -182,6 +279,10 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // Open only on typing or a trigger-arrow click, never on a body/focus click
   // (ExtJS parity, SXADV-5489.2) — same treatment as the remote branch.
   const { open, setOpen, onOpenChange } = useSelectOpen();
+  const staticLabel = ((control.options || []).find(o => o.value === selected)?.text
+    ?? control.displayText ?? control.displayValue ?? selected ?? '') as string;
+  const { selectRef, search, setSearch, showLabel, onFocus, onBlur, focusInput } =
+    useComboTextField(staticLabel, open);
   // Testo digitato nel campo di ricerca (SXADV-5766) — stesso ruolo che ha
   // nel ramo remoto: antd lo scarta insieme alla tendina quando questa si
   // chiude, e la onSearch('') che ne segue la riaprirebbe senza filtro.
@@ -189,23 +290,37 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   const handleSelectChange = useCallback((val: unknown) => {
     setSelected((val as string) || undefined);
     searchRef.current = '';
+    // Con `searchValue` controllato il testo di ricerca non se ne va da solo:
+    // senza questo, scelta la voce resterebbe scritto quello che si era
+    // digitato per trovarla.
+    showLabel(val ? String((control.options || []).find(o => o.value === val)?.text ?? val) : '');
     if (!val) setOpen(false); // clearing (× or Canc) closes the list
     handleChange(val);
-  }, [handleChange, setSelected, setOpen]);
-  const openList = useCallback(() => setOpen(true), [setOpen]);
+  }, [handleChange, setSelected, setOpen, showLabel, control.options]);
+  const openList = useCallback(() => {
+    // Come nel ramo remoto: aprendo, la didascalia esce dall'input, altrimenti
+    // `optionFilterProp` filtrerebbe l'elenco sulla voce gia' scelta.
+    if (!searchRef.current) setSearch('');
+    setOpen(true);
+  }, [setOpen, setSearch]);
   const toggleFromTrigger = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!open) { setOpen(true); return; }
+    focusInput(); // il clic sulla freccia entra anche nel campo (SXADV-5641.3)
+    if (!open) { openList(); return; }
     // Lista aperta da una digitazione: la freccia non la chiude, altrimenti
     // il filtro appena scritto sparisce e riappare l'elenco intero.
     if (searchRef.current) return;
     setOpen(false);
-  }, [open, setOpen]);
+  }, [open, setOpen, openList, focusInput]);
+  const openIfEmpty = useCallback(() => {
+    if (!selected && !open) openList(); // SXADV-5641.4
+  }, [selected, open, openList]);
   const handleSearch = useCallback((query: string) => {
     searchRef.current = query;
+    setSearch(query);
     if (query) setOpen(true); // solo una digitazione apre la lista
-  }, [setOpen]);
+  }, [setOpen, setSearch]);
   const handleOpenChange = useCallback((visible: boolean) => {
     if (!visible) searchRef.current = '';
     onOpenChange(visible);
@@ -214,10 +329,11 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // formValues, no reload.
   const restore = useCallback((val: string | undefined) => {
     setSelected(val);
+    showLabel(val ? String((control.options || []).find(o => o.value === val)?.text ?? val) : '');
     onChange(getFieldName(control), val ?? '');
-  }, [control, onChange, setSelected]);
+  }, [control, onChange, setSelected, showLabel]);
   const closeList = useCallback(() => { searchRef.current = ''; setOpen(false); }, [setOpen]);
-  const onKeyDown = useSelectKeys(selected, control.value, handleSelectChange, restore, closeList, openList);
+  const onKeyDown = useSelectKeys(selected, control.value, handleSelectChange, restore, closeList, openList, open);
   const textMaxWidth = getTextMaxWidth(control);
   // Width handling (SXADV-5461.1). antd Select is a <div> with no intrinsic
   // width, so `width:100%` alone collapses it to ~1 char inside an auto-layout
@@ -305,9 +421,16 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   return withPostDecorations(
     <Select
       {...commonProps}
+      // Il rosso dell'obbligatorio segue il valore ATTUALE (SXADV-5754.2).
+      status={mandatoryStatus(control, selected ?? '')}
+      ref={selectRef}
       value={selected}
       open={open}
       showSearch
+      searchValue={search}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onMouseDown={openIfEmpty}
       optionFilterProp="label"
       defaultActiveFirstOption={false}
       // The trigger honors the ViewItem `size` (e.g. size=10 → 96px), but the

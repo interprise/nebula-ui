@@ -4,9 +4,9 @@ import { useCommonProps, useCommitReload, useSyncedValue, getTextMaxWidth } from
 import { withPostDecorations } from '../decorations';
 
 const PasswordControl: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   const [value, setValue] = useSyncedValue(control.value);
+  const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const textMaxWidth = getTextMaxWidth(control);
   return withPostDecorations(
     <Input.Password

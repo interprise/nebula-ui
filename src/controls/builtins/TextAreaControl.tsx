@@ -4,7 +4,6 @@ import { useCommonProps, useCommitReload, useSyncedValue } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
 const TextAreaControl: ControlComponent = ({ control, pageType, onChange, onAction }) => {
-  const commonProps = useCommonProps(control);
   const { store, commit } = useCommitReload(control, onChange, onAction);
   // Controlled + re-synced from control.value, like every other text control.
   // An uncontrolled `defaultValue` is only read at mount, and the control's
@@ -13,6 +12,7 @@ const TextAreaControl: ControlComponent = ({ control, pageType, onChange, onActi
   // record's text (SXADV-5527). useSyncedValue re-applies control.value when a
   // server round-trip (record navigation, reload) changes it.
   const [value, setValue] = useSyncedValue(control.value);
+  const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const minRows = control.rows || 3;
   const contentLines = value.split('\n').length;
   const rows = Math.max(minRows, Math.min(contentLines + 1, 30));

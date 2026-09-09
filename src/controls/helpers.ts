@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, RefObject, SetStateAction } from 'react';
+import type { RefSelectProps as BaseSelectRef } from 'antd/es/select';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
 import { captureFocusBeforeReload } from '../services/focusRestore';
@@ -228,6 +229,67 @@ export function useSelectOpen(): {
   return { open, setOpen, onOpenChange };
 }
 
+/** Fa di una `Select` antd un campo di TESTO vero quando ha un valore.
+ *
+ *  antd v6 non mette il valore scelto nell'`<input>`: lo scrive come nodo di
+ *  testo dentro `.ant-select-content` e ci appoggia sopra un `<input>` vuoto in
+ *  posizione assoluta, largo quanto la cella. Il testo che si vede e' quindi
+ *  sotto l'input e il mouse non lo raggiunge mai: niente doppio clic per
+ *  selezionare una parola, niente selezione parziale (solo il codice, solo il
+ *  codice fiscale), niente CTRL+C — mentre nel legacy la combo ExtJS era un
+ *  `<input>` con dentro la descrizione, e tutto questo funzionava
+ *  (SXADV-5641.1).
+ *
+ *  Rimedio: mentre il campo ha il fuoco e la tendina e' chiusa, teniamo la
+ *  didascalia dentro l'input via `searchValue`. antd fa il resto — con un testo
+ *  di ricerca marca il contenuto `-has-search-value`, che rende trasparente il
+ *  nodo di testo sottostante — quindi non si vede doppio, e quello che si legge
+ *  e' testo di un input: selezionabile, copiabile, modificabile. Al primo fuoco
+ *  lo selezioniamo tutto (come `selectOnFocus` di ExtJS), cosi' battere un
+ *  carattere lo sostituisce invece di appenderlo in coda.
+ *
+ *  Aprendo la tendina il testo se ne va: la lista va mostrata INTERA, non
+ *  filtrata sulla descrizione di quello che e' gia' scelto. */
+export function useComboTextField(label: string, open: boolean): {
+  selectRef: RefObject<BaseSelectRef | null>;
+  search: string;
+  setSearch: Dispatch<SetStateAction<string>>;
+  showLabel: (next: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  focusInput: () => void;
+} {
+  const selectRef = useRef<BaseSelectRef | null>(null);
+  const [search, setSearch] = useState('');
+  const focusedRef = useRef(false);
+  const inputEl = useCallback(
+    () => selectRef.current?.nativeElement?.querySelector<HTMLInputElement>('input') ?? null,
+    [],
+  );
+  const onFocus = useCallback(() => {
+    focusedRef.current = true;
+    if (open || !label) return;
+    setSearch(label);
+    // L'input prende il testo al giro di render successivo: la selezione va
+    // chiesta dopo, o si seleziona il vuoto.
+    requestAnimationFrame(() => inputEl()?.select());
+  }, [open, label, inputEl]);
+  const onBlur = useCallback(() => {
+    focusedRef.current = false;
+    setSearch('');
+  }, []);
+  /** Scelta una voce, la sua didascalia torna nell'input (il campo ha ancora il
+   *  fuoco, e quello che si vede dev'essere di nuovo testo selezionabile).
+   *  Va chiamato: con `searchValue` controllato antd non puo' piu' ripulire da
+   *  se' il testo di ricerca dopo una scelta, e "rossi" resterebbe scritto
+   *  sopra il nominativo appena scelto. */
+  const showLabel = useCallback((next: string) => {
+    setSearch(focusedRef.current ? next : '');
+  }, []);
+  const focusInput = useCallback(() => selectRef.current?.focus(), []);
+  return { selectRef, search, setSearch, showLabel, onFocus, onBlur, focusInput };
+}
+
 const norm = (v: unknown): string | undefined =>
   v == null || v === '' ? undefined : String(v);
 
@@ -239,11 +301,15 @@ const norm = (v: unknown): string | undefined =>
  *  - **Esc** acts as a field-level undo, restoring `baseline` (the last
  *    server/committed value) — a value the user had just cleared or changed is
  *    otherwise lost. Also closes the dropdown, since `open` is controlled.
- *  - **Ctrl+Space / Ctrl+ArrowDown** opens the list from the keyboard — the
- *    dropdown is controlled to stay shut on focus, so this is the keyboard
- *    equivalent of a trigger-arrow click (same combo as ExpBuilderControl).
+ *  - **Freccia giu'** (e Ctrl+Space / Ctrl+ArrowDown) apre la lista da
+ *    tastiera. La tendina e' controllata e resta chiusa sul focus, quindi
+ *    questo e' l'equivalente da tastiera del clic sulla freccia — ed e' il
+ *    gesto che la linea legacy aveva e che qui mancava (SXADV-5641.2). A lista
+ *    gia' aperta la freccia giu' NON viene intercettata: li' e' antd a
+ *    spostare l'evidenziazione fra le voci.
  *
- *  `clear`/`restore` receive the value to commit; `close`/`openList` toggle. */
+ *  `clear`/`restore` receive the value to commit; `close`/`openList` toggle;
+ *  `isOpen` dice se la tendina e' gia' aperta. */
 export function useSelectKeys(
   value: unknown,
   baseline: unknown,
@@ -251,10 +317,20 @@ export function useSelectKeys(
   restore: (val: string | undefined) => void,
   close: () => void,
   openList: () => void,
+  isOpen = false,
 ): (e: KeyboardEvent<HTMLElement>) => void {
   return useCallback(
     (e: KeyboardEvent<HTMLElement>) => {
       if (e.ctrlKey && (e.code === 'Space' || e.key === ' ' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openList();
+        return;
+      }
+      // Freccia giu' a tendina chiusa: apre, come nel legacy. Aperta, lascia
+      // fare ad antd (scorrimento fra le voci). Alt+Down e' lo stesso gesto
+      // sui <select> nativi, quindi passa di qui anche lui.
+      if (e.key === 'ArrowDown' && !isOpen && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
         openList();
@@ -276,7 +352,7 @@ export function useSelectKeys(
       e.stopPropagation();
       clear(undefined);
     },
-    [value, baseline, clear, restore, close, openList],
+    [value, baseline, clear, restore, close, openList, isOpen],
   );
 }
 
@@ -472,24 +548,45 @@ export interface CommonInputProps {
   style?: CSSProperties;
 }
 
-export function useCommonProps(control: UIControl): CommonInputProps {
-  const { id, hint, mandatory, value, disabled, editable, type } = control;
+/** Il rosso dell'obbligatorio (`status="error"`) di un campo.
+ *
+ *  Legacy gated the red border (the `nb-md` marker class) on
+ *  `isMandatoryUI(...) && editable`: a mandatory field the user cannot fill
+ *  must not be flagged, and booleans — mandatory by construction — were
+ *  excluded outright. Mirror both here, matching withPostDecorations' star
+ *  gating (SXADV-5663).
+ *
+ *  Il segno deve seguire quello che c'e' NEL CAMPO ADESSO, non l'ultimo valore
+ *  arrivato dal server: Shell scrive le modifiche dei campi in una ref senza
+ *  setState, quindi `control.value` resta quello di partenza fino al prossimo
+ *  giro col server. Cosi' un obbligatorio appena compilato restava rosso, e uno
+ *  appena svuotato non si accendeva (SXADV-5754.2). I control che tengono uno
+ *  stato locale (testo, numero, data, combo) passano `liveValue`; chi non lo fa
+ *  ricade sul valore del server. */
+export function mandatoryStatus(
+  control: UIControl,
+  liveValue?: unknown,
+): 'error' | undefined {
+  const { mandatory, value, disabled, editable, type } = control;
   const isDisabled = !!disabled || editable === false;
-  // Legacy gated the red border (the `nb-md` marker class) on
-  // `isMandatoryUI(...) && editable`: a mandatory field the user cannot fill
-  // must not be flagged, and booleans — mandatory by construction — were
-  // excluded outright. Mirror both here, matching withPostDecorations' star
-  // gating. Previously the metadata render path shipped `mandatory` for
-  // almost nothing, so an ungated check went unnoticed; now that derived
-  // mandatory fields resolve correctly, read-only ones would light up red
-  // (e.g. a non-nullable "Id Batch" carrying isEditable="false"). (SXADV-5663)
   const showMandatory = !!mandatory && !isDisabled
     && type !== 'boolean' && type !== 'checkbox';
+  if (!showMandatory) return undefined;
+  const effective = liveValue !== undefined ? liveValue : value;
+  return effective == null || effective === '' ? 'error' : undefined;
+}
+
+export function useCommonProps(
+  control: UIControl,
+  liveValue?: unknown,
+): CommonInputProps {
+  const { id, hint, disabled, editable } = control;
+  const isDisabled = !!disabled || editable === false;
   return {
     id,
     title: hint,
     disabled: isDisabled,
-    status: showMandatory && !value ? 'error' as const : undefined,
+    status: mandatoryStatus(control, liveValue),
     // contentStyle del ViewItem (allineamento, corsivo, grassetto). Il writer
     // legacy lo scriveva solo sulla <td> della cella di LISTA: nella form il
     // suo `<input>` prendeva `inputStyle`, e un `contentStyle` dichiarato su un
