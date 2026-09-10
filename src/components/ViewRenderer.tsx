@@ -1950,23 +1950,23 @@ const CellRenderer: React.FC<{
       );
 
     case ELTYPE_CONTENT: {
-      // Una casella di spunta occupa una colonna sola: le altre che il `size`
-      // le assegna le lascia a chi viene dopo. A meno che non le serva davvero:
-      // se l'item dichiara un postPrompt, la spiegazione scritta a destra della
-      // casella, il server ha gia' allargato la cella della sua lunghezza
-      // (LayoutManager: cellSize + postPromptSize). Stringerla a una colonna
-      // taglia il testo — `.content-cell` e' overflow:hidden — e la didascalia
-      // del flag "Default" dei conti correnti spariva del tutto (SXADV-5796.3).
+      // Una casella di spunta tiene le colonne che il `size` le assegna, come
+      // ogni altra cella e come nel legacy. Stringerla a una colonna sola
+      // regalava le altre a chi viene dopo, e tutto il resto della riga
+      // scivolava a sinistra perdendo l'allineamento con le righe che
+      // dichiarano le stesse colonne: la casella "gestioni extra-c. separate"
+      // del Bilancio finiva attaccata a quella prima invece che sotto la sua
+      // etichetta, dichiarata `size="8"` come lei (SXADV-5795.2). Il righello e
+      // `freeRight` contavano gia' il colspan del server, quindi non cambiano;
+      // e la casella resta a sinistra nella sua cella (`.content-cell`).
+      // Non sconfina a destra: non ha niente da salvare, e il postPrompt ha gia'
+      // la cella allargata dal server (LayoutManager: cellSize + postPromptSize).
       const isCompact = (cell.control?.type === 'boolean' || cell.control?.type === 'checkbox')
         && !cell.control?.postPrompt;
-      if (isCompact) {
-        tdProps.colSpan = 1;
-        tdProps.style = { ...tdProps.style, width: '1%' };
-      }
       const docIcon = cell.control?.docIcon;
       const configureIcon = cell.control?.configureIcon;
       // `has-side-icons` toglie il clipping alla cella: in una cella stretta
-      // (una checkbox ne occupa una sola, ~24px) l'icona finirebbe oltre il
+      // (una checkbox da `size="1"`, ~24px) l'icona finirebbe oltre il
       // bordo e l'`overflow:hidden` la mangerebbe — vedi global.css.
       const hasSideIcons = !!(docIcon || configureIcon);
       // `cell-free-right`: la riga finisce qui e a destra ci sono colonne
