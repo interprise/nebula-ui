@@ -874,6 +874,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // (mode "MC" — key advertised, template omitted): same key, different
         // page, so the key comparison alone wouldn't catch it.
         if (resp.templateKey !== prevTemplateKey || !resp.template) editNavpathRef.current = null;
+        // Stessa uscita dalla lista, ma per l'armamento del "Nuovo": un Add
+        // su una lista con `detailViewName` e `inlineEdit="false"` NON aggiunge
+        // una riga, apre la mappa di dettaglio (ToolView.isInlineEdited), quindi
+        // nessun pannello consuma il flag e questo resta armato. Al primo
+        // ritorno sulla lista - un passo indietro, il Salva della mappa - la
+        // riga nuova e' quella in edit path lato server e il micro-detail si
+        // apriva da solo su di lei (SXADV-5888). Il cambio di template dice
+        // che si e' lasciata la lista: da qui in avanti quell'Add non riguarda
+        // piu' nessun pannello.
+        if (resp.templateKey !== prevTemplateKey) pendingAddRef.current = false;
         if (resp.template) putTemplate(resp.templateKey, resp.template);
         const bindings = resp.bindings ?? {};
         const scopePaths = resp.scopePaths ?? {};

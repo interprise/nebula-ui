@@ -21,6 +21,7 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
+import { viewstateIdOf } from './listEditPosting';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 
@@ -1184,9 +1185,20 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     const editData = editDataByPath.get(selectedPath);
     if (!editData) return null;
     const scopePaths = { ...(panelTemplate.scopePaths ?? {}), '': selectedPath };
+    // Lo stesso vale per l'id di viewstate con cui si compongono i nomi di
+    // campo del post: il template del pannello e' in cache per nome di VISTA,
+    // ma i suoi `bindings` portano l'id della pagina in cui fu costruito.
+    // Riaprendo la funzione (o rendendo di nuovo la lista embedded su un altro
+    // record) il pannello componeva i nomi con l'id di una pagina precedente:
+    // PostItemVisitor non trovava nessun parametro, il digitato veniva scartato
+    // in silenzio e il Salva rispondeva "Nessuna modifica da salvare"
+    // ripulendo il pannello (SXADV-5887). L'id vivo sta nel percorso della riga
+    // selezionata - quello che il Salva manda come navpath - quindi da li' si
+    // prende, e nomi di campo e navpath restano per costruzione coerenti.
+    const bindings = { ...(panelTemplate.bindings ?? {}), '': viewstateIdOf(selectedPath) };
     return hydrate(
       { rows: panelTemplate.rows } as UITree,
-      editData.values, editData.dynProps, panelTemplate.bindings, scopePaths,
+      editData.values, editData.dynProps, bindings, scopePaths,
     );
   }, [panelTemplate, selectedPath, editDataByPath]);
   // The panel is hydrated client-side, so the tab's dataVersion doesn't move
