@@ -7,7 +7,7 @@ import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, Expand
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
-import { SidContext, TitleInBreadcrumbContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } from './ViewRenderer';
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -857,12 +857,7 @@ interface ListRendererProps {
 }
 
 const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown }) => {
-  // The page title is already the closing breadcrumb, so a page-level list must
-  // not repeat it as a heading (SXADV-5742). Embedded grids keep their title —
-  // it names the section, not the page. The subtitle (applied filters, 5484) is
-  // unaffected: it says something the breadcrumb doesn't.
-  const titleInBreadcrumb = useContext(TitleInBreadcrumbContext) && !embedded;
-  // Nor does a grid inside a tab repeat the tab's own label (the documents
+  // A grid inside a tab does not repeat the tab's own label (the documents
   // "Righe fattura" case — see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
   const sid = useContext(SidContext);
@@ -2681,7 +2676,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       {/* In zoom il titolo torna anche quando ripete l'etichetta del tab: la
           barra dei tab non c'è più, e resterebbe l'unica cosa a dire su quali
           righe si sta lavorando. */}
-      {meta?.title && !titleInBreadcrumb && (!titleEchoesTab || isZoomed) && <div className="view-title">{meta.title}</div>}
+      {meta?.title && (!titleEchoesTab || isZoomed) && <div className="view-title">{meta.title}</div>}
       {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
 
       {/* Embedded-list action bar, above the grid and styled like the primary

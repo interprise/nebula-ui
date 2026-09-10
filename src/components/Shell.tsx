@@ -67,7 +67,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, TitleInBreadcrumbContext, PaneToolbarContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PaneToolbarContext } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1671,16 +1671,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     return items;
   }, [breadcrumbs]);
 
-  // The view's own title closes the breadcrumb trail instead of occupying a
-  // heading row of its own (SXADV-5742): the trail already names where the user
-  // is ("Fatture - Interrogazione › Fatture - Nuovo Record"), so the separate
-  // `.view-title` line under the toolbar was saying it twice and costing a full
-  // row of the editing area. Only when a trail exists — a top-level view has no
-  // crumbs and keeps its own title, which is then the only thing naming it.
-  const titleIsLastCrumb = parsedBreadcrumbs.length > 0
-    && !!currentTab?.ui?.title
-    && !viewHasOlapCube(currentTab?.ui);
-
   // Copyright line: shown only when the view leaves room for it at the foot of
   // the tab. It is positioned out of flow (see .view-copyright), so it never
   // shortens the view — a grid sized to fill the tab keeps the full height and
@@ -2315,17 +2305,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                                   style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }}
                                 >{b.title}</span>
                               ),
-                            })).concat(titleIsLastCrumb ? [{
-                              // Closing crumb: where the user IS. Not a link and
-                              // weighted like a heading, since it replaces the
-                              // view's own title row (SXADV-5742).
-                              title: (
-                                <span
-                                  className="breadcrumb-current"
-                                  title={currentTab.ui!.title}
-                                >{currentTab.ui!.title}</span>
-                              ),
-                            }] : [])}
+                            }))}
                           />
                         ) : <span style={{ flex: 1 }} />}
                         {currentTab.ui?.attachmentsInfo && (
@@ -2346,15 +2326,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       <FlushEditsContext.Provider value={flushFieldEdits}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
-                          <TitleInBreadcrumbContext.Provider value={titleIsLastCrumb}>
-                            <ViewRenderer
-                              ui={currentTab.ui}
-                              onAction={handleAction}
-                              onChange={handleFieldChange}
-                              onGridChange={handleGridChange}
-                              onEditRow={handleEditRow}
-                            />
-                          </TitleInBreadcrumbContext.Provider>
+                          <ViewRenderer
+                            ui={currentTab.ui}
+                            onAction={handleAction}
+                            onChange={handleFieldChange}
+                            onGridChange={handleGridChange}
+                            onEditRow={handleEditRow}
+                          />
                         </DataVersionContext.Provider>
                       </PendingAddContext.Provider>
                       </FlushEditsContext.Provider>

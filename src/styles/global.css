@@ -1463,20 +1463,6 @@ tr.breakRow td {
 
 /* Breadcrumb links: make clickable steps (incl. the "« back one step" link)
    read clearly as actions rather than greyed inactive text (item 5455.0). */
-/* Closing crumb — the current view's own title, folded into the trail so it no
-   longer needs a heading row of its own (SXADV-5742). Carries the weight the
-   `.view-title` had, so the trail still reads as "path › YOU ARE HERE". */
-.breadcrumb-current {
-  font-weight: 600;
-  color: #1f1f1f;
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: inline-block;
-  vertical-align: bottom;
-}
-
 .breadcrumb-link,
 .breadcrumb-back-link {
   color: #1677ff !important;

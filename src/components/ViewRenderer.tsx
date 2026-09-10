@@ -748,15 +748,6 @@ export const PendingAddContext = React.createContext<(() => boolean) | undefined
 // AG Grid's autoHeight.
 export const FillHeightContext = React.createContext<boolean>(false);
 
-// The Shell is already showing the current view's title as the closing
-// (non-clickable) breadcrumb, so the view itself must not repeat it as a heading
-// row — that duplicate cost a full row of the editing area (SXADV-5742). A
-// context rather than a prop because three different renderers emit the heading
-// (ViewRenderer, ListRenderer, TreeRenderer) at varying depths. EMBEDDED views
-// ignore it: their title names a section inside the page ("Righe fattura"), not
-// the page, so it is not the thing the breadcrumb is showing.
-export const TitleInBreadcrumbContext = React.createContext<boolean>(false);
-
 // Label of the tab whose content is being rendered, for the subtree inside it.
 // A tab's label already names its content, so a view inside it must not repeat
 // that name as a heading. CORE drops the title of a view sitting DIRECTLY in a
@@ -1332,9 +1323,10 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   pageType: number | undefined;
   fillHeight: boolean;
 }> = ({ ui, pageType, onAction, onChange, onGridChange, embedded, fillHeight }) => {
-  // Suppressed only for the page-level view: an embedded view's title names a
-  // section, which the breadcrumb is not showing (see TitleInBreadcrumbContext).
-  const titleInBreadcrumb = React.useContext(TitleInBreadcrumbContext) && !embedded;
+  // The title is the view's own heading, inside the view and under the toolbar,
+  // as in the legacy client — not the closing crumb of the breadcrumb trail. With
+  // a long trail that crumb ended up truncated or off to the side, and the user
+  // lost track of where they were (SXADV-5831, undoing that part of SXADV-5742).
   // Inside a tab, a heading that just repeats the tab label is dropped.
   const titleEchoesTab = useIsTabLabelEcho(ui.title);
   const splitSid = React.useContext(SidContext);
@@ -1626,7 +1618,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
         {zoomed && !embedded && <ZoomEscapeFallback />}
-        {ui.title && !hasOlapCube && !titleInBreadcrumb && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
+        {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
             {actionBarRows.map((row, ri) => (
@@ -1735,7 +1727,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
     <ViewNameContext.Provider value={ui.viewName}>
     <PathContext.Provider value={ui.path}>
     <div className="view-container">
-      {ui.title && !hasOlapCube && !titleInBreadcrumb && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
+      {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
       <div {...bodyProps}>
         <table ref={tableRef} className="layout-table" style={tableStyle}>
           <tbody>
