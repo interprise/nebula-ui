@@ -38,17 +38,8 @@ const ServerSortHeader = (props: {
   sortExpression?: string;
   sortDir?: string;
   configureIcon?: { included: boolean; itemId: string };
-  /** Colonna allineata a destra (money/number). AG Grid allinea l'intestazione
-   *  con `.ag-right-aligned-header .ag-header-cell-text`, un selettore che
-   *  esiste solo per l'intestazione DI SERIE: con un headerComponent proprio
-   *  (liste ordinate dal server, o colonna con configureIcon) quella regola non
-   *  aggancia nulla e il nome colonna resta a sinistra sopra dati allineati a
-   *  destra (SXADV-5736.2). Ci allineiamo qui, come fa AG Grid: `row-reverse`,
-   *  che impacchetta a destra e porta l'indicatore di ordinamento a sinistra
-   *  dell'etichetta. */
-  alignRight?: boolean;
 }) => {
-  const { displayName, sortExpression, sortDir, configureIcon, alignRight } = props;
+  const { displayName, sortExpression, sortDir, configureIcon } = props;
   const icon = configureIcon && (
     <span
       className={`configure-icon ${configureIcon.included ? 'configure-on' : 'configure-off'}`}
@@ -64,14 +55,7 @@ const ServerSortHeader = (props: {
   );
   if (!sortExpression) {
     return (
-      <span style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        flexDirection: alignRight ? 'row-reverse' : 'row',
-        width: alignRight ? '100%' : undefined,
-        textAlign: alignRight ? 'right' : undefined,
-      }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         <span>{displayName}</span>
         {icon}
       </span>
@@ -86,8 +70,6 @@ const ServerSortHeader = (props: {
         gap: 4,
         width: '100%',
         userSelect: 'none',
-        flexDirection: alignRight ? 'row-reverse' : 'row',
-        textAlign: alignRight ? 'right' : undefined,
       }}
       onClick={() => sortDispatchRef.current?.(sortExpression)}
     >
@@ -599,8 +581,9 @@ function scheduleRowHeightFlush(api: GridApi): void {
 /** Una cella di una banda di continuazione, come la costruisce
  *  `buildContinuationCells`. `cls`/`style` sono il contentClass e il
  *  contentStyle della cella, piu' le classi che il writer legacy metteva sulla
- *  <td> (`number`): nella prima banda l'allineamento si ricava dal tipo di
- *  controllo di `ui.columns`, che per le bande successive non esiste. */
+ *  <td> (`number`, che allinea a destra il valore): nella prima banda
+ *  l'allineamento si ricava dal tipo di controllo di `ui.columns`, che per le
+ *  bande successive non esiste. */
 type ContCell = {
   html?: string;
   text?: string;
@@ -609,15 +592,6 @@ type ContCell = {
   cls?: string;
   style?: string;
 };
-
-/** Una cella di continuazione e' allineata a destra? Le due sorgenti sono le
- *  stesse della prima banda: la classe `number` che ogni controllo Number/Money
- *  porta con se' e un `contentStyle="text-align:right"` del ViewItem
- *  (SXADV-5734.1a). */
-function isContCellRightAligned(cell: ContCell): boolean {
-  if (cell.cls && /(^|\s)number(\s|$)/.test(cell.cls)) return true;
-  return !!cell.style && /text-align\s*:\s*right/i.test(cell.style);
-}
 
 // Render a single continuation cell. Custom (cell-renderable) controls
 // delegate to the registered React component — main cols are served by
@@ -1013,13 +987,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // and the whole value shows over multiple lines instead of being clipped to
     // the first line (item 5455.3). Detected from the first data row's cells.
     const wrapColumns = new Set<number>();
-    // Colonne allineate a destra dallo STILE della cella invece che dal tipo di
-    // controllo: `contentStyle="text-align:right"` su un ViewItem di testo (il
-    // numero documento, ad esempio) arriva come stile inline per-cella, che il
-    // dato rispetta e l'intestazione no — nome colonna a sinistra sopra valori a
-    // destra (SXADV-5736.2). Serve solo per l'intestazione: la cella è già a
-    // posto per conto suo.
-    const styleRightColumns = new Set<number>();
     {
       const firstDataRow = uiRows.find((r: UIRow) => r.cls !== 'breakRow' && !isContinuationRow(r));
       firstDataRow?.cells.forEach((cell: UICell, idx: number) => {
@@ -1027,32 +994,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (!st) return;
         if (/white-space\s*:\s*(pre-wrap|pre-line|normal)/i.test(st)) wrapColumns.add(idx);
       });
-      /* L'allineamento invece si cerca su TUTTE le righe, e anche dentro il
-         valore. Due motivi, e su "Estratto conto" si presentano insieme:
-
-          - lo stile della cella il server lo mette solo dove c'e' un valore, e
-            una colonna importi puo' essere vuota proprio nella prima riga —
-            DARE valorizzata e AVERE vuota danno due intestazioni allineate in
-            modo diverso sopra due colonne che sono la stessa cosa;
-          - queste colonne non sono `money` ma `html` (dareHtml/avereHtml), e
-            l'allineamento del DATO se lo porta il valore stesso, che il server
-            confeziona come `<div style="text-align:right">…</div>`. Guardando
-            solo `control.style` si legge il contorno e si perde il contenuto.
-
-         Si accetta come indizio solo il div/span di apertura del valore, non un
-         "text-align:right" qualsiasi in mezzo al markup: quello allinea una
-         parte della cella, non la colonna (SXADV-5736.2). */
-      const VALUE_RIGHT = /^\s*<(?:div|span)[^>]*text-align\s*:\s*right/i;
-      for (const r of uiRows) {
-        if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
-        r.cells.forEach((cell: UICell, idx: number) => {
-          if (styleRightColumns.has(idx)) return;
-          const st = cell.control?.style;
-          if (st && /text-align\s*:\s*right/i.test(st)) { styleRightColumns.add(idx); return; }
-          const v = cell.control?.value;
-          if (typeof v === 'string' && VALUE_RIGHT.test(v)) styleRightColumns.add(idx);
-        });
-      }
     }
 
     // Due cose che si vedono solo guardando i DATI, non le colonne.
@@ -1168,9 +1109,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           wrapText = true;
         }
         const isRightAlign = rightAlignColumns.has(idx);
-        // L'intestazione segue anche l'allineamento imposto via contentStyle,
-        // che invece non tocca le celle (già allineate dal loro stile inline).
-        const isHeaderRightAlign = isRightAlign || styleRightColumns.has(idx);
         // Minimum width based on longest word in header (measured, zoom-proof),
         // piu' cio' che condivide la riga dell'intestazione con l'etichetta.
         const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
@@ -1314,7 +1252,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             const s = params.data?.[`_style_${idx}`] as string | undefined;
             return s ? parseInlineStyle(s) : null;
           },
-          headerClass: isHeaderRightAlign ? 'ag-right-aligned-header' : undefined,
+          // Niente `headerClass` di allineamento: il nome colonna sta a SINISTRA
+          // anche sopra importi e numeri allineati a destra, come nel legacy, e
+          // cosi' anche nelle bande di continuazione (SXADV-5736.2).
           headerTooltip: hdr.hint,
           // Fixed width so columns start at their colspan-proportioned
           // dimension (see effectiveWidth) and remain resizable by the user.
@@ -1344,7 +1284,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               sortExpression: !allDataLocal ? hdr.sortExpression : undefined,
               sortDir: hdr.sortDir,
               configureIcon: hdr.configureIcon,
-              alignRight: isHeaderRightAlign,
             },
           } : {}),
         });
@@ -1476,7 +1415,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
        stessa coordinata su cui il server allinea celle ed etichette
        (`colspan` cumulativo), quindi è anche ciò che permette di ritrovare
        l'etichetta giusta per ognuna. */
-    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean; rightAlign: boolean };
+    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean };
     const flatCols = new Map<string, FlatCol>();
 
     // Build row data, detecting continuation rows (first cell is DUMMY elementType 9)
@@ -1521,13 +1460,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
                 target[field] = text;
                 target[`_contcell_${field}`] = cell;
               }
-              const right = isContCellRightAligned(cell);
               const known = flatCols.get(field);
               if (known) {
                 known.hasContent = known.hasContent || filled;
-                known.rightAlign = known.rightAlign || right;
               } else {
-                flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled, rightAlign: right });
+                flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled });
               }
               unit += span;
             }
@@ -1752,11 +1689,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             // della riga principale, e queste colonne non esistono per lui.
             sortable: false,
             cellRenderer: FlatContinuationRenderer,
-            // L'intestazione segue il dato, come nella prima banda: sopra una
-            // colonna di quantità o importi sta a destra (SXADV-5734.1a).
-            headerClass: m.rightAlign
-              ? 'continuation-flat-header ag-right-aligned-header'
-              : 'continuation-flat-header',
+            // A sinistra come ogni intestazione, anche sopra importi (SXADV-5736.2).
+            headerClass: 'continuation-flat-header',
           });
         });
     }
@@ -2341,38 +2275,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return map;
   }, [ui.headers]);
 
-  /* Le UNITÀ di ogni banda di continuazione occupate da un dato allineato a
-     destra — serve all'intestazione iniettata, che altrimenti resterebbe a
-     sinistra sopra quantità e importi allineati a destra (SXADV-5734.1a).
-     L'unità (colspan cumulativo) e non l'indice di cella, perché celle ed
-     etichette di una banda sono due sequenze indipendenti sulla stessa
-     coordinata: un'etichetta può coprirne più d'una, ed è il criterio con cui
-     `bandInfoFor` le riaccoppia in modalità una-riga. Unione su tutti i record,
-     non solo sul primo: una banda può essere vuota nel primo (il server emette
-     celle di riempimento) e portare il dato nel secondo. */
-  const contRightAlignByBand = useMemo(() => {
-    const bands: Array<Set<number>> = [];
-    let band = 0;
-    for (const row of ui.rows ?? []) {
-      if (row.cls === 'breakRow') continue;
-      if (!isContinuationRow(row)) { band = 0; continue; }
-      const acc = bands[band] ?? (bands[band] = new Set<number>());
-      let unit = 0;
-      row.cells.forEach((c, i) => {
-        if (c.elementType === ELTYPE_SELECTOR || c.elementType === ELTYPE_PROMPT) return;
-        if (i === 0 && c.elementType === ELTYPE_DUMMY) return;
-        const span = (c as unknown as Record<string, unknown>).colspan as number | undefined;
-        const width = span || 1;
-        if (isContCellRightAligned({ cls: c.control?.cls, style: c.control?.style })) {
-          for (let u = unit; u < unit + width; u++) acc.add(u);
-        }
-        unit += width;
-      });
-      band++;
-    }
-    return bands;
-  }, [ui.rows]);
-
   // Inject continuation header rows AFTER the ag-header. Each row is a
   // clipped viewport whose inner track has width = total cols width and
   // translates via --grid-scroll-x, mirroring the continuation cells.
@@ -2397,9 +2299,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     const selectorPad = isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0;
     let insertAfter: Element = agHeader;
-    contHeaders.forEach((rowHeaders, bandIdx) => {
-      const rightUnits = contRightAlignByBand[bandIdx];
-      let headerUnit = 0;
+    contHeaders.forEach((rowHeaders) => {
       const wrapper = document.createElement('div');
       wrapper.className = 'continuation-header-row';
       // flex:0 0 auto — the wrapper is a flex child of AG Grid's .ag-root
@@ -2434,15 +2334,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         } else {
           cell.style.cssText = `flex:${hdr.colspan || 1};padding:1px 4px;`;
         }
-        // L'etichetta segue il dato che intesta: a destra se una qualunque
-        // delle unità che copre porta un valore allineato a destra.
-        const hdrSpan = hdr.colspan || 1;
-        if (rightUnits) {
-          for (let u = headerUnit; u < headerUnit + hdrSpan; u++) {
-            if (rightUnits.has(u)) { cell.style.textAlign = 'right'; break; }
-          }
-        }
-        headerUnit += hdrSpan;
+        // Etichetta a sinistra anche sopra quantita' e importi, come nel legacy
+        // e come l'intestazione principale (SXADV-5736.2C).
         cell.textContent = hdr.text || '';
         track.appendChild(cell);
       });
@@ -2450,7 +2343,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine, contRightAlignByBand]);
+  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll
