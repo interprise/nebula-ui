@@ -105,6 +105,11 @@ interface TabState {
   // highlight in the sidebar menu and in the app bar (SXADV-5784), so the user
   // keeps seeing which function is open — hover alone gave no lasting clue.
   menuId?: string;
+  // Stesso ruolo di menuId per le funzioni di primo livello che una voce di
+  // menu non ce l'hanno e si aprono per azione (openFunctionByAction): senza,
+  // il loro pulsante nella barra non poteva sapere di essere quello aperto
+  // (Gestione Profili Menu, SXADV-5784.1).
+  functionAction?: string;
   ui?: UITree;
   toolbar?: ToolbarItem[];
   // Trail handed up by a pane that drives a viewstate of its own (TreeRenderer's
@@ -1156,7 +1161,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // the confirm dialog when the navigation hit an "unsaved changes" prompt
       // (SXADV-5470.0 / .1). processResponse installs the new view (and clears
       // loading) once it arrives.
-      updateTabState(tab.key, { label: menuLabel, menuId, loading: true, progressPct: undefined, formValues: tab.formValues });
+      updateTabState(tab.key, { label: menuLabel, menuId, functionAction: undefined, loading: true, progressPct: undefined, formValues: tab.formValues });
 
       document.body.style.cursor = 'wait';
       // If the navigation raises a confirmation ("annullare TUTTE le modifiche?"),
@@ -1493,7 +1498,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     (label: string, action: string, params?: Record<string, string>) => {
       const tab = getActiveTabState();
       if (!tab || tab.loading) return;
-      updateTabState(tab.key, { label });
+      // La scheda cambia funzione: la voce di menu di prima non e' piu' quella
+      // aperta, e il pulsante che la segnava non deve restare acceso.
+      updateTabState(tab.key, { label, menuId: undefined, functionAction: action });
       handleAction(action, { ...params, newTask: '1' });
     },
     [getActiveTabState, updateTabState, handleAction],
@@ -1919,7 +1926,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // percorso da zero: le prime due sono voci di menu invisibili (menu.xml,
     // `_$commstatList`/`_$jdbcstatList`) e il client legacy le apriva per id, la
     // terza non ha voce di menu e passa da openFunctionByAction (SXADV-5783).
-    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili Menu', onClick: () => openFunctionByAction('Gestione Profili Menu', 'ProfileManager', { navpath: 'menu' }), visible: true },
+    // Il tooltip e' "Gestione Profili" come nel documentale (SXADV-5784.Z); la
+    // scheda resta intitolata alla funzione.
+    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openFunctionByAction('Gestione Profili Menu', 'ProfileManager', { navpath: 'menu' }), visible: true, active: currentTab?.functionAction === 'ProfileManager' },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleMenuClick('menu._$commstatList', 'Comandi in esecuzione'), visible: true, active: activeMenuId === 'menu._$commstatList' },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleMenuClick('menu._$jdbcstatList', 'Connessioni attive'), visible: true, active: activeMenuId === 'menu._$jdbcstatList' },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true, active: activeMenuId === 'menu.expBuilderList' },
