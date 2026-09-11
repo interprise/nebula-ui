@@ -2724,7 +2724,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           singleClickEdit={isMultiEdit || isListEdit}
           enterNavigatesVerticallyAfterEdit
           domLayout={undefined}
-          overlayNoRowsTemplate="Nessun record da visualizzare"
+          // Griglia vuota = solo intestazioni, come nel legacy: nessun messaggio
+          // nel corpo, che finiva sopra i nomi colonna. Il conteggio a zero lo
+          // danno già il paginatore e la toolbar (SXADV-5688.1).
+          suppressOverlays={['noRows']}
         />
       </div>
 

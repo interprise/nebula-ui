@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect, Suspense } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, Suspense } from 'react';
 import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, App, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
@@ -1677,22 +1677,34 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // the label simply doesn't appear, which is what the legacy UI effectively
   // did: the .ftl templates closed the page with <br/><br/>… + the label, so it
   // sat past the fold and only surfaced on short pages (SXADV-5688.2).
+  //
+  // It is taken away at once but put back only after the room has stayed free
+  // for a moment: a view still settling (a tab's content swapped by ChangeTab, a
+  // grid growing to its measured height) would otherwise flash it for as long
+  // as the settling lasts — a blink testers can see and cannot photograph.
   const tabContentRef = useRef<HTMLDivElement | null>(null);
   const [copyrightFits, setCopyrightFits] = useState(false);
-  const measureCopyrightRoom = useCallback(() => {
+  const copyrightRevealTimer = useRef<number | undefined>(undefined);
+  const copyrightHasRoom = useCallback((): boolean => {
     const tc = tabContentRef.current;
-    if (!tc) return;
+    if (!tc) return false;
     const COPYRIGHT_H = 26; // label box + the gap that keeps it off the content
     const tcRect = tc.getBoundingClientRect();
     const limit = tcRect.bottom - (parseFloat(getComputedStyle(tc).paddingBottom) || 0) - COPYRIGHT_H;
     // Deepest bottom edge actually painted by the view. Elements that scroll
-    // internally, and grids (JS-sized to fill their panel), own their whole box
-    // — recursing into them says nothing about free space. Everything else is
-    // measured through its children, so a container stretched by flex but
-    // holding a short form reports the form's bottom, not its own.
+    // internally, grids (JS-sized to fill their panel) and the bottom area of a
+    // two-area view (flexed down to the foot of the tab, whatever its current
+    // tab holds) own their whole box — recursing into them says nothing about
+    // free space. Measured through its children, a short tab in that area
+    // ("Dettagli Fatturabili") left the label painted inside the panel
+    // (SXADV-5688.2). Everything else is measured through its children, so a
+    // container stretched by flex but holding a short form reports the form's
+    // bottom, not its own.
     const contentBottom = (el: HTMLElement, depth: number): number => {
       if (el.scrollHeight > el.clientHeight + 1) return el.getBoundingClientRect().bottom;
-      if (el.classList.contains('ag-root-wrapper')) return el.getBoundingClientRect().bottom;
+      if (el.classList.contains('ag-root-wrapper') || el.classList.contains('view-split-bottom')) {
+        return el.getBoundingClientRect().bottom;
+      }
       let max = -Infinity;
       if (depth < 24) {
         for (const child of Array.from(el.children) as HTMLElement[]) {
@@ -1706,9 +1718,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // A leaf occupies its own box (nothing inside to measure it by).
       return max === -Infinity ? el.getBoundingClientRect().bottom : max;
     };
-    setCopyrightFits(contentBottom(tc, 0) <= limit);
+    return contentBottom(tc, 0) <= limit;
   }, []);
-  useEffect(() => {
+  const measureCopyrightRoom = useCallback(() => {
+    window.clearTimeout(copyrightRevealTimer.current);
+    if (!copyrightHasRoom()) {
+      setCopyrightFits(false);
+      return;
+    }
+    copyrightRevealTimer.current = window.setTimeout(() => {
+      if (copyrightHasRoom()) setCopyrightFits(true);
+    }, 400);
+  }, [copyrightHasRoom]);
+  // Layout effect: a view that no longer leaves room loses the label before the
+  // browser paints it, not one frame later.
+  useLayoutEffect(() => {
     measureCopyrightRoom();
     // Grids and fonts settle a frame (and a beat) later — re-measure after both.
     const raf = requestAnimationFrame(measureCopyrightRoom);
@@ -1727,6 +1751,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(timer);
+      window.clearTimeout(copyrightRevealTimer.current);
       ro?.disconnect();
       window.removeEventListener('resize', measureCopyrightRoom);
     };
