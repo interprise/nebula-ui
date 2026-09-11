@@ -121,6 +121,10 @@ interface TabState {
   currField?: string;
   formValues: Record<string, string | string[]>;
   loading?: boolean;
+  // Richiesta in volo lanciata dalla scheda stessa per ricaricarsi
+  // (refreshInterval): `loading` resta vero e blocca gli altri clic, ma il velo
+  // non si mostra, altrimenti coprirebbe la lista ogni pochi secondi.
+  quietLoading?: boolean;
   progressPct?: number; // 0-100 during async job polling
   // Two-phase pipeline: the templateKey ("viewName:pageType") of the
   // template currently driving this tab's render. Echoed back to the
@@ -1627,6 +1631,43 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // still the enclosing view and its own trail stops short of the pane.
   const breadcrumbs = currentTab?.paneBreadcrumbs ?? currentTab?.ui?.breadcrumbs;
 
+  // Viste che si ricaricano da sole: `refreshInterval` nella view (Comandi in
+  // esecuzione ogni 3 s, Connessioni attive ogni 5). Come il loadUI.defer del
+  // client legacy si rigioca la voce di menu che ha aperto la scheda, e solo
+  // finche' la scheda e' in primo piano e mostra ancora quella vista. Un
+  // Refresh non basta: ridisegna i dati gia' letti senza rifare l'elenco.
+  // Senza, la lista restava ferma alla foto dell'apertura, dove la colonna
+  // "SQL in esec." e' spesso vuota (SXADV-5782).
+  const refreshTabKey = currentTab?.key;
+  const refreshSid = currentTab?.sid;
+  const refreshMenuId = currentTab?.menuId;
+  const refreshUiData = currentTab?.uiData;
+  const refreshSecs = refreshUiData?.refreshInterval;
+  const refreshBlocked = !!currentTab?.loading;
+  useEffect(() => {
+    if (!refreshTabKey || !refreshSid || !refreshMenuId || !refreshSecs || refreshBlocked) return;
+    const timer = window.setTimeout(async () => {
+      const tab = tabsRef.current.find((t) => t.key === refreshTabKey);
+      if (!tab || tab.loading || tab.menuId !== refreshMenuId) return;
+      updateTabState(refreshTabKey, { loading: true, quietLoading: true });
+      // Un errore si mostra una volta sola: da li' la scheda smette di
+      // ricaricarsi, fino alla prossima volta che si apre la funzione.
+      const stop = () => updateTabState(refreshTabKey, { uiData: { ...refreshUiData, refreshInterval: undefined } });
+      try {
+        const resp = await api.executeMenuItem(refreshMenuId, refreshSid);
+        const r = resp as Record<string, unknown>;
+        processResponse(refreshTabKey, resp, refreshSid);
+        if (r.notLoggedIn || r.noSession || (resp.errors?.length ?? 0) > 0) stop();
+      } catch {
+        updateTabState(refreshTabKey, { loading: false });
+        stop();
+      } finally {
+        updateTabState(refreshTabKey, { quietLoading: false });
+      }
+    }, refreshSecs * 1000);
+    return () => window.clearTimeout(timer);
+  }, [refreshTabKey, refreshSid, refreshMenuId, refreshUiData, refreshSecs, refreshBlocked, updateTabState, processResponse]);
+
   // A pane that drives a viewstate of its own (TreeRenderer's detail) hands its
   // toolbar up here: from the moment the pane loads, the session's current
   // viewstate is the pane's record, and the toolbar rendered with the enclosing
@@ -2291,7 +2332,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             <PaneToolbarContext.Provider value={setPaneToolbar}>
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
-                {currentTab.loading && (
+                {currentTab.loading && !currentTab.quietLoading && (
                   <div className="loading-overlay">
                     <Spin size="large" tip={currentTab.progressPct != null ? `${currentTab.progressPct}%` : undefined}>
                       <div style={{ minHeight: 60 }} />
