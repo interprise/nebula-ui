@@ -15,3 +15,48 @@ export function fixServerHtml(html: string): string {
   if (!html || !html.includes('images/')) return html;
   return html.replace(/(src|href)=(["'])images\//gi, '$1=$2/entrasp/images/');
 }
+
+/** Tag di formattazione del testo che un messaggio puo' portare. */
+const MESSAGE_TAGS = new Set(['BR', 'B', 'STRONG', 'I', 'EM', 'U', 'P', 'DIV', 'SPAN', 'UL', 'OL', 'LI']);
+/** Elementi che spariscono con tutto il contenuto: il loro testo non e' testo da leggere. */
+const DROPPED_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'IFRAME', 'OBJECT', 'EMBED', 'NOSCRIPT', 'TITLE', 'TEXTAREA', 'SELECT']);
+
+/**
+ * I testi dei messaggi del server (entrasp.properties) portano un po' di
+ * formattazione — `<br>`, `<b>`, `<u>` — ma i loro parametri (%1, %2…) sono
+ * valori presi dal record: descrizioni, nomi, codici scritti dagli utenti.
+ * Messi in pagina cosi' come arrivano, un valore con `<img onerror=…>` girerebbe
+ * nel browser di chi legge il messaggio (SXADV-5814).
+ *
+ * Restano solo i tag di formattazione, senza alcun attributo; gli altri
+ * elementi lasciano il proprio testo, quelli di DROPPED_TAGS spariscono. Il
+ * parsing avviene in un documento inerte (DOMParser): nessuno script eseguito,
+ * nessuna risorsa caricata.
+ */
+export function sanitizeMessageHtml(html: string): string {
+  if (!html || !html.includes('<')) return html;
+  const body = new DOMParser().parseFromString(html, 'text/html').body;
+  const clean = (parent: Node) => {
+    for (const node of Array.from(parent.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) continue;
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        node.remove();
+        continue;
+      }
+      const el = node as Element;
+      const tag = el.tagName.toUpperCase();
+      if (DROPPED_TAGS.has(tag)) {
+        el.remove();
+        continue;
+      }
+      clean(el);
+      if (MESSAGE_TAGS.has(tag)) {
+        for (const attr of Array.from(el.attributes)) el.removeAttribute(attr.name);
+      } else {
+        el.replaceWith(...Array.from(el.childNodes));
+      }
+    }
+  };
+  clean(body);
+  return body.innerHTML;
+}

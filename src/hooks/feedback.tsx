@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { App, Button } from 'antd';
 import type { ErrorItem } from '../types/ui';
-import { fixServerHtml } from '../services/serverHtml';
+import { sanitizeMessageHtml } from '../services/serverHtml';
 
 /**
  * Come si presenta all'utente quello che il server dice: una regola sola per
@@ -19,7 +19,9 @@ import { fixServerHtml } from '../services/serverHtml';
  * controllo, anche lunghi, sparivano prima di essere letti.
  *
  * I testi vengono da `entrasp.properties` e portano markup (`<br>`, `<b>`) che
- * il legacy rendeva come HTML: qui lo stesso, altrimenti i tag si leggono.
+ * il legacy rendeva come HTML: qui lo stesso, altrimenti i tag si leggono. Ma
+ * i parametri dei messaggi sono dati del record, quindi il markup passa da
+ * `sanitizeMessageHtml`: solo tag di formattazione, nessun attributo.
  */
 
 export type ConfirmAnswer = 'yes' | 'no';
@@ -51,7 +53,7 @@ const DIALOG_WIDTH = 'min(640px, calc(100vw - 32px))';
 const serverBody = (items: ErrorItem[]) => (
   <div
     className="app-message-body"
-    dangerouslySetInnerHTML={{ __html: fixServerHtml(items.map((e) => e.message).join('<br />')) }}
+    dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(items.map((e) => e.message).join('<br />')) }}
   />
 );
 
