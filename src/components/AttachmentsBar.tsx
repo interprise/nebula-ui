@@ -1,8 +1,9 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Button, Tooltip, Badge, App } from 'antd';
+import { Button, Tooltip, Badge } from 'antd';
 import { UploadOutlined, PaperClipOutlined } from '@ant-design/icons';
 import type { AttachmentsInfo } from '../types/ui';
 import * as api from '../services/api';
+import { useFeedback } from '../hooks/feedback';
 import AttachmentsDrawer from './AttachmentsDrawer';
 
 interface AttachmentsBarProps {
@@ -26,9 +27,7 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
   onRefresh,
   onOpenMetadata,
 }) => {
-  // Context-aware message so toasts inherit the ConfigProvider CSS-var theme;
-  // the static `message` import renders invisibly under it. (SXADV-5542)
-  const { message } = App.useApp();
+  const feedback = useFeedback();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -47,12 +46,12 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
         await api.uploadAttachment(f, sid);
         onRefresh();
       } catch (err) {
-        message.error((err as Error).message || 'Caricamento fallito');
+        feedback.error((err as Error).message || 'Caricamento fallito');
       } finally {
         setUploading(false);
       }
     },
-    [sid, onRefresh, message],
+    [sid, onRefresh, feedback],
   );
 
   const handleListClick = useCallback(() => {
@@ -61,11 +60,11 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
         // DocDownload extends Command2 → /controller2. On /controller the
         // dispatcher finds the class and fails casting it to Command.
         .triggerDownload('DocDownload', { key: info.single.key }, sid, info.single.fileName, true)
-        .catch((e) => message.error((e as Error).message || 'Download fallito'));
+        .catch((e) => feedback.error((e as Error).message || 'Download fallito'));
       return;
     }
     setDrawerOpen(true);
-  }, [info.count, info.single, sid, message]);
+  }, [info.count, info.single, sid, feedback]);
 
   const showUpload = info.allowAdd;
   const showList = info.allowList;

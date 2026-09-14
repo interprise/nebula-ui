@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import type { AttachmentMeta, AttachmentsInfo } from '../types/ui';
 import * as api from '../services/api';
+import { useFeedback } from '../hooks/feedback';
 
 const { Text } = Typography;
 
@@ -64,9 +65,10 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
   onRefresh,
   onOpenMetadata,
 }) => {
-  // Context-aware message/modal so they inherit the ConfigProvider CSS-var
-  // theme; the static antd imports render invisibly under it. (SXADV-5542)
-  const { message, modal } = App.useApp();
+  // Context-aware modal so it inherits the ConfigProvider CSS-var theme; the
+  // static antd imports render invisibly under it. (SXADV-5542)
+  const { modal } = App.useApp();
+  const feedback = useFeedback();
   const [items, setItems] = useState<AttachmentMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,9 +96,9 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
       api
         // DocDownload extends Command2 → /controller2 (same as AttachmentsBar).
         .triggerDownload('DocDownload', { key: row.key }, sid, row.fileName, true)
-        .catch((e) => message.error((e as Error).message || 'Download fallito'));
+        .catch((e) => feedback.error((e as Error).message || 'Download fallito'));
     },
-    [sid, message],
+    [sid, feedback],
   );
 
   const handleDelete = useCallback(
@@ -114,12 +116,12 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
             await load();
             onRefresh();
           } catch (e) {
-            message.error((e as Error).message || 'Eliminazione fallita');
+            feedback.error((e as Error).message || 'Eliminazione fallita');
           }
         },
       });
     },
-    [sid, load, onRefresh, message, modal],
+    [sid, load, onRefresh, feedback, modal],
   );
 
   return (

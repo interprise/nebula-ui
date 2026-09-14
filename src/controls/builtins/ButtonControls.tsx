@@ -1,9 +1,10 @@
 import { useContext, useState } from 'react';
-import { Button, Upload, App } from 'antd';
+import { Button, Upload } from 'antd';
 import { SearchOutlined, PlusOutlined, UploadOutlined, DownloadOutlined, LinkOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { triggerDownload, uploadFile } from '../../services/api';
 import { SidContext } from '../../components/ViewRenderer';
+import { useFeedback } from '../../hooks/feedback';
 
 /** Un bottone la cui didascalia e' una lettera o due non e' un'azione
  *  etichettata: e' un CONTRASSEGNO (la "S" di anagrafica sincronizzata accanto
@@ -181,9 +182,7 @@ function useFilePicker(
   control: Parameters<ControlComponent>[0]['control'],
   onAction: (action: string, params?: Record<string, string>) => void,
 ) {
-  // Context-aware message so toasts inherit the ConfigProvider CSS-var theme;
-  // the static `message` import renders invisibly under it. (SXADV-5542)
-  const { message } = App.useApp();
+  const feedback = useFeedback();
   const sid = useContext(SidContext);
   const uploadAction = (control.uploadAction as string | undefined) ?? 'FileUpload';
   const [fileName, setFileName] = useState<string | null>(null);
@@ -194,7 +193,7 @@ function useFilePicker(
       if (control.navpath) extra.navpath = control.navpath as string;
       const resp = await uploadFile(file, sid, extra, uploadAction);
       if (resp.errors && resp.errors.length > 0) {
-        message.error(resp.errors[0].message);
+        feedback.showServerMessages(resp.errors);
         return false;
       }
       setFileName(file.name);
@@ -202,7 +201,7 @@ function useFilePicker(
       if (cdmsKey) onAction('CdmsEdit', { navpath: cdmsKey });
       else onAction('Post');
     } catch (e) {
-      message.error(e instanceof Error ? e.message : 'Upload fallito');
+      feedback.error(e instanceof Error ? e.message : 'Upload fallito');
     }
     return false; // prevent antd's built-in xhr upload
   };

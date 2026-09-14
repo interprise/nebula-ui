@@ -11,6 +11,7 @@ import {
 import type { DataNode, EventDataNode } from 'antd/es/tree';
 import * as api from '../services/api';
 import type { CdmsNode } from '../services/api';
+import { useFeedback } from '../hooks/feedback';
 
 interface CdmsTreeProps {
   collapsed: boolean;
@@ -69,9 +70,10 @@ function filterTree(nodes: DataNode[], lowerFilter: string): DataNode[] | null {
 }
 
 const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
-  // Context-aware message/modal so they inherit the ConfigProvider CSS-var
-  // theme; the static antd imports render invisibly under it. (SXADV-5542)
-  const { message, modal } = App.useApp();
+  // Context-aware modal so it inherits the ConfigProvider CSS-var theme; the
+  // static antd imports render invisibly under it. (SXADV-5542)
+  const { modal } = App.useApp();
+  const feedback = useFeedback();
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
@@ -96,13 +98,13 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         setIsAdmin(resp.admin);
         setTreeData(resp.nodes.map(toDataNode));
       } catch (e) {
-        message.error(`Errore caricamento documentale: ${e}`);
+        feedback.error(`Errore caricamento documentale: ${e}`);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-    // Solo al montaggio: `message` e' un appiglio stabile di App.useApp(),
+    // Solo al montaggio: `feedback` e' un appiglio stabile di App.useApp(),
     // metterlo qui direbbe che questo caricamento puo' ripartire — e se un
     // domani non fosse piu' stabile ripartirebbe davvero.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,9 +152,9 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         })),
       );
     } catch (e) {
-      message.error(`Errore espansione nodo: ${e}`);
+      feedback.error(`Errore espansione nodo: ${e}`);
     }
-  }, [message]);
+  }, [feedback]);
 
   // Node click → open document list filtered by this folder
   const onSelect = useCallback(
@@ -221,7 +223,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
           const parentId = String(parentNode.key);
           const resp = await api.cdmsExec('newdir', { path: parentId, text: folderName.trim() });
           if (resp.error) {
-            message.error(resp.error);
+            feedback.error(resp.error);
           } else {
             // Expand parent and reload children
             setExpandedKeys((prev) => prev.includes(parentId) ? prev : [...prev, parentId]);
@@ -230,7 +232,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [reloadNode, message, modal],
+    [reloadNode, feedback, modal],
   );
 
   const handleRename = useCallback(
@@ -253,7 +255,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
           const nodeId = String(node.key);
           const resp = await api.cdmsExec('rename', { path: nodeId, newname: newName.trim() });
           if (resp.error) {
-            message.error(resp.error);
+            feedback.error(resp.error);
           } else {
             // Update title locally
             setTreeData((prev) =>
@@ -263,7 +265,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [message, modal],
+    [feedback, modal],
   );
 
   const handleDelete = useCallback(
@@ -278,7 +280,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
           const nodeId = String(node.key);
           const resp = await api.cdmsExec('delete', { path: nodeId });
           if (resp.error) {
-            message.error(resp.error);
+            feedback.error(resp.error);
           } else {
             // Remove node from tree
             setTreeData((prev) => {
@@ -292,7 +294,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         },
       });
     },
-    [message, modal],
+    [feedback, modal],
   );
 
   const contextMenuItems = useMemo(() => {

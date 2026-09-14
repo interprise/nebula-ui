@@ -35,6 +35,12 @@
   --app-warning: #faad14;
   --app-error: #ff4d4f;
 
+  /* Avvisi in basso a destra (INFO / NOTIFICATION): fondo azzurro chiaro e
+   * bordo di un azzurro piu' scuro. Bianchi sul bianco della maschera non si
+   * notavano (SXADV-5814.2 a/b). */
+  --app-toast-bg: #e6f4ff;
+  --app-toast-border: #69b1ff;
+
   /* --- Component-specific semantic tokens ---------------------------------
    * Defined in terms of the palette above so a theme can override either the
    * base token or the specific one. Keep these keyed to a concrete UI concern. */

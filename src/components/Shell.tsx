@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, Suspense } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, App, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider } from 'antd';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -83,6 +83,7 @@ import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
+import { useFeedback } from '../hooks/feedback';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -514,9 +515,9 @@ const defaultTab: TabState = {
 const CdmsTree = React.lazy(() => import('./CdmsTree'));
 
 const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 0, loginInfo, onLogout, onReloadMenu }) => {
-  // Context-aware message/modal so toasts and dialogs inherit the ConfigProvider
-  // CSS-var theme; the static antd imports render invisibly under it. (SXADV-5542)
-  const { message, modal } = App.useApp();
+  // Messaggi, avvisi e domande all'utente: una regola sola per tipo, quella del
+  // legacy (hooks/feedback.tsx, SXADV-5814).
+  const feedback = useFeedback();
   const [collapsed, setCollapsed] = useState(false);
   // Modalità immersiva: letta anche dalle misure più in basso (la banda del
   // copyright), quindi dichiarata qui in alto. Gli attuatori stanno più sotto,
@@ -621,51 +622,34 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   }, []);
 
   const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
-    for (const err of errors) {
-      switch (err.type) {
-        case 'ERROR':
-          message.error(err.message);
-          break;
-        case 'WARNING':
-          message.warning(err.message);
-          break;
-        case 'INFO':
-        case 'NOTIFICATION':
-          message.info(err.message);
-          break;
-        case 'CONFIRMATION':
-        case 'YESNOCANCEL':
-          modal.confirm({
-            content: err.message,
-            // Refusing the prompt aborts the guarded action, so a breadcrumb-back
-            // waiting on this answer never happens — un-arm it (SXADV-5659).
-            // Stessa cosa per la riga da togliere: la cancellazione rifiutata
-            // non avviene, e la riga deve restare in griglia.
-            onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; },
-            onOk: () => {
-              if (!err.mnemonic) return;
-              // Answer token per CORE's message grammar (Session.addConfirmation):
-              // plain confirmations are matched on "<mnemonic>,"; yes/no/cancel
-              // prompts expect "<mnemonic>:S,". The trailing comma is required.
-              const token = err.type === 'YESNOCANCEL'
-                ? `${err.mnemonic}:S,`
-                : `${err.mnemonic},`;
-              if (replay) {
-                // Re-run the request that raised the prompt so its guarded
-                // action (menu change, save, …) actually proceeds.
-                replay(token);
-              } else {
-                // No replay context (e.g. a dialog-driven action) — fall back to
-                // re-posting on the active tab so the prompt isn't a dead end.
-                const tab = getActiveTabState();
-                if (tab) api.postAction('Post', { messages: token }, tab.formValues, tab.sid);
-              }
-            },
-          });
-          break;
-      }
-    }
-  }, [getActiveTabState, message, modal]);
+    feedback.showServerMessages(errors, {
+      // Refusing the prompt aborts the guarded action, so a breadcrumb-back
+      // waiting on this answer never happens — un-arm it (SXADV-5659).
+      // Stessa cosa per la riga da togliere: la cancellazione rifiutata
+      // non avviene, e la riga deve restare in griglia.
+      onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; },
+      onAnswer: (prompt, answer) => {
+        if (!prompt.mnemonic) return;
+        // Answer token per CORE's message grammar (Session.addConfirmation):
+        // plain confirmations are matched on "<mnemonic>,"; yes/no/cancel
+        // prompts expect "<mnemonic>:S," or "<mnemonic>:N,". The trailing
+        // comma is required.
+        const token = prompt.type === 'YESNOCANCEL'
+          ? `${prompt.mnemonic}:${answer === 'yes' ? 'S' : 'N'},`
+          : `${prompt.mnemonic},`;
+        if (replay) {
+          // Re-run the request that raised the prompt so its guarded
+          // action (menu change, save, …) actually proceeds.
+          replay(token);
+        } else {
+          // No replay context (e.g. a dialog-driven action) — fall back to
+          // re-posting on the active tab so the prompt isn't a dead end.
+          const tab = getActiveTabState();
+          if (tab) api.postAction('Post', { messages: token }, tab.formValues, tab.sid);
+        }
+      },
+    });
+  }, [getActiveTabState, feedback]);
 
   // Changing Azienda/Sede di accesso wipes the whole server session pool
   // (CambioAziendaCommand: clearSession + sessions.clear()). The legacy client
@@ -803,12 +787,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const r = resp as Record<string, unknown>;
       if (r.notLoggedIn) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
-        message.error('Sessione scaduta. Effettuare nuovamente il login.');
+        feedback.error('Sessione scaduta. Effettuare nuovamente il login.');
         return;
       }
       if (r.noSession) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
-        message.error('Sessione non valida. Riprovare.');
+        feedback.error('Sessione non valida. Riprovare.');
         return;
       }
       if (resp.errors && resp.errors.length > 0) {
@@ -1105,7 +1089,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // getActiveTabState, che dipende da tabs — quindi bastava stabilizzare
     // handleErrors per congelare qui un elenco di schede vecchio e far ripartire
     // i merge da dati superati, senza che niente lo segnalasse.
-    [handleErrors, updateTabState, extractFormValues, tabs, message]
+    [handleErrors, updateTabState, extractFormValues, tabs, feedback]
   );
 
   processResponseInnerRef.current = processResponseInner;
@@ -1140,13 +1124,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           .catch((e) => {
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
-            message.error(`Error: ${e}`);
+            feedback.error(`Error: ${e}`);
           })
           .finally(() => { document.body.style.cursor = ''; });
       };
       return replay;
     },
-    [processResponse, updateTabState, message]
+    [processResponse, updateTabState, feedback]
   );
 
   const handleMenuClick = useCallback(
@@ -1178,12 +1162,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
-        message.error(`Error: ${e}`);
+        feedback.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay, message]
+    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay, feedback]
   );
 
   // After an identity change (impersonate), reload the menu and refresh the
@@ -1216,12 +1200,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
-        message.error(`Error: ${e}`);
+        feedback.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [processResponse, updateTabState, message],
+    [processResponse, updateTabState, feedback],
   );
 
   // Ricostruzione delle schede dopo un F5. Le Session vivono dentro
@@ -1280,7 +1264,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             if (newUi !== tab.ui) updateTabState(tab.key, { ui: newUi });
           }
         } catch (e) {
-          message.error(`Error: ${e}`);
+          feedback.error(`Error: ${e}`);
         }
         return;
       }
@@ -1304,7 +1288,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           processResponse(tab.key, resp);
           onReloadMenu();
         } catch (e) {
-          message.error(`Error: ${e}`);
+          feedback.error(`Error: ${e}`);
         } finally {
           document.body.style.cursor = '';
         }
@@ -1371,12 +1355,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // account for — drop any armed breadcrumb-back so it can't be applied
         // to some later, unrelated response on this tab.
         pendingBreadcrumbsRef.current = null;
-        message.error(`Error: ${e}`);
+        feedback.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, message]
+    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback]
   );
 
   // CDMS: open one of the documentale views (ricerca, document list, cestino,
@@ -1405,12 +1389,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false });
-        message.error(`Error: ${e}`);
+        feedback.error(`Error: ${e}`);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [updateTabState, processResponse, message],
+    [updateTabState, processResponse, feedback],
   );
 
   const openCdmsView = useCallback(
@@ -1600,7 +1584,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   ) => {
     if (action === 'add') {
       if (atSessionLimit) {
-        message.warning(`Non si possono tenere aperte piu' di ${sessionLimit} sessioni: chiuderne una per aprirne un'altra.`);
+        feedback.warning(`Non si possono tenere aperte piu' di ${sessionLimit} sessioni: chiuderne una per aprirne un'altra.`);
         return;
       }
       addTab();
