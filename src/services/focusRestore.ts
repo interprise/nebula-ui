@@ -49,3 +49,60 @@ export function restoreFocus(id: string | null): void {
     el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
 }
+
+/** Un campo su cui il cursore puo' andare: i criteri di skipElem del legacy
+ *  (ui.js) — niente tabindex -1, nascosti, disabilitati, sola lettura — piu'
+ *  il fatto che sia visibile. L'input di una combo antd e' `readOnly` anche
+ *  quando la combo e' modificabile (e' solo l'appiglio del fuoco): li' conta
+ *  la combo. */
+function isUsableField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return false;
+  if (el.tabIndex === -1 || el.disabled) return false;
+  if (el instanceof HTMLInputElement && ['hidden', 'button', 'reset', 'submit'].includes(el.type)) return false;
+  const select = el.closest('.ant-select');
+  if (select) {
+    if (select.classList.contains('ant-select-disabled')) return false;
+  } else if ((el as HTMLInputElement).readOnly) {
+    return false;
+  }
+  return el.getClientRects().length > 0;
+}
+
+function dialogOpen(): boolean {
+  return Array.from(document.querySelectorAll('.ant-modal-wrap'))
+    .some((w) => getComputedStyle(w).display !== 'none');
+}
+
+/**
+ * Pagina nuova: il cursore va dove lo metteva il legacy dopo ogni pagina
+ * (ui.js: `focusInputField(json.currField)`, altrimenti `nextField()`), cioe'
+ * sul campo indicato dal server e, se manca o non e' usabile, sul primo campo
+ * modificabile della vista. Senza, il fuoco restava sul <body> e il primo TAB
+ * finiva sulla barra dell'applicazione ("Logout") invece che nella mappa
+ * (SXADV-5803).
+ *
+ * Non si muove se l'utente e' gia' su un campo della vista o se c'e' una
+ * finestra aperta. Riprova per qualche fotogramma: i controlli che arrivano
+ * dal plugin o da un Suspense si montano un attimo dopo il resto.
+ */
+export function focusNewPage(currField?: string | null): void {
+  let attempts = 0;
+  const tryFocus = () => {
+    const view = document.querySelector('.tab-content .view-container');
+    const active = document.activeElement;
+    if (dialogOpen() || (active && active !== document.body && view?.contains(active))) return;
+    const byServer = currField ? document.getElementById(currField) : null;
+    const target = isUsableField(byServer)
+      ? byServer
+      : Array.from(view?.querySelectorAll('input, textarea, select') ?? []).find(isUsableField);
+    if (target) {
+      target.focus({ preventScroll: true });
+      // Come focusInputField: il testo gia' presente resta selezionato.
+      if (target instanceof HTMLInputElement && target.type === 'text' && !target.readOnly) target.select();
+      target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      return;
+    }
+    if (++attempts < 10) requestAnimationFrame(tryFocus);
+  };
+  requestAnimationFrame(tryFocus);
+}

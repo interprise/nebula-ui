@@ -80,7 +80,7 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
-import { consumePendingFocus, restoreFocus } from '../services/focusRestore';
+import { consumePendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
@@ -552,6 +552,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const tabsRef = useRef<TabState[]>([defaultTab]);
   tabsRef.current = tabs;
   const [activeTab, setActiveTab] = useState<string>('tab_1');
+  // Per chi gira fuori dal render (la risposta di una richiesta): una pagina
+  // nuova prende il fuoco solo se e' della scheda che si sta guardando.
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
   const [bannersModalOpen, setBannersModalOpen] = useState(false);
@@ -1082,7 +1086,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       }
       // Restore focus after React re-renders. The target id was
       // captured by useControlChange right before the reload fired.
-      restoreFocus(consumePendingFocus());
+      const pendingFocus = consumePendingFocus();
+      if (pendingFocus) {
+        restoreFocus(pendingFocus);
+      } else if (
+        // Pagina nuova (M/MC: templateKey alla radice; un ricaricamento della
+        // stessa pagina e' D e lo porta dentro `ui`) sulla scheda che si sta
+        // guardando: il cursore va nella mappa, come nel legacy (SXADV-5803).
+        // Non se la risposta apre una finestra (errore, avvertimento,
+        // conferma): il fuoco e' della finestra.
+        resp.templateKey
+        && tabKey === activeTabRef.current
+        && !(resp.errors ?? []).some((e) => e.type !== 'INFO' && e.type !== 'NOTIFICATION')
+      ) {
+        focusNewPage(resp.currField);
+      }
     },
     // `tabs`: ogni percorso di merge (hydrate da template in cache, rowUpdate,
     // pageOnly, detailPageOnly, instradamento albero+dettaglio) legge la scheda
