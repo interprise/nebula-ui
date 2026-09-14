@@ -22,6 +22,7 @@ import { registerControl, registerControls, registerCellRenderable } from './con
 import { loadControlPlugin } from './controls/loadPlugin';
 import type { HostAPI } from './controls/hostApi';
 import { SidContext } from './components/ViewRenderer';
+import { useFeedback } from './hooks/feedback';
 registerBuiltinControls();
 
 const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
@@ -62,6 +63,7 @@ const hostApi: HostAPI = {
     triggerDownload: api.triggerDownload,
     uploadFile: api.uploadFile,
     useSid: () => React.useContext(SidContext),
+    useFeedback,
   },
 };
 

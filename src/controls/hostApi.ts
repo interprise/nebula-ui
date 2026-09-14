@@ -5,6 +5,7 @@ import type * as AgGridType from 'ag-grid-community';
 import type * as AgGridReactType from 'ag-grid-react';
 import type { ControlComponent } from './types';
 import type { ServerResponse } from '../types/ui';
+import type { Feedback } from '../hooks/feedback';
 
 export interface HostRegistry {
   registerControl: (type: string, component: ControlComponent) => void;
@@ -40,6 +41,10 @@ export interface HostServices {
   ) => Promise<ServerResponse>;
   /** Hook: il sid della scheda in cui il controllo si sta renderizzando. */
   useSid: () => string;
+  /** Hook: messaggi all'utente con la stessa regola del resto del client
+   *  (hooks/feedback.tsx). Senza, un controllo del plugin userebbe i toast
+   *  di antd e i suoi errori non seguirebbero la regola. SXADV-5814. */
+  useFeedback: () => Feedback;
 }
 
 export interface HostAPI {
