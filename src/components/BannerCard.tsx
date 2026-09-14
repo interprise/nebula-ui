@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fixServerHtml } from '../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { Card, Tag, Button, Tooltip } from 'antd';
 import {
   NotificationOutlined,
@@ -21,11 +21,13 @@ interface BannerCardProps {
 }
 
 /** Extract plain text preview from possibly-HTML banner text.
- *  Decodes HTML entities by letting the browser parse the fragment. */
+ *  Decodes HTML entities by letting the browser parse the fragment — in an
+ *  inert document (DOMParser): a `<div>` of this page, even detached, loads its
+ *  images and fires their handlers, so an `<img onerror>` in the banner ran
+ *  while computing the preview. */
 function toPreview(html: string, max: number): string {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  const text = (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+  const parsed = new DOMParser().parseFromString(html, 'text/html').body;
+  const text = (parsed.textContent || '').replace(/\s+/g, ' ').trim();
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
 }
 
@@ -124,7 +126,7 @@ const BannerCard: React.FC<BannerCardProps> = ({
                   color: '#262626',
                   wordBreak: 'break-word',
                 }}
-                dangerouslySetInnerHTML={{ __html: fixServerHtml(body) }}
+                dangerouslySetInnerHTML={{ __html: serverHtml(body, HTML_POLICY.content) }}
               />
 
               {/* Attachments + external links ("Area Link" / download area).
@@ -135,7 +137,7 @@ const BannerCard: React.FC<BannerCardProps> = ({
                   className="banner-attachments"
                   style={{ marginTop: 10, fontSize: 13, lineHeight: 1.6 }}
                   onClick={(e) => e.stopPropagation()}
-                  dangerouslySetInnerHTML={{ __html: fixServerHtml(attachments) }}
+                  dangerouslySetInnerHTML={{ __html: serverHtml(attachments, HTML_POLICY.content) }}
                 />
               )}
 

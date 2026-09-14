@@ -356,10 +356,13 @@ export function useSelectKeys(
   );
 }
 
+/** Testo di una stringa con entita' HTML. Il parsing avviene in un documento
+ *  inerte (DOMParser): uno `<span>` di questa pagina, anche staccato, carica le
+ *  immagini e ne esegue i gestori, quindi un valore con `<img onerror>` girava
+ *  solo per essere decodificato. */
 export function decodeHtmlEntities(s: string): string {
-  const el = document.createElement('span');
-  el.innerHTML = s;
-  return el.textContent || s;
+  if (!s || !/[<&]/.test(s)) return s;
+  return new DOMParser().parseFromString(s, 'text/html').body.textContent || s;
 }
 
 export function getFieldName(control: UIControl): string {

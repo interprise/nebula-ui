@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { fixServerHtml } from '../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { useViewportMenuHeight } from '../hooks/menuHeight';
 import { Button, Dropdown, Space, Tooltip, App } from 'antd';
 import {
@@ -159,7 +159,7 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
               {items.map((item, i) => (
                 <div key={i} style={{ marginBottom: 12 }}>
                   <strong>{item.prompt}</strong>
-                  <div dangerouslySetInnerHTML={{ __html: fixServerHtml(item.help || '') }} />
+                  <div dangerouslySetInnerHTML={{ __html: serverHtml(item.help || '', HTML_POLICY.content) }} />
                 </div>
               ))}
             </div>
@@ -224,13 +224,13 @@ function renderToolbarItem(
 ): React.ReactNode {
   if (typeof raw === 'string') {
     if (raw === '->') return null; // handled by split
-    return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: fixServerHtml(raw) }} />;
+    return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: serverHtml(raw, HTML_POLICY.content) }} />;
   }
   const item = raw as ToolbarItem;
   const rawObj = raw as Record<string, unknown>;
   if (rawObj.tag) {
     if (rawObj.tag === 'span') {
-      return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: fixServerHtml(rawObj.html as string || '') }} />;
+      return <span key={idx} style={{ fontSize: 12, color: '#666', lineHeight: '24px' }} dangerouslySetInnerHTML={{ __html: serverHtml(rawObj.html as string || '', HTML_POLICY.content) }} />;
     }
     if (rawObj.tag === 'input') {
       // Use paging.currentPage if available (updated on pagination), fall back to server value

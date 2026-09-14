@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
-import { fixServerHtml } from '../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
@@ -308,7 +308,7 @@ const HtmlCellRenderer = (params: ValueCellParams) => {
   return withCellNav(
     params.asHtml === false
       ? <span>{text}</span>
-      : <span dangerouslySetInnerHTML={{ __html: fixServerHtml(text) }} />,
+      : <span dangerouslySetInnerHTML={{ __html: serverHtml(text, HTML_POLICY.cell) }} />,
     params,
   );
 };
@@ -635,7 +635,7 @@ const ContinuationCell = ({
     }
   }
   if (cell.html) {
-    return <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: fixServerHtml(cell.html) }} />;
+    return <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: serverHtml(cell.html, HTML_POLICY.cell) }} />;
   }
   return <span className={cell.cls} style={merged}>{cell.text}</span>;
 };

@@ -45,6 +45,9 @@ export interface HostServices {
    *  (hooks/feedback.tsx). Senza, un controllo del plugin userebbe i toast
    *  di antd e i suoi errori non seguirebbero la regola. SXADV-5814. */
   useFeedback: () => Feedback;
+  /** HTML del server che un controllo del plugin mette in pagina: stesso filtro
+   *  del client (services/serverHtml.ts), con la politica del punto. */
+  serverHtml: (html: string, policy: 'prompt' | 'cell' | 'content') => string;
 }
 
 export interface HostAPI {

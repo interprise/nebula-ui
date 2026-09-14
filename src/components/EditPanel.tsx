@@ -1,5 +1,5 @@
 import React from 'react';
-import { fixServerHtml } from '../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { App, Button } from 'antd';
 import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
@@ -139,7 +139,7 @@ const CellContent: React.FC<{
   // so a read-only FK combo shows its description, not the code (e.g. "CMO|3208").
   const val = ctrl ? String(decodeOption(ctrl) ?? ctrl.value ?? '') : (cell.text ?? '');
   if (ctrl?.type === 'html' || /<[a-z][\s\S]*>/i.test(val)) {
-    return <span dangerouslySetInnerHTML={{ __html: fixServerHtml(val) }} />;
+    return <span dangerouslySetInnerHTML={{ __html: serverHtml(val, HTML_POLICY.cell) }} />;
   }
   return <span>{val}</span>;
 };

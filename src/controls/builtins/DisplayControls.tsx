@@ -1,5 +1,5 @@
 import { Input } from 'antd';
-import { fixServerHtml } from '../../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../../services/serverHtml';
 import { BarcodeOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedValue, parseInlineStyle } from '../helpers';
@@ -33,7 +33,7 @@ export const UrlControl: ControlComponent = ({ control }) => {
 };
 
 export const HtmlControl: ControlComponent = ({ control }) => (
-  <span dangerouslySetInnerHTML={{ __html: fixServerHtml((control.value as string) || '') }} />
+  <span dangerouslySetInnerHTML={{ __html: serverHtml((control.value as string) || '', HTML_POLICY.content) }} />
 );
 
 export const HtmlFormatControl: ControlComponent = ({ control }) => {
@@ -49,7 +49,7 @@ export const HtmlFormatControl: ControlComponent = ({ control }) => {
     <span
       className={cls || ''}
       style={styled ? { display: 'block', width: '100%', ...style } : style}
-      dangerouslySetInnerHTML={{ __html: fixServerHtml((control.value as string) || '') }}
+      dangerouslySetInnerHTML={{ __html: serverHtml((control.value as string) || '', HTML_POLICY.content) }}
     />
   );
 };
@@ -110,7 +110,7 @@ export const WarningControl: ControlComponent = ({ control }) => {
       lineHeight: 1.4, fontSize: 13,
     }}>
       <span style={{ fontSize: 16, color: '#faad14', flexShrink: 0, lineHeight: '20px' }}>&#9888;</span>
-      <div dangerouslySetInnerHTML={{ __html: fixServerHtml(warningHtml) }} />
+      <div dangerouslySetInnerHTML={{ __html: serverHtml(warningHtml, HTML_POLICY.content) }} />
     </div>
   );
 };

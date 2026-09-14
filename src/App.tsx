@@ -23,6 +23,7 @@ import { loadControlPlugin } from './controls/loadPlugin';
 import type { HostAPI } from './controls/hostApi';
 import { SidContext } from './components/ViewRenderer';
 import { useFeedback } from './hooks/feedback';
+import { serverHtml, HTML_POLICY } from './services/serverHtml';
 registerBuiltinControls();
 
 const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
@@ -64,6 +65,7 @@ const hostApi: HostAPI = {
     uploadFile: api.uploadFile,
     useSid: () => React.useContext(SidContext),
     useFeedback,
+    serverHtml: (html, policy) => serverHtml(html, HTML_POLICY[policy]),
   },
 };
 
@@ -107,7 +109,7 @@ const App: React.FC = () => {
       if (resp.panels) setSessionPanels(resp.panels);
       if (resp.sessionLimit != null) setSessionLimit(resp.sessionLimit);
       setLoggedIn(true);
-    } catch (e) {
+    } catch {
       // Auto-login failed, show login form
       setShowLogin(true);
     }

@@ -59,7 +59,7 @@ export const WindowButtonControl: ControlComponent = ({ control, onAction }) => 
       if (control.openWin) {
         window.open(`/entrasp/controller?action=${control.action}`, '_blank');
       } else {
-        control.action && onAction(control.action);
+        if (control.action) onAction(control.action);
       }
     }}
     title={control.hint}

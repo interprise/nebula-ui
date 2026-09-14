@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { fixServerHtml } from '../services/serverHtml';
+import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { Button, Tabs, Tooltip } from 'antd';
 import { BookOutlined, CheckCircleFilled, CloseCircleFilled, CompressOutlined, ExpandOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListRecord, RowEditData, ToolbarItem } from '../types/ui';
@@ -1945,7 +1945,7 @@ const CellRenderer: React.FC<{
     case ELTYPE_PROMPT:
       return (
         <td {...tdProps} className={`prompt-cell ${cell.promptCls || ''} ${cell.cls || ''}`}
-          dangerouslySetInnerHTML={cell.prompt ? { __html: fixServerHtml(cell.prompt) } : undefined}
+          dangerouslySetInnerHTML={cell.prompt ? { __html: serverHtml(cell.prompt, HTML_POLICY.prompt) } : undefined}
         />
       );
 
