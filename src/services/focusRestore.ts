@@ -73,6 +73,33 @@ function dialogOpen(): boolean {
     .some((w) => getComputedStyle(w).display !== 'none');
 }
 
+/** Di quanto scorrere in verticale un contenitore perche' un campo ci stia
+ *  dentro, come `block: 'nearest'`: zero se si vede gia', altrimenti il minimo
+ *  che lo porta dentro dal lato da cui esce (se e' piu' alto del contenitore,
+ *  conta la sua cima). Negativo = verso l'alto. */
+export function nearestVerticalDelta(
+  field: { top: number; bottom: number },
+  box: { top: number; bottom: number },
+): number {
+  if (field.top < box.top) return field.top - box.top;
+  if (field.bottom > box.bottom) return Math.min(field.bottom - box.bottom, field.top - box.top);
+  return 0;
+}
+
+/** Porta il campo in vista scorrendo SOLO in verticale i contenitori che lo
+ *  contengono. `scrollIntoView({ inline: 'nearest' })` scorreva anche in
+ *  orizzontale: in una testata piu' larga della finestra (fattura con una
+ *  descrizione lunga, schermo al 125%) il primo campo modificabile sta in fondo
+ *  a destra, e la maschera si apriva spostata, con le etichette di sinistra
+ *  tagliate (SXADV-5922). Il legacy la apriva sempre dall'inizio. */
+function revealVertically(el: HTMLElement): void {
+  for (let box = el.parentElement; box; box = box.parentElement) {
+    if (box.scrollHeight <= box.clientHeight) continue;
+    if (!/(auto|scroll)/.test(getComputedStyle(box).overflowY)) continue;
+    box.scrollTop += nearestVerticalDelta(el.getBoundingClientRect(), box.getBoundingClientRect());
+  }
+}
+
 /**
  * Pagina nuova: il cursore va dove lo metteva il legacy dopo ogni pagina
  * (ui.js: `focusInputField(json.currField)`, altrimenti `nextField()`), cioe'
@@ -99,7 +126,7 @@ export function focusNewPage(currField?: string | null): void {
       target.focus({ preventScroll: true });
       // Come focusInputField: il testo gia' presente resta selezionato.
       if (target instanceof HTMLInputElement && target.type === 'text' && !target.readOnly) target.select();
-      target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      revealVertically(target);
       return;
     }
     if (++attempts < 10) requestAnimationFrame(tryFocus);
