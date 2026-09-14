@@ -12,6 +12,7 @@ import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
+import { oncePerEvent } from './rowActivation';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -2142,12 +2143,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (command) onAction(command, { navpath: path });
   }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
 
+  // Lo stesso clic su una banda di continuazione arriva sia qui sia a
+  // handleGridClick: si attiva una volta sola (SXADV-5920, vedi rowActivation).
+  const firstActivation = useMemo(() => oncePerEvent(), []);
+
   const handleRowClicked = (event: RowClickedEvent) => {
     const src = event.event as MouseEvent | undefined;
     const target = src?.target as HTMLElement | undefined;
     if (target?.closest(ROW_ACTIVATION_IGNORE)) {
       return;
     }
+    if (!firstActivation(src)) return;
     activateRow(event.data as Record<string, unknown> | undefined);
   };
 
@@ -2197,11 +2203,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (!rowNode?.data || rowNode.data._isBreakRow) return;
     if (!rowNode.data._isContinuationRow) return;
     // Continuation rows (the 2nd+ line of a multi-row record) render as full-width
-    // rows and don't fire AG Grid's onRowClicked, so they're handled here. Route
-    // them through the SAME activateRow the main rows use — a click on a
-    // continuation field must edit the record (post-and-move), not navigate.
+    // rows. Route them through the SAME activateRow the main rows use — a click on
+    // a continuation field must edit the record (post-and-move), not navigate.
+    // AG Grid 35 emette rowClicked anche per le righe a tutta larghezza, quindi
+    // di solito handleRowClicked ha gia' attivato la riga con questo stesso
+    // evento: un secondo NavigateDetail trovava la pagina cambiata e tornava
+    // "Sessione non valida" (SXADV-5920).
+    if (!firstActivation(e.nativeEvent)) return;
     activateRow(rowNode.data as Record<string, unknown>);
-  }, [activateRow]);
+  }, [activateRow, firstActivation]);
 
   const isFullWidthRow = (params: { rowNode: { data?: Record<string, unknown> } }) =>
     !!params.rowNode.data?._isBreakRow || !!params.rowNode.data?._isContinuationRow;
