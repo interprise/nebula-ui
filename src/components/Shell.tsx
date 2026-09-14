@@ -782,7 +782,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         await new Promise((resolve) => setTimeout(resolve, delay));
         return poll();
       };
-      await poll();
+      api.beginTrackedJob();
+      try {
+        await poll();
+      } finally {
+        api.endTrackedJob();
+      }
     },
     [updateTabState]
   );

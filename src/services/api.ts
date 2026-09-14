@@ -46,6 +46,28 @@ function setInFlight(delta: number): void {
   for (const l of inFlightListeners) l(inFlightCount);
 }
 
+// --- Job asincroni seguiti ------------------------------------------------
+// Fra un giro di JSONProgress e l'altro nessuna richiesta e' in volo, ma il
+// server sta ancora lavorando sulla Session: il job gira senza il lock della
+// Session e sulla sua connessione JDBC. Shell apre e chiude il conteggio
+// attorno al polling del progresso.
+let trackedJobs = 0;
+
+export function beginTrackedJob(): void {
+  trackedJobs += 1;
+}
+
+export function endTrackedJob(): void {
+  trackedJobs = Math.max(0, trackedJobs - 1);
+}
+
+/** Un comando e' in lavorazione: una richiesta in volo o un job seguito. Il
+ *  client legacy in questo stato non manda il Ping (ui.js: `inRequest`,
+ *  `trackAsynchJob`). */
+export function isServerBusy(): boolean {
+  return inFlightCount > 0 || trackedJobs > 0;
+}
+
 /** Best-effort conversion of a JS object-literal ("relaxed" JSON) string into
  *  strict JSON: quote bare identifier keys and turn single-quoted string
  *  literals into double-quoted ones. Returns null when the input doesn't look

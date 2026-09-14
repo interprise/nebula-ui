@@ -251,21 +251,59 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Poll the server every 150s for banner updates via the Ping command
+  // Ping ogni 150 s, come il client legacy (ui.js `ping`), e mai mentre un
+  // comando e' in lavorazione: il Ping gira sulla Session S1, e un job lanciato
+  // da li' lavora senza il lock della Session e sulla sua stessa connessione
+  // JDBC. Il Ping dice solo se ci sono banner nuovi, senza leggere dal DB; i
+  // banner li scarica GetBanners, di nuovo solo a client libero. Prima il Ping li leggeva ogni volta, e la lettura degli allegati si
+  // mescolava con quella del job: sul Bilancio 810 colonna B a zero e totali
+  // doppi (SXADV-5795). Occupato o fallito: si riprova fra 60 s.
   useEffect(() => {
     if (!loggedIn) return;
-    const interval = setInterval(async () => {
-      try {
-        const resp = await api.postAction2('Ping');
-        const banners = (resp as unknown as { banners?: unknown[] }).banners;
-        if (banners !== undefined) {
-          setLoginInfo((prev) => prev ? { ...prev, banners: banners as LoginInfo['banners'] } : prev);
-        }
-      } catch {
-        // ignore — next tick will retry
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    let bannersPending = false;
+    const applyBanners = (banners: unknown[]) => {
+      setLoginInfo((prev) => prev ? { ...prev, banners: banners as LoginInfo['banners'] } : prev);
+    };
+    const schedule = (ms: number) => {
+      if (!stopped) timer = setTimeout(() => { void tick(); }, ms);
+    };
+    async function tick() {
+      if (api.isServerBusy()) {
+        schedule(bannersPending ? 10000 : 60000);
+        return;
       }
-    }, 150000);
-    return () => clearInterval(interval);
+      try {
+        if (bannersPending) {
+          const resp = await api.postAction2('GetBanners');
+          const banners = (resp as unknown as { banners?: unknown[] }).banners;
+          if (banners !== undefined) applyBanners(banners);
+          bannersPending = false;
+          schedule(150000);
+          return;
+        }
+        const resp = await api.postAction2('Ping');
+        const r = resp as unknown as { banners?: unknown[]; newBanners?: boolean };
+        if (r.banners !== undefined) {
+          // CORE precedente a newBanners (il bundle si rilascia prima che
+          // core_ver.txt lo raggiunga): i banner arrivano ancora col Ping.
+          applyBanners(r.banners);
+        } else if (r.newBanners) {
+          bannersPending = true;
+          schedule(0);
+          return;
+        }
+        schedule(150000);
+      } catch {
+        schedule(60000);
+      }
+    }
+    schedule(150000);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [loggedIn]);
 
   // Freshworks Widget: load only when assistenza is enabled, after login
