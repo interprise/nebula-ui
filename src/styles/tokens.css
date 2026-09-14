@@ -75,6 +75,11 @@
    * Tenuto uguale al colorText di antd. */
   --app-text: rgba(0, 0, 0, 0.88);
 
+  /* Testo attenuato di una riga di dettaglio, sotto quelle che contano: i
+   * sottoconti "normali" della Struttura di bilancio (`bilancio_lSN`), grigi e
+   * in corsivo come nel foglio legacy (SXADV-5794). */
+  --app-text-subdued: #666;
+
   /* Navigation "you are here" marks (SXADV-5784). Hover alone gave no lasting
    * clue of what had been clicked, so the open function keeps a persistent
    * highlight: in the sidebar menu (item and, when collapsed, its module icon)
@@ -182,4 +187,5 @@
   --app-action-chip-bg-hover: rgba(255, 255, 255, 0.14);
   --app-action-chip-border: rgba(255, 255, 255, 0.2);
   --app-text: rgba(255, 255, 255, 0.85);
+  --app-text-subdued: rgba(255, 255, 255, 0.55);
 }

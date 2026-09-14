@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
-import { serverHtml, HTML_POLICY } from '../services/serverHtml';
+import { serverHtml, serverText, HTML_POLICY } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
@@ -301,13 +301,17 @@ const withCellNav = (body: React.ReactNode, params: ValueCellParams): React.Reac
 // Cell renderer for HTML content (addresses, contacts, etc.) — and for the
 // values that merely carry composed markup (see looksLikeServerHtml). With
 // `asHtml: false` it is just the plain-text cell that carries a chain.
+/** Il testo di una cella resa da AG Grid senza renderer proprio. */
+const plainCellText = (params: { value: unknown }) =>
+  serverText(params.value == null ? '' : String(params.value));
+
 const HtmlCellRenderer = (params: ValueCellParams) => {
   const val = params.value;
   const text = val == null ? '' : String(val);
   if (!text) return withCellNav(null, params);
   return withCellNav(
     params.asHtml === false
-      ? <span>{text}</span>
+      ? <span>{serverText(text)}</span>
       : <span dangerouslySetInnerHTML={{ __html: serverHtml(text, HTML_POLICY.cell) }} />,
     params,
   );
@@ -374,7 +378,7 @@ const DisplayValueRenderer = (params: ValueCellParams) => {
   const display = params.data?.[`_display_${idx}`] as string | undefined;
   const v = params.value;
   const text = (display !== undefined && display !== '') ? display : (v == null ? '' : String(v));
-  return withCellNav(text, params);
+  return withCellNav(serverText(text), params);
 };
 
 // Cell renderer for custom controls (delegates to registered component).
@@ -1267,6 +1271,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // `colIdx` serve a OGNI renderer di valore per ritrovare gli extra
           // che la riga porta sotto quell'indice (catenella, displayValue).
           cellRendererParams: { colMeta, colIdx: idx, dynPropKey, asHtml: isHtml },
+          // Cella di solo testo senza renderer: le entita' del valore (l'indentazione
+          // `&#160;` della Struttura di bilancio) diventano caratteri, come quando il
+          // legacy scriveva la cella come markup (SXADV-5794).
+          valueFormatter: resolvedCellRenderer ? undefined : plainCellText,
           // In one-line il record sta su UNA linea: niente a-capo né crescita in
           // altezza, che è ciò che fa entrare molti più record nella pagina. Le
           // colonne con un control registrato tengono l'autoHeight: il loro
@@ -1397,7 +1405,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
           const hasHtml = ctrlType === 'html' || looksLikeServerHtml(val);
-          cells.push(hasHtml ? { html: val, colspan, cls, style } : { text: val, colspan, cls, style });
+          cells.push(hasHtml ? { html: val, colspan, cls, style } : { text: serverText(val), colspan, cls, style });
         } else {
           cells.push({ text: '', colspan });
         }

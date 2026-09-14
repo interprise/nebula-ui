@@ -156,3 +156,26 @@ export function sanitizeMessageHtml(html: string): string {
 export function serverHtml(html: string, policy: HtmlPolicy): string {
   return fixServerHtml(sanitizeServerHtml(html, policy));
 }
+
+const decodedEntities = new Map<string, string>();
+
+/**
+ * Il testo di un valore che il dominio compone per l'HTML del legacy, dove le
+ * celle si scrivevano come markup: le entita' diventano i loro caratteri, il
+ * resto resta testo e React lo mette in pagina come tale. E' il caso
+ * dell'indentazione della "Struttura di bilancio" (`Bilancio.getDesc`, quattro
+ * `&#160;` per livello), che scritta come testo usciva letterale (SXADV-5794).
+ * Solo le entita': un `<` resta un `<`, niente viene interpretato come tag.
+ * Ogni entita' si decodifica una volta, in un documento inerte.
+ */
+export function serverText(text: string): string {
+  if (!text || !text.includes('&')) return text;
+  return text.replace(/&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi, (entity) => {
+    let decoded = decodedEntities.get(entity);
+    if (decoded === undefined) {
+      decoded = new DOMParser().parseFromString(entity, 'text/html').body.textContent ?? entity;
+      decodedEntities.set(entity, decoded);
+    }
+    return decoded;
+  });
+}

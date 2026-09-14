@@ -107,6 +107,18 @@ html, body {
   height: 16px;
   width: 16px;
 }
+/* Righe della "Struttura di bilancio" (Bilancio.getBilancioClass, contentClass
+   delle view bilancio*List): conti e totali in grassetto, sottoconti "normali"
+   in corsivo attenuato, come nel foglio legacy (SXADV-5794). Del legacy si
+   riportano solo peso, stile e colore del carattere: corpo, bordi e margini
+   sono quelli della griglia. `bilancio_lS` (i sottoconti) e' testo normale. */
+.bilancio_lC {
+  font-weight: bold;
+}
+.bilancio_lSN {
+  font-style: italic;
+  color: var(--app-text-subdued);
+}
 .topPrompt {
   background-color: whitesmoke;
   color: #000;
