@@ -303,6 +303,13 @@ html, body {
 .layout-table td.content-cell .ant-btn {
   max-width: 100%;
 }
+/* Un pulsante con didascalia in una cella che ha colonne libere a destra
+   (`cell-free-right`) si prende lo spazio che gli serve, fino a `--cell-free`,
+   come nel legacy: stretto alla cella, un "Download bilancio (Excel)" dichiarato
+   `size="3"` usciva centrato e tagliato su entrambi i lati (SXADV-5795.3). */
+.layout-table td.content-cell.cell-free-right .ant-btn {
+  max-width: var(--cell-free);
+}
 
 /* Contrassegno di una o due lettere (vedi `isMarkerButton`): il padding di
    antd, 15px per lato, e' piu' largo della cella che la view gli assegna.
