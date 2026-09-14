@@ -9,6 +9,7 @@ import { useOlapState } from './useOlapState';
 import { pivot, type PivotedRow } from './pivot';
 import type { CubeRow } from './types';
 import { triggerDownload } from '../../services/api';
+import { useFeedback } from '../../hooks/feedback';
 
 const { Text } = Typography;
 
@@ -30,6 +31,7 @@ const gridTheme = themeAlpine.withParams({
 const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }) => {
   const viewName = (control.viewName as string | undefined) ?? '';
   const sid = useContext(SidContext);
+  const feedback = useFeedback();
   const getFormValues = useContext(FormValuesContext);
   // Form values are typically empty by the time the cube mounts (the
   // server response that materialises the cube placeholder doesn't carry
@@ -363,7 +365,8 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
           <Button
             size="small"
             icon={<FileExcelOutlined />}
-            onClick={() => triggerDownload('olap.HyperCubeXLS', {}, sid, `${meta.viewName}.xlsx`)}
+            onClick={() => triggerDownload('olap.HyperCubeXLS', {}, sid, `${meta.viewName}.xlsx`)
+              .catch((e) => feedback.error((e as Error).message || 'Download non riuscito'))}
           >
             XLSX
           </Button>
@@ -372,7 +375,8 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
           <Button
             size="small"
             icon={<FileTextOutlined />}
-            onClick={() => triggerDownload('olap.OlapCSV', {}, sid, `${meta.viewName}.csv`)}
+            onClick={() => triggerDownload('olap.OlapCSV', {}, sid, `${meta.viewName}.csv`)
+              .catch((e) => feedback.error((e as Error).message || 'Download non riuscito'))}
           >
             CSV
           </Button>

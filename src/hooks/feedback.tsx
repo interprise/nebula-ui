@@ -40,7 +40,14 @@ export interface Feedback {
   error: (text: string) => void;
   warning: (text: string) => void;
   info: (text: string) => void;
+  /** Una richiesta fallita senza una risposta del server da mostrare
+   *  (rete, HTTP 500, risposta illeggibile): "Errore Server" come nel legacy. */
+  failure: (e: unknown) => void;
 }
+
+/** Il testo del legacy per una richiesta fallita (ui.js handleFailure). */
+const SERVER_FAILURE_TEXT =
+  'Impossibile completare la richiesta. Attendere e riprovare. Nel caso il problema persista siete pregati di contattare il supporto tecnico.';
 
 /** Durata degli avvisi INFO. Il legacy ne dava 3 e il client ne dava 3: troppo
  *  pochi per leggere un testo intero (SXADV-5814.2c). Col mouse sopra si fermano. */
@@ -153,11 +160,30 @@ export function useFeedback(): Feedback {
       if (notifications.length > 0) toast(serverBody(notifications), true);
     };
 
+    // Richiesta che non ha prodotto una risposta leggibile: server giu',
+    // rete, HTTP 500, risposta non JSON. Titolo e testo del legacy
+    // (handleFailure), con in piu' il dettaglio tecnico, che il legacy non dava
+    // e che serve a capire la causa (SXADV-5804).
+    const failure = (e: unknown) => {
+      const detail = e instanceof Error ? e.message : String(e);
+      modal.error({
+        ...dialog,
+        title: 'Errore Server',
+        content: (
+          <div className="app-message-body">
+            <p>{SERVER_FAILURE_TEXT}</p>
+            {detail && <p className="app-message-detail">Dettaglio: {detail}</p>}
+          </div>
+        ),
+      });
+    };
+
     return {
       showServerMessages,
       error: (text) => notExecuted(textBody(text)),
       warning: (text) => executedWithWarnings(textBody(text), 'Attenzione'),
       info: (text) => toast(textBody(text), false),
+      failure,
     };
   }, [modal, notification]);
 }

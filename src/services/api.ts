@@ -202,7 +202,7 @@ export async function triggerDownload(
     body,
     credentials: 'same-origin',
   });
-  if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(`Download non riuscito: il server ha risposto HTTP ${resp.status}`);
 
   const ct = resp.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
@@ -217,7 +217,7 @@ export async function triggerDownload(
     if (json.errors && json.errors.length > 0) throw new Error(json.errors[0].message);
     const cb = json.uiData?.callback;
     const m = cb ? FILE_CALLBACK_RE.exec(cb) : null;
-    if (!m) throw new Error('Download failed: unexpected JSON response');
+    if (!m) throw new Error('Download non riuscito: risposta inattesa del server');
     const fileName = decodeURIComponent(m[1]);
     const fileType = m[2];
     const indexName = decodeURIComponent(m[3]);
@@ -234,7 +234,7 @@ export async function triggerDownload(
       body: loadBody,
       credentials: 'same-origin',
     });
-    if (!fileResp.ok) throw new Error(`LoadFile failed: HTTP ${fileResp.status}`);
+    if (!fileResp.ok) throw new Error(`Download non riuscito: il server ha risposto HTTP ${fileResp.status}`);
     saveBlob(await fileResp.blob(), indexName || fallbackName);
     return;
   }

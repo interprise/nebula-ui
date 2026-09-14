@@ -74,6 +74,7 @@ import ChangePasswordModal from './ChangePasswordModal';
 import ImpersonateModal from './ImpersonateModal';
 import BannerCard from './BannerCard';
 import TopProgressBar from './TopProgressBar';
+import LoadingOverlay from './LoadingOverlay';
 import { ensureNotificationPermission, notify } from '../services/notifications';
 import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
@@ -1124,7 +1125,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           .catch((e) => {
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
-            feedback.error(`Error: ${e}`);
+            feedback.failure(e);
           })
           .finally(() => { document.body.style.cursor = ''; });
       };
@@ -1162,7 +1163,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
-        feedback.error(`Error: ${e}`);
+        feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
       }
@@ -1200,7 +1201,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
-        feedback.error(`Error: ${e}`);
+        feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
       }
@@ -1264,7 +1265,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             if (newUi !== tab.ui) updateTabState(tab.key, { ui: newUi });
           }
         } catch (e) {
-          feedback.error(`Error: ${e}`);
+          feedback.failure(e);
         }
         return;
       }
@@ -1288,7 +1289,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           processResponse(tab.key, resp);
           onReloadMenu();
         } catch (e) {
-          feedback.error(`Error: ${e}`);
+          feedback.failure(e);
         } finally {
           document.body.style.cursor = '';
         }
@@ -1355,7 +1356,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // account for — drop any armed breadcrumb-back so it can't be applied
         // to some later, unrelated response on this tab.
         pendingBreadcrumbsRef.current = null;
-        feedback.error(`Error: ${e}`);
+        feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
       }
@@ -1389,7 +1390,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false });
-        feedback.error(`Error: ${e}`);
+        feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
       }
@@ -2317,11 +2318,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
                 {currentTab.loading && !currentTab.quietLoading && (
-                  <div className="loading-overlay">
-                    <Spin size="large" tip={currentTab.progressPct != null ? `${currentTab.progressPct}%` : undefined}>
-                      <div style={{ minHeight: 60 }} />
-                    </Spin>
-                  </div>
+                  <LoadingOverlay progressPct={currentTab.progressPct} />
                 )}
                 {currentTab.ui ? (
                   <>

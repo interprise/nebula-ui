@@ -1762,6 +1762,15 @@ body[style*="cursor: wait"] * {
   max-height: 60vh;
   overflow: auto;
 }
+/* SXADV-5804: sotto il testo di "Errore Server" il dettaglio tecnico, che
+   serve all'assistenza per capire la causa ma non e' il messaggio per
+   l'utente: piu' piccolo e in secondo piano. */
+.app-message-dialog .app-message-detail {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.45));
+  word-break: break-word;
+}
 /* antd 6 dipinge fondo e angoli sull'involucro, non sull'avviso che riceve la
    classe: il colore va messo li', altrimenti resta il bianco. */
 .ant-notification-notice-wrapper:has(> .app-toast) {
