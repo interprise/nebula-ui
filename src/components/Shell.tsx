@@ -96,6 +96,7 @@ const MOTIVI_FOTOGRAFIA: Record<string, string> = {
   MODIFICHE: 'ci sono modifiche non salvate',
   OCCUPATA: 'la sessione sta gia\' lavorando',
   ERRORE: 'la lettura non e\' riuscita',
+  DATE_MOBILI: 'una data della ricerca si aggiorna da sola',
 };
 const { Text } = Typography;
 

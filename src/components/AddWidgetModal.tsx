@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Form, Input, Select, Tag, Spin, Typography } from 'antd';
+import { Modal, Form, Input, InputNumber, Select, Space, Tag, Spin, Typography } from 'antd';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
@@ -11,7 +11,20 @@ interface Sorgente {
   descrizione?: string;
   colonne?: Array<{ etichetta?: string }>;
   listView?: string;
+  /** I criteri di tipo data: su una dashboard possono seguire il calendario. */
+  criteriData?: Array<{ chiave: string; etichetta: string; valore: string; modoProposto: string }>;
 }
+
+/** Come si muove una data del widget. Le voci sono quelle di DateMobili, lato server. */
+const MODI_DATA = [
+  { value: 'fissa', label: 'resta questa data' },
+  { value: 'oggi', label: 'il giorno in cui si aggiorna' },
+  { value: 'ieri', label: 'il giorno prima' },
+  { value: 'inizioMese', label: 'il primo del mese' },
+  { value: 'fineMesePrecedente', label: 'fine mese scorso' },
+  { value: 'inizioAnno', label: 'il primo gennaio' },
+  { value: 'oggiMenoGiorni', label: 'oggi meno N giorni' },
+];
 
 interface Widget {
   idWidget?: number | null;
@@ -64,6 +77,8 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
   const [bozza, setBozza] = useState<{ widget: Widget; sorgente: Sorgente } | null>(null);
   const [caricando, setCaricando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  /** chiave del criterio -> come si muove quella data. */
+  const [date, setDate] = useState<Record<string, { modo: string; giorni: number }>>({});
 
   // onClose arriva scritta in linea da chi usa la finestra, quindi cambia identita' a
   // ogni ridisegno di quel componente — e la Shell si ridisegna a ogni inizio e fine
@@ -125,7 +140,15 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
           return;
         }
         const widget = (resp.widget || {}) as Widget;
-        setBozza({ widget, sorgente: (resp.sorgente || {}) as Sorgente });
+        const sorgente = (resp.sorgente || {}) as Sorgente;
+        setBozza({ widget, sorgente });
+        // Si parte da quello che propone il server: «oggi» dove l'utente aveva
+        // accettato la data proposta dalla maschera, «resta questa data» altrove.
+        const iniziali: Record<string, { modo: string; giorni: number }> = {};
+        (sorgente.criteriData || []).forEach((c) => {
+          iniziali[c.chiave] = { modo: c.modoProposto || 'fissa', giorni: 30 };
+        });
+        setDate(iniziali);
         form.setFieldsValue({
           titolo: widget.titolo || '',
           intervallo: widget.intervalloMin || 60,
@@ -152,6 +175,7 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
         sid,
         titolo: valori.titolo.trim(),
         intervallo: String(valori.intervallo),
+        date: JSON.stringify(date),
       })) as unknown as Record<string, unknown>;
       if (resp.esito !== 'ok') {
         mostraRisposta(resp, 'Il widget non e stato salvato.');
@@ -219,6 +243,64 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
               </Typography.Text>
             )}
           </Form.Item>
+          {(bozza.sorgente.criteriData || []).length > 0 && (
+            <Form.Item label="Le date della ricerca">
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 6 }}>
+                Una data ferma mostrera' sempre gli stessi giorni: qui si decide quali
+                seguono il calendario a ogni aggiornamento.
+              </Typography.Text>
+              {(bozza.sorgente.criteriData || []).map((c) => {
+                const scelta = date[c.chiave] || { modo: 'fissa', giorni: 30 };
+                return (
+                  <Space key={c.chiave} wrap style={{ marginBottom: 6 }}>
+                    {/* Il valore battuto sta accanto all'etichetta e non solo dentro
+                        l'opzione «resta X»: su certe maschere le etichette sono
+                        «Data / da / a» ripetute tre volte, e senza il valore non si
+                        capisce quale data si sta rendendo mobile. */}
+                    <Typography.Text>
+                      {c.etichetta} <Typography.Text type="secondary">({c.valore})</Typography.Text>
+                    </Typography.Text>
+                    <Select
+                      size="small"
+                      style={{ minWidth: 220 }}
+                      value={scelta.modo}
+                      options={
+                        // Un modo che il server conosce e il client no comparirebbe
+                        // come chiave nuda: meglio mostrarlo per quello che e'.
+                        MODI_DATA.some((m) => m.value === scelta.modo)
+                          ? MODI_DATA.map((m) =>
+                              m.value === 'fissa' ? { ...m, label: `resta ${c.valore}` } : m
+                            )
+                          : [
+                              ...MODI_DATA.map((m) =>
+                                m.value === 'fissa' ? { ...m, label: `resta ${c.valore}` } : m
+                              ),
+                              { value: scelta.modo, label: `${scelta.modo} (non riconosciuto)` },
+                            ]
+                      }
+                      onChange={(modo) =>
+                        setDate((p) => ({ ...p, [c.chiave]: { ...scelta, modo } }))
+                      }
+                    />
+                    {scelta.modo === 'oggiMenoGiorni' && (
+                      <InputNumber
+                        size="small"
+                        min={1}
+                        max={3650}
+                        value={scelta.giorni}
+                        onChange={(giorni) =>
+                          setDate((p) => ({
+                            ...p,
+                            [c.chiave]: { ...scelta, giorni: Number(giorni) || 1 },
+                          }))
+                        }
+                      />
+                    )}
+                  </Space>
+                );
+              })}
+            </Form.Item>
+          )}
           <Form.Item
             label="Nome del widget"
             name="titolo"
