@@ -50,6 +50,7 @@ import {
   FontSizeOutlined,
   CheckOutlined,
   PlusOutlined,
+  AppstoreAddOutlined,
 } from '@ant-design/icons';
 import type {
   MenuItem,
@@ -85,8 +86,17 @@ import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
+import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 
 const { Header, Content } = Layout;
+
+/** Perche' la prima fotografia e' rimandata (motivi di dashboard.AddWidget, SXADV-62). */
+const MOTIVI_FOTOGRAFIA: Record<string, string> = {
+  TEMPO: 'la lista e\' lunga',
+  MODIFICHE: 'ci sono modifiche non salvate',
+  OCCUPATA: 'la sessione sta gia\' lavorando',
+  ERRORE: 'la lettura non e\' riuscita',
+};
 const { Text } = Typography;
 
 /**
@@ -1269,6 +1279,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     void loadRestoredTab(restored[0]);
   }, [initialPanels, loadRestoredTab]);
 
+  /* "Aggiungi alla dashboard" (SXADV-62): il pulsante compare sulle liste, e la
+     finestra chiede al server la bozza con gli stessi filtri che verranno
+     rieseguiti. Il widget nasce gia' popolato; se il server risponde che la
+     fotografia e' in preparazione (lista lenta, modifiche in sospeso) la si
+     chiede con dashboard.Fotografa, che passa dalla barra di avanzamento come
+     le ricerche. */
+  const [addWidgetOpen, setAddWidgetOpen] = useState(false);
+
   const handleAction = useCallback(
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
@@ -2399,7 +2417,28 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       </div>
                     )}
                     {!viewHasOlapCube(currentTab.ui) && (
-                      <Toolbar items={currentTab.toolbar || []} paging={currentTab.ui?.paging} pageType={currentTab.ui?.pageType} onAction={handleAction} />
+                      <Toolbar
+                        items={currentTab.toolbar || []}
+                        paging={currentTab.ui?.paging}
+                        pageType={currentTab.ui?.pageType}
+                        onAction={handleAction}
+                        extraRight={
+                          currentTab.ui?.pageType === 1 ? (
+                            <Tooltip title="Aggiungi alla dashboard: questa lista, con i filtri di adesso">
+                              <Button
+                                size="small"
+                                icon={<AppstoreAddOutlined />}
+                                onClick={() => setAddWidgetOpen(true)}
+                                /* Sola icona, come gli altri pulsanti della barra: il testo
+                                   sta nel suggerimento. aria-label lo tiene per chi usa un
+                                   lettore di schermo, che di un pulsante muto non saprebbe
+                                   che farsene. */
+                                aria-label="Aggiungi alla dashboard"
+                              />
+                            </Tooltip>
+                          ) : undefined
+                        }
+                      />
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
                       <FlushEditsContext.Provider value={flushFieldEdits}>
@@ -2436,6 +2475,50 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         </Content>
       </Layout>
 
+      <AddWidgetModal
+        open={addWidgetOpen}
+        sid={currentTab?.sid || 'S1'}
+        onClose={() => setAddWidgetOpen(false)}
+        onAggiunto={(esito: WidgetAggiunto) => {
+          const nome = esito.widget?.titolo || 'Widget';
+          if (esito.fotografia?.stato === 'PRE') {
+            // Il perche' del rinvio lo dice il server: senza, l'utente legge solo
+            // "sto preparando" e non sa che cosa e' successo.
+            const motivo = esito.fotografia.motivo || '';
+            const perche = MOTIVI_FOTOGRAFIA[motivo];
+            // Il dettaglio del server si AGGIUNGE alla frase, non la sostituisce: da
+            // solo puo' essere un messaggio di JDBC, che non dice niente a chi legge.
+            const dettaglio = motivo === 'ERRORE' ? esito.fotografia.messaggio : undefined;
+            const fra = [perche, dettaglio].filter(Boolean).join(': ');
+            feedback.info(
+              `"${nome}" aggiunto alla dashboard. Sto preparando i dati` +
+                (fra ? ` (${fra})` : '') + '.'
+            );
+            // Si richiede la fotografia solo per i motivi che ha senso ritentare
+            // subito. MODIFICHE lo rifarebbe fallire dallo stesso controllo (le
+            // modifiche dell'utente non sono cambiate) e l'utente riceverebbe una
+            // finestra bloccante dopo l'avviso che gliel'ha gia' detto; con OCCUPATA
+            // il comando non parte nemmeno, e la scheda si aggancerebbe alla barra di
+            // avanzamento del job di qualcun altro. La prende il primo aggiornamento.
+            const id = esito.widget?.idWidget;
+            if (id != null && (motivo === 'TEMPO' || motivo === 'ERRORE'))
+              void handleAction('dashboard.Fotografa', { idWidget: String(id) });
+          } else {
+            // Il conteggio e' quello VERO della lista: la fotografia ne tiene fino a
+            // 1.000, e dire "1000 righe" di una lista da 5.000 sarebbe una bugia.
+            const totale = esito.fotografia?.totaleRighe;
+            const parziale = esito.fotografia?.parziale;
+            // col punto delle migliaia, come ogni altro numero dell'applicativo
+            const quante = totale != null ? totale.toLocaleString('it-IT') : '';
+            feedback.info(
+              `"${nome}" aggiunto alla dashboard` +
+                (totale != null
+                  ? ` (${quante} righe${parziale ? ', ne conservo le prime 1.000' : ''}).`
+                  : '.')
+            );
+          }
+        }}
+      />
       {loginInfo.changePassword !== false && (
         <ChangePasswordModal
           open={changePasswordOpen}

@@ -177,6 +177,9 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
 }
 
 interface ToolbarProps {
+  /** Bottoni del client che stanno in fondo a destra, dopo quelli del server
+   *  (per esempio "Aggiungi alla dashboard" sulle liste). */
+  extraRight?: React.ReactNode;
   items: ToolbarItem[];
   paging?: { currentPage: number; totalPages: number; totalRows: number; position: number; pageSize: number };
   pageType?: number;
@@ -313,7 +316,7 @@ function renderToolbarItem(
   return btn;
 }
 
-const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) => {
+const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction, extraRight }) => {
   // Context-aware modal so dialogs inherit the ConfigProvider CSS-var theme;
   // the static antd import renders invisibly under it. Called before the early
   // return so the hook order stays stable. (SXADV-5542)
@@ -345,9 +348,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) 
      non al blur: il valore appena digitato parte insieme al comando. */
   useHotkeys(bindings, { priority: HotkeyPriority.toolbar, allowWhileTyping: true });
 
-  if (!items || items.length === 0) return null;
+  // Con una barra vuota non c'e' niente da disegnare, ma un pulsante del client
+  // (extraRight) e' comunque da mostrare: oggi le liste hanno sempre almeno il
+  // riempitivo '->', ma una barra dichiarata a mano puo' tornare vuota.
+  if ((!items || items.length === 0) && !extraRight) return null;
 
-  const rawItems = items as unknown[];
+  const rawItems = (items || []) as unknown[];   // puo' mancare: vedi la guardia sopra
   const splitIdx = rawItems.indexOf('->');
   // pageType 0 = QUERY: align all items to the right when the server hasn't
   // emitted an explicit "->" split, matching the legacy ExtJS query toolbar layout.
@@ -362,9 +368,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction }) 
           {leftItems.map((raw, idx) => renderToolbarItem(raw, idx, onAction, paging, modal))}
         </Space>
       )}
-      {rightItems.length > 0 && (
+      {(rightItems.length > 0 || extraRight) && (
         <Space wrap size="small" style={{ marginLeft: 'auto' }}>
           {rightItems.map((raw, idx) => renderToolbarItem(raw, (splitIdx >= 0 ? splitIdx + 1 : 0) + idx, onAction, paging, modal))}
+          {extraRight}
         </Space>
       )}
     </div>
