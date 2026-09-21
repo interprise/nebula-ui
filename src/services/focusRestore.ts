@@ -47,6 +47,15 @@ export function captureFocusBeforeReload(fallbackId?: string | null): void {
   pending = { fallbackId: fallbackId || null };
 }
 
+/** Disarma il ripristino senza leggere il fuoco: per le strade in cui la
+ *  richiesta armata non arriva a una risposta (errore di rete, azione che non
+ *  parte). Un segno rimasto armato lo prenderebbe la risposta dopo, anche una
+ *  pagina nuova dal menu, che rimetterebbe il fuoco sul campo di prima invece
+ *  di portarlo nella maschera nuova (SXADV-5803). */
+export function discardPendingFocus(): void {
+  pending = null;
+}
+
 export function consumePendingFocus(): string | null {
   const p = pending;
   pending = null;

@@ -80,7 +80,7 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
-import { consumePendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
+import { consumePendingFocus, discardPendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
@@ -788,6 +788,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       api.beginTrackedJob();
       try {
         await poll();
+      } catch (e) {
+        // Il job non arriva a una risposta: il ripristino armato per lui non
+        // deve passare alla prossima.
+        discardPendingFocus();
+        throw e;
       } finally {
         api.endTrackedJob();
       }
@@ -797,6 +802,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
   const processResponseInner = useCallback(
     (tabKey: string, resp: ServerResponse, replay?: ConfirmReplay) => {
+      // Il ripristino del fuoco armato da un campo con reload appartiene a
+      // QUESTA risposta: lo si consuma subito, prima delle uscite anticipate
+      // qui sotto (sessione scaduta, redirect). Lasciato armato lo prendeva la
+      // risposta dopo — anche una pagina nuova aperta dal menu, che rimetteva
+      // il fuoco sul campo di prima invece di portarlo nella maschera
+      // (SXADV-5803). Il fuoco si legge adesso, all'arrivo della risposta
+      // (useControlChange arma solo il ripiego), e lo si ridà dopo il ridisegno.
+      const pendingFocus = consumePendingFocus();
       const r = resp as Record<string, unknown>;
       if (r.notLoggedIn) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
@@ -1092,9 +1105,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
-      // Restore focus after React re-renders: il fuoco si legge adesso,
-      // all'arrivo della risposta (useControlChange arma solo il ripiego).
-      const pendingFocus = consumePendingFocus();
       if (pendingFocus) {
         restoreFocus(pendingFocus);
       } else if (
@@ -1151,6 +1161,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           .catch((e) => {
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
+            discardPendingFocus();
             feedback.failure(e);
           })
           .finally(() => { document.body.style.cursor = ''; });
@@ -1189,6 +1200,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        // Un campo lasciato mentre questa richiesta era in volo ha armato il
+        // ripristino per lei (handleAction esce su `loading`): non arriva.
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1207,6 +1221,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
       processResponse(tab.key, resp);
     } catch {
+      discardPendingFocus();
       // View not accessible — clear the tab
       updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
     }
@@ -1227,6 +1242,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1275,9 +1291,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const handleAction = useCallback(
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
-      if (!tab) return;
+      if (!tab) {
+        discardPendingFocus();
+        return;
+      }
 
-      if (tab.loading) return; // Block while a request is pending
+      // Block while a request is pending. Un ripristino del fuoco armato qui
+      // resta: lo consuma la risposta in volo.
+      if (tab.loading) return;
 
       // ToggleItem is a lightweight JSONCommand on controller2 that only flips
       // server-side state and returns a minimal { toggleItem: { itemId, included } }.
@@ -1293,12 +1314,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         } catch (e) {
           feedback.failure(e);
         }
+        // Nessuna risposta passa da processResponse.
+        discardPendingFocus();
         return;
       }
 
       // Impersonate dialog: ImpersonateModal handles input + inline "user not
       // found"; on success it calls refreshAfterIdentityChange.
       if (action === 'impersonateDialog') {
+        discardPendingFocus();
         setImpersonateOpen(true);
         return;
       }
@@ -1315,6 +1339,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           processResponse(tab.key, resp);
           onReloadMenu();
         } catch (e) {
+          discardPendingFocus();
           feedback.failure(e);
         } finally {
           document.body.style.cursor = '';
@@ -1380,8 +1405,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         // A request that never produced a response leaves no navigation to
         // account for — drop any armed breadcrumb-back so it can't be applied
-        // to some later, unrelated response on this tab.
+        // to some later, unrelated response on this tab. Lo stesso per il
+        // ripristino del fuoco armato dal campo che l'ha fatta partire.
         pendingBreadcrumbsRef.current = null;
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1416,6 +1443,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false });
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1671,6 +1699,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (r.notLoggedIn || r.noSession || (resp.errors?.length ?? 0) > 0) stop();
       } catch {
         updateTabState(refreshTabKey, { loading: false });
+        discardPendingFocus();
         stop();
       } finally {
         updateTabState(refreshTabKey, { quietLoading: false });
