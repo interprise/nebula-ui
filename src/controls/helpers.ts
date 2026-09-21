@@ -124,13 +124,35 @@ export function parseFlexibleDate(raw: string, dateFmt = 'DD/MM/YYYY'): Dayjs | 
   return parsed.isValid() ? parsed : null;
 }
 
+/** Un testo gia' nel formato esatto, battuto nel campo: `undefined` se non e'
+ *  nel formato (tocca al chiamante interpretarlo), `null` se e' nel formato ma
+ *  e' lo stesso valore che il campo ha gia', altrimenti la data da committare.
+ *
+ *  Il testo valido rc-picker lo tiene nel suo stato interno e lo conferma solo
+ *  con Invio, col Tab, o quando il pannello si chiude. Finche' il pannello si
+ *  apriva a ogni tasto, il blur lo chiudeva e il valore passava; col pannello
+ *  che resta chiuso mentre si digita (SXADV-5740.0), uscire col MOUSE lasciava
+ *  la data scritta per intero solo a video: Salva mandava quella vecchia. Il
+ *  confronto col valore attuale evita il doppio commit dopo un Tab, che l'ha
+ *  gia' confermata (il keydown e' un evento discreto: React ridisegna prima
+ *  del blur, e `current` e' gia' la data nuova). */
+export function typedExactValue(raw: string, fmt: string, current: Dayjs | null | undefined): Dayjs | null | undefined {
+  const d = dayjs(raw, fmt, true);
+  if (!d.isValid()) return undefined;
+  return current && current.format(fmt) === raw ? null : d;
+}
+
 /** Blur handler for antd `DatePicker` that restores flexible date entry. Used
  *  with `preserveInvalidOnBlur` so the picker keeps (rather than wipes) the raw
  *  typed text on focus-out: this handler then reads it and, when the picker's
  *  own strict parse would have rejected it, autocompletes via
  *  {@link parseFlexibleDate} and commits the result. Single display format is
  *  kept (not a format array) so the picker never commits mid-typing. Supports
- *  timestamp formats by splitting off a trailing time token. */
+ *  timestamp formats by splitting off a trailing time token.
+ *
+ *  Un testo gia' nel formato esatto lo committa anche lui, se e' diverso dal
+ *  valore attuale ({@link typedExactValue}): uscendo col mouse rc-picker non lo
+ *  conferma piu' (SXADV-5740). */
 export function useFlexibleDateBlur(
   fmt: string,
   commit: (value: Dayjs | null, valueStr: string) => void,
@@ -138,7 +160,16 @@ export function useFlexibleDateBlur(
 ): (e: FocusEvent<HTMLElement>) => void {
   return useCallback(
     (e: FocusEvent<HTMLElement>) => {
-      const raw = (e.target as HTMLInputElement).value?.trim();
+      // rc-picker passa lo stesso `onBlur` anche al PANNELLO del calendario:
+      // dopo una scelta il fuoco lascia il `<div>` del pannello, che non ha un
+      // `value`. Letto come "campo svuotato", con `currentValue` ancora sulla
+      // data vecchia (la closure precede il commit della scelta) committava
+      // null subito dopo la data appena scelta: il campo lampeggiava e si
+      // svuotava. Su un campo vuoto `currentValue` era null e la guardia sotto
+      // lo salvava, per questo passando dalla X funzionava (SXADV-5740.1).
+      // Il testo da interpretare sta solo nell'input.
+      if (!(e.target instanceof HTMLInputElement)) return;
+      const raw = e.target.value?.trim();
       if (!raw) {
         // Emptied via keyboard (Canc/Backspace). With `preserveInvalidOnBlur`
         // the picker keeps the controlled `value` prop and visually restores
@@ -149,8 +180,11 @@ export function useFlexibleDateBlur(
         if (currentValue) commit(null, '');
         return;
       }
-      // The picker already accepts a well-formed value; don't double-commit.
-      if (dayjs(raw, fmt, true).isValid()) return;
+      const exact = typedExactValue(raw, fmt, currentValue);
+      if (exact !== undefined) {
+        if (exact) commit(exact, raw);
+        return;
+      }
 
       const hasTime = /[Hh]/.test(fmt);
       const dateFmt = hasTime ? fmt.split(/\s+/)[0] : fmt;
@@ -208,6 +242,59 @@ export function useRestorePickerFocus(
       if (stranded) pickerRef.current?.focus();
     });
   }, [pickerRef]);
+}
+
+/** Apertura del calendario di un DatePicker/TimePicker antd: si apre dal clic
+ *  sul campo (icona compresa) o dalla tastiera (Freccia giu', anche con Alt o
+ *  Ctrl, e Ctrl+Spazio come le combo), MAI dalla digitazione.
+ *
+ *  rc-picker apre il pannello a ogni carattere battuto (`onHelp`) e su Invio:
+ *  chi scriveva una data in un campo vuoto se lo trovava aperto sopra la form
+ *  e per uscire gli servivano due Tab, uno per il pannello e uno per il campo
+ *  (SXADV-5740.0). Nel legacy si digita e basta. Come `useSelectOpen`, gli
+ *  `onOpenChange` di antd valgono solo per CHIUDERE; ad aprire siamo noi. E
+ *  se l'utente comincia a scrivere col pannello gia' aperto (aperto dal clic
+ *  con cui e' entrato nel campo) il pannello si chiude: sta digitando.
+ *
+ *  I campi DATA passano anche `allowClear={false}`: sui campi valorizzati la X di
+ *  antd compare al passaggio del mouse ESATTAMENTE sopra l'icona del
+ *  calendario, e chi cliccava "l'icona" svuotava il campo (con reload partiva
+ *  subito un Post vuoto). Il legacy non aveva la X: si svuota con
+ *  Canc/Backspace, che committa il vuoto (SXADV-5489.1). Il TimeControl la
+ *  tiene finche' Canc non svuota anche un'ora, e cosi' l'editor di cella della
+ *  griglia, dove Canc non committa il vuoto.
+ *
+ *  `disabled`: il clic su un campo disabilitato non deve lasciare il calendario
+ *  "armato". rc-picker chiama `onClick` anche li', e siccome da disabilitato
+ *  non chiede mai di chiudere, il pannello si aprirebbe da solo appena un
+ *  reload rende il campo modificabile. */
+export function usePickerOpen(disabled?: boolean): {
+  open: boolean;
+  onOpenChange: (visible: boolean) => void;
+  onClick: () => void;
+  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+} {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = useCallback((visible: boolean) => {
+    if (!visible) setOpen(false);
+  }, []);
+  // Reso disabilitato col pannello aperto (una risposta arrivata in quel
+  // momento): rc-picker non chiede di chiudere, e il pannello si riaprirebbe
+  // da solo quando il campo torna modificabile.
+  if (disabled && open) setOpen(false);
+  const onClick = useCallback(() => {
+    if (!disabled) setOpen(true);
+  }, [disabled]);
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === ' ')) {
+      e.preventDefault();
+      setOpen(true);
+    } else if (e.key.length === 1 || ['Backspace', 'Delete', 'Process', 'Unidentified'].includes(e.key)) {
+      // 'Process'/'Unidentified': composizione IME e tastiere virtuali.
+      if (!e.ctrlKey && !e.metaKey) setOpen(false);
+    }
+  }, []);
+  return { open, onOpenChange, onClick, onKeyDown };
 }
 
 /** Controlled-`open` state for an antd `Select` that opens ONLY on a deliberate
@@ -619,15 +706,12 @@ export function useControlChange(
     (val: unknown) => {
       onChange(fieldName, val);
       if (reload) {
-        // Snapshot focus before the reload fires. For Tab-out reloads
-        // the browser has already moved focus to the next tabIndex
-        // field, so document.activeElement IS the target we want after
-        // re-render. For checkbox toggles the activeElement is the
-        // checkbox itself, so focus stays put. Either way, restoring
-        // from the snapshot matches user intent. When the change came from a
-        // popup that stranded focus (DatePicker calendar), activeElement has no
-        // id — fall back to this control's id so focus returns to the field
-        // instead of <body> after the re-render (SXADV-5680).
+        // Il fuoco da ridare dopo il ridisegno si legge all'arrivo della
+        // risposta, non ora: un'uscita col Tab fa il commit col fuoco ancora
+        // in transito, e leggerlo qui lo rimandava sul campo appena lasciato
+        // (SXADV-5740.0). Qui si arma solo il ripiego: se una scelta da un
+        // popup (calendario) ha lasciato il fuoco su <body>, torna a questo
+        // campo (SXADV-5680).
         captureFocusBeforeReload(control.id);
         // Let the reload return the fresh toolbar: it stages an edit, so the
         // server's dirty state changes and Annulla/Salva must reflect it (was

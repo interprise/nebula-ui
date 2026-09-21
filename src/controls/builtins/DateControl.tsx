@@ -2,7 +2,7 @@ import { useRef, type ComponentRef } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus, pickerWidthForFormat } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus, usePickerOpen, typedExactValue, pickerWidthForFormat } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
@@ -33,6 +33,7 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
   const commonProps = useCommonProps(control, value);
   const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
+  const pickerOpen = usePickerOpen(commonProps.disabled); // SXADV-5740.0: digitare non apre il calendario
   const commit = (d: Dayjs | null, dateStr: string) => {
     setValue(d);
     handleChange(dateStr);
@@ -42,6 +43,8 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
     <DatePicker
       {...commonProps}
       ref={pickerRef}
+      {...pickerOpen}
+      allowClear={false}
       value={value}
       format={dateFmt}
       placeholder=""
@@ -63,10 +66,14 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
   const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const pickerRef = useRef<ComponentRef<typeof TimePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
+  // SXADV-5740.0: digitare non apre il pannello. La X qui resta: senza il
+  // blur flessibile Canc non svuota un'ora, e sarebbe l'unico modo.
+  const pickerOpen = usePickerOpen(commonProps.disabled);
   return withPostDecorations(
     <TimePicker
       {...commonProps}
       ref={pickerRef}
+      {...pickerOpen}
       value={value}
       format="HH:mm"
       placeholder=""
@@ -75,6 +82,15 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
         setValue(t);
         handleChange(timeStr);
         restorePickerFocus();
+      }}
+      onBlur={(e) => {
+        // Un'ora scritta per intero e lasciata col mouse: rc-picker la
+        // conferma solo con Invio, Tab o chiudendo il pannello, che ora la
+        // digitazione non apre piu' (SXADV-5740.0).
+        if (!(e.target instanceof HTMLInputElement)) return;
+        const raw = e.target.value.trim();
+        const t = typedExactValue(raw, 'HH:mm', value);
+        if (t) { setValue(t); handleChange(raw); }
       }}
     />,
     control,
@@ -91,6 +107,7 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
   const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const pickerRef = useRef<ComponentRef<typeof DatePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
+  const pickerOpen = usePickerOpen(commonProps.disabled); // SXADV-5740.0: digitare non apre il calendario
   const commit = (d: Dayjs | null, dateStr: string) => {
     setValue(d);
     handleChange(dateStr);
@@ -100,6 +117,8 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
     <DatePicker
       {...commonProps}
       ref={pickerRef}
+      {...pickerOpen}
+      allowClear={false}
       showTime
       value={value}
       format={tsFmt}

@@ -1,43 +1,59 @@
 /**
- * Captures the focused element's id at the moment a reload is fired
- * and restores focus (with scroll-into-view) after the response's
- * re-render lands in the DOM.
+ * Restores focus (with scroll-into-view) after a reload's response has
+ * re-rendered the form, on the element that held it when the response
+ * arrived.
  *
  * Why this matters: on a reload the scroll container might re-mount or
- * re-flow and the browser loses scroll / focus context. By snapshotting
- * document.activeElement before the request and re-focusing it after,
- * we get:
- *   - Tab-out reloads (text/combo/date fields): the browser had already
- *     moved focus to the NEXT tabIndex before onBlur fired, so the
- *     captured id IS the next field — we re-focus it.
- *   - Checkbox toggles: the checkbox stays focused on click, so the
- *     captured id is the same checkbox — we re-focus it.
+ * re-flow and the browser loses scroll / focus context. By reading
+ * document.activeElement when the response arrives and re-focusing it after
+ * the re-render, we get:
+ *   - Tab-out reloads (text/date fields): il commit parte col fuoco ancora
+ *     in transito (nel `blur`, o nel keydown del Tab per una data scritta nel
+ *     formato esatto); all'arrivo della risposta il fuoco e' sul campo
+ *     SUCCESSIVO, e lo si rimette li' dopo il ridisegno.
+ *   - Checkbox toggles: the checkbox stays focused on click, so it is
+ *     the element we find and re-focus.
  *   - scrollIntoView({block:'nearest'}) keeps the focused field visible
  *     without scrolling if it was already in view.
  */
-let pending: string | null = null;
+let pending: { fallbackId: string | null } | null = null;
+
+/** Il fuoco e' "sospeso": su <body>, o sul pannello di un popup antd
+ *  (calendario, tendina) che sta per sparire. */
+function focusStranded(el: Element | null): boolean {
+  return !(el instanceof HTMLElement) || el === document.body
+    || el.closest('.ant-picker-dropdown, .ant-select-dropdown') != null;
+}
 
 /**
- * Snapshot the element to refocus after the reload re-renders.
+ * Arma il ripristino del fuoco per il reload che sta partendo. Il nome e'
+ * rimasto quello di quando il fuoco si fotografava qui.
  *
- * Normally that's `document.activeElement` — for a Tab-out reload it's already
- * the next field, for a checkbox toggle it's the checkbox itself. But when the
- * change is fired from a widget whose popup has stolen focus (a DatePicker
- * calendar, whose panel div carries no id, or a menu that dropped focus to
- * <body>), `activeElement` has no id to restore. In that case fall back to
- * `fallbackId` — the control's own DOM id — so focus lands back on the field
- * that triggered the reload instead of being stranded on <body> (whence the
- * next Tab jumps to the first focusable element on the page). SXADV-5680.
+ * Il fuoco da ridare NON si legge qui ma all'arrivo della risposta
+ * ({@link consumePendingFocus}), quando la mossa dell'utente e' finita: qui
+ * sarebbe troppo presto. Un commit fatto nel `blur` (data flessibile, testo
+ * con reload) arriva col fuoco in transito su `<body>`; uno fatto nel keydown
+ * del Tab (data nel formato esatto, che rc-picker conferma li') arriva col
+ * fuoco ancora sul campo che si sta lasciando. In tutti e due i casi
+ * rileggerlo subito rimetteva il cursore sul campo appena lasciato, e col Tab
+ * non si usciva mai da un campo con reload come "Data doc" (SXADV-5740.0,
+ * "servono due TAB"). All'arrivo della risposta: dove il fuoco e' posato
+ * (campo successivo, checkbox appena cliccata, bottone su cui l'utente e'
+ * andato nel frattempo) resta; solo se e' sospeso si torna a `fallbackId`, il
+ * campo che ha fatto partire il reload — e' il caso di una scelta da un popup
+ * (calendario, menu) che ha lasciato il fuoco su <body>, SXADV-5680.
  */
 export function captureFocusBeforeReload(fallbackId?: string | null): void {
-  const el = document.activeElement as HTMLElement | null;
-  pending = el?.id || fallbackId || null;
+  pending = { fallbackId: fallbackId || null };
 }
 
 export function consumePendingFocus(): string | null {
-  const t = pending;
+  const p = pending;
   pending = null;
-  return t;
+  if (!p) return null;
+  const active = document.activeElement;
+  // Posato su qualcosa senza id: e' dell'utente, non lo si sposta.
+  return focusStranded(active) ? p.fallbackId : (active as HTMLElement).id || null;
 }
 
 export function restoreFocus(id: string | null): void {

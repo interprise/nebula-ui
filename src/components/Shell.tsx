@@ -1092,8 +1092,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
-      // Restore focus after React re-renders. The target id was
-      // captured by useControlChange right before the reload fired.
+      // Restore focus after React re-renders: il fuoco si legge adesso,
+      // all'arrivo della risposta (useControlChange arma solo il ripiego).
       const pendingFocus = consumePendingFocus();
       if (pendingFocus) {
         restoreFocus(pendingFocus);
