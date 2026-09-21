@@ -41,6 +41,12 @@
   --app-toast-bg: #e6f4ff;
   --app-toast-border: #69b1ff;
 
+  /* Pallino col numero (banner nella barra laterale, allegati): azzurro, non
+   * il rosso di default di antd, perche' il rosso vuol dire errore e qui c'e'
+   * solo un conteggio (SXADV-5639, 5454.2). Abbastanza scuro da reggere la
+   * cifra bianca. */
+  --app-badge-bg: #0a8bd6;
+
   /* --- Component-specific semantic tokens ---------------------------------
    * Defined in terms of the palette above so a theme can override either the
    * base token or the specific one. Keep these keyed to a concrete UI concern. */

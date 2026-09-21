@@ -93,7 +93,7 @@ const AttachmentsBar: React.FC<AttachmentsBarProps> = ({
                   : `${info.count} allegati`
             }
           >
-            <Badge count={hasAttachments ? info.count : 0} size="small" offset={[-4, 4]}>
+            <Badge count={hasAttachments ? info.count : 0} size="small" offset={[-4, 4]} color={hasAttachments ? 'var(--app-badge-bg)' : undefined}>
               <Button
                 type="text"
                 icon={<PaperClipOutlined />}

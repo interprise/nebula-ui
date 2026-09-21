@@ -85,6 +85,7 @@ import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
+import { headerColor } from './headerColor';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -502,6 +503,8 @@ function buildMenuItems(
 // Fixed-width header labels so the Azienda/Sede selectors line up vertically
 // regardless of label text width.
 const hdrLabelStyle: React.CSSProperties = { color: '#fff', whiteSpace: 'nowrap', display: 'inline-block', width: 60, flexShrink: 0 };
+// Azienda e Sede hanno la stessa larghezza, cosi' restano incolonnate.
+const hdrSelectStyle: React.CSSProperties = { width: 400, minWidth: 0, flex: '0 1 auto' };
 
 let tabCounter = 1;
 
@@ -1969,7 +1972,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // cdms moved to top of list
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi, active: activeMenuId === 'menu.avvisi' },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true, active: activeMenuId === 'menu.notifications' },
-    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Avvisi e notifiche', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
+    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner Informativi', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
     // Le tre funzioni qui sotto sono ingressi di primo livello come una voce di
     // menu, e come quelle devono intitolare la scheda e far ripartire il
     // percorso da zero: le prime due sono voci di menu invisibili (menu.xml,
@@ -2038,6 +2041,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 size="small"
                 offset={b.badgeCount ? [-2, 6] : [-4, 4]}
                 overflowCount={99}
+                // azzurro e non rosso: e' un conteggio, non un errore (SXADV-5639, 5454.2)
+                color={b.badgeCount || b.badge ? 'var(--app-badge-bg)' : undefined}
               >
                 <Button
                   type="text"
@@ -2088,7 +2093,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             header — they read as one continuous strip across the top of the app,
             and any difference shows up as a step at the sidebar edge. Both derive
             from --app-header-h (SXADV-5742). */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end', gap: 8, height: 'var(--app-header-h)', boxSizing: 'border-box', padding: collapsed ? '0' : '0 8px', background: loginInfo.bkColor || '#1E4176' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end', gap: 8, height: 'var(--app-header-h)', boxSizing: 'border-box', padding: collapsed ? '0' : '0 8px', background: headerColor(loginInfo.bkColor) }}>
           <Tooltip title={collapsed ? 'Espandi menu' : 'Comprimi menu'} placement="right">
             <Button
               type="text"
@@ -2131,7 +2136,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 key={menuNonce}
                 mode="inline"
                 inlineCollapsed={collapsed}
-                items={buildMenuItems(filteredMenu, 0, collapsed, loginInfo.bkColor || '#1E4176')}
+                items={buildMenuItems(filteredMenu, 0, collapsed, headerColor(loginInfo.bkColor))}
                 // Controlled selection: the internal (uncontrolled) one is lost on
                 // every remount (menuNonce) and is per-Menu, not per-tab. Keying it
                 // off the active tab keeps the open function highlighted and makes
@@ -2163,11 +2168,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         <Header
           style={{
             padding: '0 16px',
-            background: loginInfo.bkColor || '#1E4176',
-            display: 'flex',
+            background: headerColor(loginInfo.bkColor),
+            // Tre colonne e non una riga flex: con flex il blocco centrale stava
+            // nel mezzo dello spazio AVANZATO fra logo e utente, che hanno
+            // larghezze diverse, e Azienda/Sede finivano spostati rispetto
+            // all'area di lavoro sotto (SXADV-5639, 5454.1B). Le due colonne
+            // laterali si dividono il resto in parti uguali, cosi' il centro e'
+            // il centro della testata, cioe' dell'area sotto; non scendono sotto
+            // il proprio contenuto, e quando lo spazio manca e' il centro a
+            // stringersi.
+            display: 'grid',
+            gridTemplateColumns: 'minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr)',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
+            columnGap: 16,
             // Vertical density (SXADV-5742): the header is the single largest
             // fixed band above the editing area. Height and logo size come from
             // the chrome scale in tokens.css so the whole band can be retuned in
@@ -2183,7 +2196,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               prefixed "Rel." (SXADV-5454.2A). ALFA goes between the two, as in the
               classic client ("PANDORA ALFA"): it qualifies the product, not the
               release. The server raises the flag (SXADV-5454.2B). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifySelf: 'start' }}>
             <img
               src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
               alt={loginInfo.brand || 'Pandora'}
@@ -2196,7 +2209,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           </div>
 
           {/* Center: company/site selectors */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', minWidth: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
               {loginInfo.aziende && loginInfo.aziende.length === 1 && (
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
@@ -2205,7 +2218,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 </div>
               )}
               {loginInfo.aziende && loginInfo.aziende.length > 1 && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Azienda:</Text>
                   <Select
                     size="small"
@@ -2214,7 +2227,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     onChange={handleAziendaChange}
                     loading={contextChanging}
                     disabled={contextChanging}
-                    style={{ width: 240, minWidth: 0 }}
+                    // Largo quanto basta per leggere codice e ragione sociale
+                    // (SXADV-5639, 5454.1A: a 240px si leggeva "C.N.A. SERVIZI M...");
+                    // si stringe solo se la testata non ha posto.
+                    style={hdrSelectStyle}
                     options={loginInfo.aziende}
                     fieldNames={{ label: 'text', value: 'value' }}
                   />
@@ -2227,7 +2243,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 </div>
               )}
               {loginInfo.sedi && loginInfo.sedi.length > 1 && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Sede:</Text>
                   <Select
                     size="small"
@@ -2236,7 +2252,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     onChange={handleSedeChange}
                     loading={contextChanging}
                     disabled={contextChanging}
-                    style={{ width: 240, minWidth: 0 }}
+                    style={hdrSelectStyle}
                     options={loginInfo.sedi}
                     fieldNames={{ label: 'text', value: 'value' }}
                   />
@@ -2249,7 +2265,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               anchored here, right before the login icon (SXADV-5454.4b); its
               background is highlighted for immediate legibility (SXADV-5454.3) and
               the status dot is green — active login — not red (SXADV-5454.4a). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifySelf: 'end' }}>
             {loginInfo.logoaz && !loginInfo.logoaz.endsWith('/') && !loginInfo.logoaz.includes('null') && (
               <img
                 src={`/entrasp/${loginInfo.logoaz}`}
@@ -2452,7 +2468,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
       {/* Banners modal: shows all active banners regardless of banHomePage */}
       <Modal
-        title={<><NotificationOutlined style={{ color: '#1677ff', marginRight: 8 }} />Avvisi e notifiche</>}
+        title={<><NotificationOutlined style={{ color: '#1677ff', marginRight: 8 }} />Banner Informativi</>}
         open={bannersModalOpen}
         onCancel={() => setBannersModalOpen(false)}
         footer={null}
