@@ -19,7 +19,13 @@ const APERTURA_MS = 30000;
 const { Title, Text } = Typography;
 
 const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
-  const banners: Banner[] = (loginInfo.banners || []).filter((b) => b.banHomePage !== false);
+  // Memoizzato per davvero: era ricalcolato a ogni disegno, quindi il useMemo qui
+  // sotto non teneva e a ogni ridisegno si rileggeva localStorage e si ricalcolava
+  // il riconoscitore di ogni avviso, testo per testo (e hpText puo' essere lungo).
+  const banners: Banner[] = useMemo(
+    () => (loginInfo.banners || []).filter((b) => b.banHomePage !== false),
+    [loginInfo.banners]
+  );
   const hasContent = banners.length > 0;
   // La Home si apre sugli AVVISI se ce n'e' almeno uno che questa persona non ha
   // ancora visto, altrimenti sulla dashboard (Luca, 21/09): un avviso nuovo e' una

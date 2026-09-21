@@ -1866,7 +1866,9 @@ body[style*="cursor: wait"] * {
    --------------------------------------------------------------------------- */
 .dash-widgets {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  /* min(): sotto i 380 px utili auto-fill terrebbe la colonna a 380 e la
+     pagina scorrerebbe in orizzontale. */
+  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -1878,7 +1880,7 @@ body[style*="cursor: wait"] * {
   padding: 10px 12px 12px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--app-surface);
 }
 .dash-widget-head {
   display: flex;
@@ -1927,6 +1929,9 @@ body[style*="cursor: wait"] * {
   white-space: nowrap;
   padding: 4px 8px;
   border-bottom: 1px solid var(--app-border);
+}
+.dash-widget-tabella td.number {
+  text-align: right;
 }
 .dash-widget-tabella td {
   padding: 2px 8px;

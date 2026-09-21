@@ -2459,7 +2459,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                   </>
                 ) : (
                   currentTab.loading ? null : (
-                    <HomePanel loginInfo={loginInfo} onBannerClick={handleBannerClick} />
+                    /* La chiave lega la Home al CONTESTO: cambiando azienda o sede,
+                       resetToHome ricrea la scheda con la stessa chiave e React
+                       riconcilia invece di rimontare — la dashboard e' per azienda, e
+                       restavano a video i widget di quella da cui si e' appena usciti.
+                       Con la chiave rinascono anche i riferimenti di HomePanel, che
+                       altrimenti si portano dietro la finestra dei 30 s e il conto
+                       degli avvisi nuovi della sessione precedente. */
+                    <HomePanel
+                      key={`${loginInfo.customerKey || ''}|${loginInfo.sede || ''}|${loginInfo.login || ''}`}
+                      loginInfo={loginInfo}
+                      onBannerClick={handleBannerClick}
+                    />
                   )
                 )}
                 {/* Copyright: out of flow at the foot of the tab, and only when

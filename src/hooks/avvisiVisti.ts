@@ -63,7 +63,14 @@ export function segnaVisti(banners: Banner[], login?: string | null): void {
   if (!id || banners.length === 0) return;
   try {
     const visti = leggi(login);
-    for (const b of banners) visti.add(riconoscitore(b));
+    // delete + add rimette in coda: Set.add su una chiave gia' presente non la sposta,
+    // e il tetto scarterebbe un avviso permanente — che tornerebbe «nuovo» proprio
+    // perche' lo si vede da sempre.
+    for (const b of banners) {
+      const r = riconoscitore(b);
+      visti.delete(r);
+      visti.add(r);
+    }
     const elenco = [...visti].slice(-TETTO);
     localStorage.setItem(PREFISSO + id, JSON.stringify(elenco));
   } catch {
