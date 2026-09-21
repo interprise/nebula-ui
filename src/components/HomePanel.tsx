@@ -3,6 +3,7 @@ import { Empty, Typography } from 'antd';
 import { HomeOutlined, BellOutlined } from '@ant-design/icons';
 import BannerCard from './BannerCard';
 import type { Banner, LoginInfo } from '../types/ui';
+import { welcomeText } from './homeWelcome';
 
 interface HomePanelProps {
   loginInfo: LoginInfo;
@@ -37,7 +38,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
       >
         <HomeOutlined style={{ fontSize: 40, color: '#1677ff', marginBottom: 10 }} />
         <Title level={3} style={{ margin: 0, color: '#003a8c' }}>
-          Benvenuto, {loginInfo.login}
+          {welcomeText(loginInfo)}
         </Title>
         <Text type="secondary" style={{ fontSize: 14 }}>
           {loginInfo.profile}
