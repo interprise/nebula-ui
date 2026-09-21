@@ -124,6 +124,34 @@ export function parseFlexibleDate(raw: string, dateFmt = 'DD/MM/YYYY'): Dayjs | 
   return parsed.isValid() ? parsed : null;
 }
 
+/** Completa un'ora battuta a mano, come faceva `checkTime` del legacy
+ *  (JSLib.js): il TimePicker antd accetta solo `HH:mm` esatto e un '1030'
+ *  seguito dal Tab lasciava il campo vuoto.
+ *
+ *    - `1`/`2` cifre            → ora intera ('9' → 09:00)
+ *    - `3` cifre                → H mm ('930' → 09:30)
+ *    - `4` cifre                → HH mm ('1030' → 10:30)
+ *    - ora e minuti separati da un carattere qualsiasi non numerico, 1-2
+ *      cifre ciascuno ('9:5' → 09:05, '9.30', '10,30'); l'ora seguita solo
+ *      da `:`, `.` o `,` vale l'ora intera ('9:' → 09:00)
+ *  Ore > 23 e minuti > 59 sono `null`, come nel legacy. Dove il legacy
+ *  indovinava si rifiuta: 5+ cifre (lui troncava a 4), tre gruppi ('1:2:3'),
+ *  minuti senza ora (':30' prendeva l'ora corrente). Del `Dayjs` restituito
+ *  contano solo ora e minuti. */
+export function parseFlexibleTime(raw: string): Dayjs | null {
+  const s = (raw ?? '').trim();
+  let hh: string;
+  let mm: string;
+  const sep = s.match(/^(\d{1,2})[^\d]+(\d{1,2})$/) ?? s.match(/^(\d{1,2})[:.,]$/);
+  if (sep) [hh, mm] = [sep[1], sep[2] ?? '0'];
+  else if (/^\d{1,2}$/.test(s)) [hh, mm] = [s, '0'];
+  else if (/^\d{3,4}$/.test(s)) [hh, mm] = [s.slice(0, -2), s.slice(-2)];
+  else return null;
+  const [h, min] = [Number(hh), Number(mm)];
+  if (h > 23 || min > 59) return null;
+  return dayjs().startOf('day').hour(h).minute(min);
+}
+
 /** Un testo gia' nel formato esatto, battuto nel campo: `undefined` se non e'
  *  nel formato (tocca al chiamante interpretarlo), `null` se e' nel formato ma
  *  e' lo stesso valore che il campo ha gia', altrimenti la data da committare.
@@ -148,17 +176,34 @@ export function typedExactValue(raw: string, fmt: string, current: Dayjs | null 
  *  own strict parse would have rejected it, autocompletes via
  *  {@link parseFlexibleDate} and commits the result. Single display format is
  *  kept (not a format array) so the picker never commits mid-typing. Supports
- *  timestamp formats by splitting off a trailing time token.
+ *  timestamp formats by splitting off a trailing time token, and time-only
+ *  formats (no day/year token) via {@link parseFlexibleTime}.
  *
  *  Un testo gia' nel formato esatto lo committa anche lui, se e' diverso dal
  *  valore attuale ({@link typedExactValue}): uscendo col mouse rc-picker non lo
- *  conferma piu' (SXADV-5740). */
+ *  conferma piu' (SXADV-5740).
+ *
+ *  Restituisce anche una `key` da dare al picker. Un testo che si completa
+ *  nello STESSO valore del campo ('900' su 09:00, '5/7/2026' su 05/07/2026)
+ *  non si committa (sarebbe un reload per niente), ma rc-picker riscrive il
+ *  proprio testo solo quando cambia il valore formattato: con
+ *  `preserveInvalidOnBlur` a video restava '900'. Cambiare la chiave rimonta
+ *  il picker, a fuoco gia' uscito, e il testo torna quello del valore. Lo
+ *  stesso per un testo che non si lascia interpretare ('2500', '31/02'): non
+ *  si committa e a video torna il valore, invece di un testo che Salva non
+ *  manderebbe.
+ *
+ *  `onResync` chiude il pannello di chi controlla `open` ({@link usePickerOpen}):
+ *  uscendo col mouse rc-picker chiude in un requestAnimationFrame, che il
+ *  rimontaggio annulla, e il picker nuovo nasceva col pannello aperto. */
 export function useFlexibleDateBlur(
   fmt: string,
   commit: (value: Dayjs | null, valueStr: string) => void,
   currentValue?: Dayjs | null,
-): (e: FocusEvent<HTMLElement>) => void {
-  return useCallback(
+  onResync?: () => void,
+): [onBlur: (e: FocusEvent<HTMLElement>) => void, key: number] {
+  const [resyncKey, setResyncKey] = useState(0);
+  const onBlur = useCallback(
     (e: FocusEvent<HTMLElement>) => {
       // rc-picker passa lo stesso `onBlur` anche al PANNELLO del calendario:
       // dopo una scelta il fuoco lascia il `<div>` del pannello, che non ha un
@@ -186,7 +231,20 @@ export function useFlexibleDateBlur(
         return;
       }
 
+      const resync = () => {
+        setResyncKey((k) => k + 1);
+        onResync?.();
+      };
+      const commitIfChanged = (d: Dayjs | null) => {
+        if (!d || (currentValue && currentValue.format(fmt) === d.format(fmt))) resync();
+        else commit(d, d.format(fmt));
+      };
       const hasTime = /[Hh]/.test(fmt);
+      if (!/[DY]/.test(fmt)) {
+        // Campo solo ora (TimeControl).
+        commitIfChanged(parseFlexibleTime(raw));
+        return;
+      }
       const dateFmt = hasTime ? fmt.split(/\s+/)[0] : fmt;
       let datePart = raw;
       let timePart = '';
@@ -196,17 +254,17 @@ export function useFlexibleDateBlur(
       }
 
       let d = parseFlexibleDate(datePart, dateFmt);
-      if (!d) return;
-      if (hasTime) {
-        const t = timePart
-          ? dayjs(timePart, ['HH:mm', 'HHmm', 'H:mm', 'HH.mm'], true)
-          : null;
-        d = d.hour(t?.isValid() ? t.hour() : 0).minute(t?.isValid() ? t.minute() : 0);
+      if (d && hasTime) {
+        // Senza ora la mezzanotte; un'ora scritta ma non valida non diventa
+        // 00:00 in silenzio.
+        const t = timePart ? parseFlexibleTime(timePart) : dayjs().startOf('day');
+        d = t && d.hour(t.hour()).minute(t.minute());
       }
-      commit(d, d.format(fmt));
+      commitIfChanged(d);
     },
-    [fmt, commit, currentValue],
+    [fmt, commit, currentValue, onResync],
   );
+  return [onBlur, resyncKey];
 }
 
 /** Return focus to a date/time picker's input after a value is chosen from its
@@ -260,9 +318,9 @@ export function useRestorePickerFocus(
  *  antd compare al passaggio del mouse ESATTAMENTE sopra l'icona del
  *  calendario, e chi cliccava "l'icona" svuotava il campo (con reload partiva
  *  subito un Post vuoto). Il legacy non aveva la X: si svuota con
- *  Canc/Backspace, che committa il vuoto (SXADV-5489.1). Il TimeControl la
- *  tiene finche' Canc non svuota anche un'ora, e cosi' l'editor di cella della
- *  griglia, dove Canc non committa il vuoto.
+ *  Canc/Backspace, che committa il vuoto (SXADV-5489.1). Vale anche per i
+ *  campi ora, che hanno lo stesso blur flessibile; la X la tiene solo l'editor
+ *  di cella della griglia, dove Canc non committa il vuoto.
  *
  *  `disabled`: il clic su un campo disabilitato non deve lasciare il calendario
  *  "armato". rc-picker chiama `onClick` anche li', e siccome da disabilitato

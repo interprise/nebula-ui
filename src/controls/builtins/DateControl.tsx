@@ -2,7 +2,7 @@ import { useRef, type ComponentRef } from 'react';
 import { DatePicker, TimePicker, Input } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus, usePickerOpen, typedExactValue, pickerWidthForFormat } from '../helpers';
+import { useCommonProps, useControlChange, useCommitReload, useSyncedDerived, useSyncedValue, javaToDayjsFormat, useFlexibleDateBlur, useRestorePickerFocus, usePickerOpen, pickerWidthForFormat } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
 /** Field changes flow through `handleFieldChange` in Shell, which writes to
@@ -38,10 +38,11 @@ export const DateControl: ControlComponent = ({ control, pageType, onAction, onC
     setValue(d);
     handleChange(dateStr);
   };
-  const onBlur = useFlexibleDateBlur(dateFmt, commit, value);
+  const [onBlur, resyncKey] = useFlexibleDateBlur(dateFmt, commit, value, () => pickerOpen.onOpenChange(false));
   return withPostDecorations(
     <DatePicker
       {...commonProps}
+      key={resyncKey}
       ref={pickerRef}
       {...pickerOpen}
       allowClear={false}
@@ -66,32 +67,28 @@ export const TimeControl: ControlComponent = ({ control, pageType, onAction, onC
   const commonProps = useCommonProps(control, value); // SXADV-5754.2
   const pickerRef = useRef<ComponentRef<typeof TimePicker>>(null);
   const restorePickerFocus = useRestorePickerFocus(pickerRef);
-  // SXADV-5740.0: digitare non apre il pannello. La X qui resta: senza il
-  // blur flessibile Canc non svuota un'ora, e sarebbe l'unico modo.
-  const pickerOpen = usePickerOpen(commonProps.disabled);
+  const pickerOpen = usePickerOpen(commonProps.disabled); // SXADV-5740.0: digitare non apre il pannello
+  const commit = (t: Dayjs | null, timeStr: string) => {
+    setValue(t);
+    handleChange(timeStr);
+  };
+  // Lo stesso blur dei campi data: '1030' + Tab diventa 10:30, e Canc + Tab
+  // svuota davvero. Per questo la X, che copriva l'icona, non serve piu'.
+  const [onBlur, resyncKey] = useFlexibleDateBlur('HH:mm', commit, value, () => pickerOpen.onOpenChange(false));
   return withPostDecorations(
     <TimePicker
       {...commonProps}
+      key={resyncKey}
       ref={pickerRef}
       {...pickerOpen}
+      allowClear={false}
       value={value}
       format="HH:mm"
       placeholder=""
       style={{ minWidth: pickerWidthForFormat('HH:mm', 5), ...commonProps.style }}
-      onChange={(t, timeStr) => {
-        setValue(t);
-        handleChange(timeStr);
-        restorePickerFocus();
-      }}
-      onBlur={(e) => {
-        // Un'ora scritta per intero e lasciata col mouse: rc-picker la
-        // conferma solo con Invio, Tab o chiudendo il pannello, che ora la
-        // digitazione non apre piu' (SXADV-5740.0).
-        if (!(e.target instanceof HTMLInputElement)) return;
-        const raw = e.target.value.trim();
-        const t = typedExactValue(raw, 'HH:mm', value);
-        if (t) { setValue(t); handleChange(raw); }
-      }}
+      preserveInvalidOnBlur
+      onChange={(t, timeStr) => { commit(t, timeStr as string); restorePickerFocus(); }}
+      onBlur={onBlur}
     />,
     control,
     pageType,
@@ -112,10 +109,11 @@ export const TimestampControl: ControlComponent = ({ control, pageType, onAction
     setValue(d);
     handleChange(dateStr);
   };
-  const onBlur = useFlexibleDateBlur(tsFmt, commit, value);
+  const [onBlur, resyncKey] = useFlexibleDateBlur(tsFmt, commit, value, () => pickerOpen.onOpenChange(false));
   return withPostDecorations(
     <DatePicker
       {...commonProps}
+      key={resyncKey}
       ref={pickerRef}
       {...pickerOpen}
       allowClear={false}
