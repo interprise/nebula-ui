@@ -1858,3 +1858,78 @@ body[style*="cursor: wait"] * {
   cursor: pointer !important;
   pointer-events: auto;
 }
+
+/* ---------------------------------------------------------------------------
+   SXADV-62 · la dashboard dentro la Home.
+   I widget si leggono dalla fotografia salvata: qui non c'e' niente che vada a
+   interrogare una vista. I colori vengono dai token, non scritti a mano.
+   --------------------------------------------------------------------------- */
+.dash-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.dash-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.dash-widget-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dash-widget-head > .ant-typography {
+  flex: 1;
+  min-width: 0;
+}
+.dash-widget-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 11.5px;
+  color: var(--app-text-subdued);
+}
+.dash-widget-filtri {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* La tabella scorre in orizzontale come la lista da cui viene: le colonne sono
+   quelle, e stringerle renderebbe le celle illeggibili. */
+.dash-widget-tabella {
+  overflow: auto;
+  max-height: 320px;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+}
+.dash-widget-tabella table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dash-widget-tabella th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--app-surface-muted);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+.dash-widget-tabella td {
+  padding: 2px 8px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--app-surface-muted);
+}
