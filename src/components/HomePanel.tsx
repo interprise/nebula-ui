@@ -28,6 +28,15 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
   const nuovi = useMemo(() => avvisiNuovi(banners, loginInfo.login), [banners, loginInfo.login]);
   const [cosa, setCosa] = useState<Cosa>('dashboard');
 
+  // Quanti erano nuovi in questa visita. Serve perche' `nuovi` cade a zero appena li
+  // si guarda (segnaVisti li segna subito), e l'etichetta «2 nuovi» sparirebbe proprio
+  // mentre uno li sta leggendo: il numero che conta e' quello con cui e' arrivato. Il
+  // segno resta per la prossima apertura, che e' il suo mestiere.
+  const [quantiNuovi, setQuantiNuovi] = useState(0);
+  useEffect(() => {
+    setQuantiNuovi((q) => (nuovi.length > q ? nuovi.length : q));
+  }, [nuovi.length]);
+
   // Gli avvisi non ci sono ancora al primo disegno: arrivano col loginfo e li
   // aggiorna il Ping. Decidere una volta sola al montaggio voleva dire decidere
   // sempre «dashboard». Qui si guarda finche' non si e' deciso, e la scelta salta
@@ -112,8 +121,8 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
               value: 'avvisi',
               // Il numero che conta e' quello dei NUOVI, finche' ce ne sono: e' la
               // ragione per cui uno guarda li'.
-              label: nuovi.length > 0
-                ? `Avvisi (${nuovi.length} ${nuovi.length === 1 ? 'nuovo' : 'nuovi'})`
+              label: quantiNuovi > 0
+                ? `Avvisi (${quantiNuovi} ${quantiNuovi === 1 ? 'nuovo' : 'nuovi'})`
                 : hasContent
                   ? `Avvisi (${banners.length})`
                   : 'Avvisi',

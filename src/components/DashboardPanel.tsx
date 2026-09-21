@@ -38,6 +38,7 @@ interface Widget {
   viewName?: string;
   errore?: string | null;
   descrizione?: string | null;
+  filtriLeggibili?: boolean;
   colonne?: Colonna[];
   filtri?: Array<{ etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
   fotografia: Fotografia;
@@ -55,6 +56,24 @@ const STATI: Record<string, string> = {
   ERR: 'L\'ultimo aggiornamento non e\' riuscito.',
   NAC: 'Non hai accesso a questa lista.',
 };
+
+/**
+ * I numeri come li scrive il resto dell'applicativo: il raggruppamento c'e' SEMPRE,
+ * anche a quattro cifre (nelle liste si legge «1.220,00 €»). `toLocaleString('it-IT')`
+ * da solo non basta: per l'italiano CLDR dichiara `minimumGroupingDigits=2`, quindi
+ * scriverebbe «4762» dove qui si scrive «4.762» (Luca, 21/09).
+ */
+const NUMERO = (() => {
+  try {
+    // `useGrouping: 'always'` e' ES2023: la libreria di tipi qui e' piu' vecchia e lo
+    // dichiara ancora booleano, il motore invece lo capisce. Se un giorno non lo
+    // capisse, il catch torna al raggruppamento predefinito.
+    return new Intl.NumberFormat('it-IT', { useGrouping: 'always' } as unknown as Intl.NumberFormatOptions);
+  } catch {
+    return new Intl.NumberFormat('it-IT');
+  }
+})();
+const numero = (n: number) => NUMERO.format(n);
 
 const orario = (iso?: string | null) => {
   if (!iso) return null;
@@ -152,7 +171,15 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
 
   return (
     <div className="dash-widgets">
-      {widget.map((w) => (
+      {widget.map((w) => {
+        // Un widget senza fotografia non deve portare giu' la pagina: GetCommand
+        // costruisce la cornice di un widget illeggibile dentro un try che inghiotte
+        // l'eccezione, quindi quella chiave puo' mancare. Qui moriva la Home intera —
+        // niente commutatore, niente avvisi — sulla prima pagina che si apre.
+        const foto: Fotografia = w.fotografia || {};
+        const mostrate = (foto.righe || []).length;
+        const totale = foto.totaleRighe;
+        return (
         <article key={w.idWidget} className="dash-widget">
           <header className="dash-widget-head">
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
@@ -170,6 +197,12 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   }
                 />
               </Tooltip>
+              {/* Niente suggerimento su questo tasto: resta aperto sotto il puntatore,
+                  e quando la finestrella di conferma non ha spazio a destra antd la apre
+                  proprio li' sopra — il tasto «Togli» si becca il clic del suggerimento
+                  e il widget non si toglie (trovato dalla prova indipendente, 21/09).
+                  Il nome del comando lo dice gia' aria-label, e la conferma si spiega da
+                  se'. */}
               <Popconfirm
                 title="Togliere questo widget?"
                 description="La dashboard non lo mostrera' piu'. I dati non si toccano."
@@ -177,36 +210,43 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                 cancelText="Annulla"
                 onConfirm={() => rimuovi(w)}
               >
-                <Tooltip title="Togli dalla dashboard">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<CloseOutlined />}
-                    aria-label={`Togli ${w.titolo || 'widget'} dalla dashboard`}
-                  />
-                </Tooltip>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CloseOutlined />}
+                  aria-label={`Togli ${w.titolo || 'widget'} dalla dashboard`}
+                />
               </Popconfirm>
             </Space>
           </header>
 
           <div className="dash-widget-meta">
-            {w.fotografia.ts ? (
-              <span>aggiornato alle {orario(w.fotografia.ts)}</span>
+            {foto.ts ? (
+              <span>aggiornato alle {orario(foto.ts)}</span>
             ) : (
               <span>mai aggiornato</span>
             )}
             {w.intervalloMin ? <span>· {ogni(w.intervalloMin)}</span> : null}
-            {w.fotografia.totaleRighe != null ? (
+            {totale != null ? (
               <span>
                 ·{' '}
-                {w.fotografia.parziale
-                  ? `prime ${(w.fotografia.righeInFotografia || 0).toLocaleString('it-IT')} di ${w.fotografia.totaleRighe.toLocaleString('it-IT')}`
-                  : `${w.fotografia.totaleRighe.toLocaleString('it-IT')} righe`}
+                {/* «prime N» deve essere il numero che si VEDE. La fotografia ne tiene
+                    fino a 1.000, ma alla Home ne arrivano al massimo 200: dire «prime
+                    1.000» con 200 righe sotto gli occhi e' una bugia misurabile. */}
+                {mostrate < totale
+                  ? `prime ${numero(mostrate)} di ${numero(totale)}`
+                  : `${numero(totale)} ${totale === 1 ? 'riga' : 'righe'}`}
               </span>
             ) : null}
           </div>
 
-          {(w.filtri || []).length > 0 && (
+          {/* Quando il server dice che i filtri non sono leggibili uno per uno, la
+              frase che ha scritto lui vale piu' delle etichette col valore grezzo. */}
+          {w.filtriLeggibili === false && w.descrizione ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {w.descrizione}
+            </Typography.Text>
+          ) : (w.filtri || []).length > 0 ? (
             <div className="dash-widget-filtri">
               {(w.filtri || []).map((f, i) => (
                 <Tag key={i}>
@@ -216,16 +256,21 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                 </Tag>
               ))}
             </div>
-          )}
+          ) : null}
+          {w.errore ? (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {w.errore}
+            </Typography.Text>
+          ) : null}
 
-          {w.fotografia.schemaCambiato && (
+          {foto.schemaCambiato && (
             <Typography.Text type="warning" style={{ fontSize: 12 }}>
               La lista e&apos; cambiata dopo l&apos;ultimo aggiornamento: le colonne
               potrebbero non corrispondere.
             </Typography.Text>
           )}
 
-          {w.fotografia.stato === 'OK' ? (
+          {foto.stato === 'OK' ? (
             <div className="dash-widget-tabella">
               <table>
                 <thead>
@@ -236,7 +281,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {(w.fotografia.righe || []).map((r, i) => (
+                  {(foto.righe || []).map((r, i) => (
                     <tr key={r.k || i}>
                       {(r.c || []).map((cella, j) => (
                         <td key={j}>{cella.t}</td>
@@ -245,7 +290,13 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   ))}
                 </tbody>
               </table>
-              {(w.fotografia.righe || []).length === 0 && (
+              {(w.colonne || []).length === 0 && mostrate > 0 && (
+                <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                  Le colonne di questa lista non si leggono piu&apos;: le righe sono
+                  quelle salvate, ma senza intestazioni.
+                </Typography.Text>
+              )}
+              {(foto.righe || []).length === 0 && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   Nessuna riga: oggi questa ricerca non trova niente.
                 </Typography.Text>
@@ -253,12 +304,13 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
             </div>
           ) : (
             <Typography.Text type="secondary">
-              {STATI[w.fotografia.stato || ''] || 'In attesa di dati.'}
-              {w.fotografia.messaggio ? ` (${w.fotografia.messaggio})` : ''}
+              {STATI[foto.stato || ''] || 'In attesa di dati.'}
+              {foto.messaggio ? ` (${foto.messaggio})` : ''}
             </Typography.Text>
           )}
         </article>
-      ))}
+        );
+      })}
     </div>
   );
 };
