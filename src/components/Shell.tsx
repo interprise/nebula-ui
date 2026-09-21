@@ -1944,11 +1944,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // restituire all'area di editing.
   const { density, setDensity } = useDensity();
 
-  // Session-level functions, kept in both sidebar modes together with the
-  // menu/documentale toggle itself.
+  // Session-level functions, kept in both sidebar modes.
   const commonBarButtons: AppBarButton[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Esci', onClick: onLogout, visible: true, danger: true },
-    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' },
     // Hidden when the credentials live in an external IdP (SSO): there the
     // password is not ours to change.
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: loginInfo.changePassword !== false },
@@ -1957,9 +1955,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     { key: 'immersive', icon: <FullscreenOutlined />, tooltip: 'Schermo intero (Ctrl+Shift+F o Shift+F11)', onClick: enterImmersive, visible: true },
   ];
 
+  // The menu/documentale toggle, in both modes too. It comes after Posta
+  // Elettronica so that Schermo intero sits right under Esci (SXADV-5955); in
+  // documentale mode there is no email button and it follows Schermo intero.
+  const cdmsToggleButton: AppBarButton =
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' };
+
   const appBarButtons: AppBarButton[] = [
     ...commonBarButtons,
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent, active: activeMenuId === 'menu.emailSent' },
+    cdmsToggleButton,
     // Agenda nascosta per ora: il pannello agenda non è ancora portato sul
     // client React. Per riattivarla: visible: !!loginInfo.agendaList
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: false },
@@ -1969,7 +1974,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const fw = (window as unknown as Record<string, unknown>).FreshworksWidget as ((...args: unknown[]) => void) | undefined;
       if (fw) fw('open');
     }, visible: !!loginInfo.assistenza },
-    // cdms moved to top of list
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi, active: activeMenuId === 'menu.avvisi' },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true, active: activeMenuId === 'menu.notifications' },
     { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner Informativi', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
@@ -1993,6 +1997,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // toggle above already goes back to the menu (SXADV-5790).
   const cdmsBarButtons: AppBarButton[] = [
     ...commonBarButtons,
+    cdmsToggleButton,
     { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsView('cdmsProfiliList', 'Gestione Profili'), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsView('cdmsUtentiList', 'Gestione Utenti'), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => openFunctionByAction('Aggiungi Albero', 'AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
