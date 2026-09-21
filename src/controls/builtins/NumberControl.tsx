@@ -1,7 +1,7 @@
 import React from 'react';
 import { InputNumber } from 'antd';
 import type { ControlComponent } from '../types';
-import { useCommonProps, useCommitReload, useSyncedState, mandatoryStatus, decodeHtmlEntities, numberWidthForSize } from '../helpers';
+import { useCommonProps, useCommitReload, useSyncedState, mandatoryStatus, decodeHtmlEntities, numberWidthForSize, selectAllOnMouseFocus } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
 
@@ -69,7 +69,12 @@ const MoneyInput: React.FC<{
     // non vincolerebbe nulla. Vincolato qui, il campo si restringe alla cella
     // invece di sforare ed essere tagliato — con il valore a destra la parte
     // tagliata e' proprio quella che conta.
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+    // Il clic che entra nel campo seleziona tutto l'importo, come il TAB
+    // (SXADV-5932).
+    <span
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}
+      onMouseDownCapture={selectAllOnMouseFocus}
+    >
       <InputNumber
         {...commonProps}
         // Il rosso segue la cifra che c'e' ORA nel campo, non quella con cui il

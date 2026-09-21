@@ -316,6 +316,38 @@ export function useSelectOpen(): {
   return { open, setOpen, onOpenChange };
 }
 
+/** Il clic che PORTA il fuoco in un campo numerico ne seleziona tutto il
+ *  contenuto, come il TAB e come `selectOnFocus` dei campi ExtJS della linea
+ *  legacy: un importo gia' scritto si riscrive subito, invece di dover prima
+ *  cancellare le cifre (SXADV-5932). Un secondo clic, a fuoco gia' dentro, non
+ *  viene toccato: il browser mette il cursore dove si e' cliccato, cosi' si
+ *  corregge una cifra sola.
+ *
+ *  Va sul mousedown e non sul focus: il cursore il browser lo mette come
+ *  azione predefinita del mousedown, DOPO l'evento focus, quindi un `select()`
+ *  fatto nel focus viene subito disfatto. Qui si ferma quell'azione e si fanno
+ *  a mano le due cose che contano: fuoco e selezione.
+ *
+ *  Si aggancia come `onMouseDownCapture` all'involucro del campo; conta solo il
+ *  clic dentro il riquadro dell'`<input>` (il "€" accanto non porta il fuoco
+ *  nemmeno nel legacy). */
+export function selectAllOnMouseFocus(e: {
+  button: number;
+  target: EventTarget | null;
+  currentTarget: { querySelector(sel: string): HTMLInputElement | null };
+  preventDefault(): void;
+}): void {
+  if (e.button !== 0) return;
+  const input = e.currentTarget.querySelector('input');
+  if (!input || input.disabled || input.readOnly) return;
+  if (input.ownerDocument?.activeElement === input) return;
+  const box = input.parentElement;
+  if (!box || !box.contains(e.target as Node | null)) return;
+  e.preventDefault();
+  input.focus();
+  input.select();
+}
+
 /** Fa di una `Select` antd un campo di TESTO vero quando ha un valore.
  *
  *  antd v6 non mette il valore scelto nell'`<input>`: lo scrive come nodo di
