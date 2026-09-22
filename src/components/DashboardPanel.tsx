@@ -75,8 +75,80 @@ interface Props {
  * lavoro: un «Aggiorna ora» su una lista pesante — due minuti misurati — terrebbe fermo
  * tutto quello che l'utente clicca nel frattempo, con la sola barra in cima a dirlo.
  * Il lavoro vero gira comunque in una Session di servizio (SXADV-62, revisione 22/09).
+ *
+ * <p>Il lavoro dei comandi di dashboard sta tutto in una Session di servizio, mai su
+ * questo sid: e' quello che permette al polling di convivere col job sulla stessa
+ * Session senza ricadere in SXADV-5795. Chi aggiunge un comando qui deve tenere
+ * l'abitudine. (Una connessione la prende comunque la PRIMA richiesta su un sid nuovo,
+ * quella che autentica: non si sovrappone a niente, ma non e' «mai».)
  */
 const SID = 'D1';
+
+/**
+ * Il sid su cui gira il JOB di «Aggiorna ora»: uno per widget.
+ *
+ * <p>Una Session ha un solo turno di job. Tenendoli tutti su `D1`, aggiornare un
+ * secondo widget mentre il primo lavora si sarebbe preso un rifiuto per un quarto
+ * d'ora — prima i due andavano in parallelo, e la prova sul server vero l'ha visto
+ * subito. Una sessione per widget rimette le cose come stavano, e per giunta lascia
+ * ogni job da solo sulla sua Session. Sono Session vuote: non aprono nessuna vista e
+ * non prendono nessuna connessione.
+ */
+const sidJob = (idWidget: number) => `DJ${Math.trunc(idWidget)}`;
+
+/**
+ * Oltre questo non si aspetta piu'. Il server molla una prenotazione dopo un quarto
+ * d'ora; se a venti minuti il job risulta ancora vivo qualcosa non ha funzionato, e
+ * continuare a chiedere non lo farebbe finire.
+ */
+const ATTESA_MASSIMA_MS = 20 * 60000;
+
+/**
+ * Segue un comando che il server ha trasformato in JOB.
+ *
+ * <p>Rifare la ricerca di una lista pesante dura minuti, e una POST aperta cosi' a
+ * lungo la chiude un proxy prima che il server abbia finito. Lato server la protezione
+ * c'e' gia': passato il tempo di attesa la richiesta risponde `trackAsynchJob` e il
+ * lavoro continua per conto suo. Il polling tocca a noi — e' la stessa cosa che fa
+ * `Shell.pollProgress` per le ricerche lunghe.
+ *
+ * <p>Si smette quando la risposta non porta piu' `trackAsynchJob`: quello e' l'unico
+ * segnale che il job e' DAVVERO finito. Fermarsi a `progress === 100` sarebbe troppo
+ * presto — il server mette 100 appena il lavoro e' eseguito, ma l'esito lo deposita
+ * subito dopo, e si rischierebbe di leggere una risposta ancora senza.
+ *
+ * @param vivo si richiama a ogni giro: se torna false il pannello non c'e' piu' e si
+ *          smette di chiedere (il lavoro sul server finisce lo stesso e la prossima
+ *          lettura lo trova fatto).
+ * @returns la risposta finale, o null se si e' smesso di seguirlo.
+ */
+async function seguiJob(
+  prima: Record<string, unknown>,
+  sid: string,
+  vivo: () => boolean
+): Promise<Record<string, unknown> | null> {
+  if (!prima.trackAsynchJob) return prima;
+  const scadenza = Date.now() + ATTESA_MASSIMA_MS;
+  let attesa = 500;
+  api.beginTrackedJob();
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, attesa));
+      if (!vivo()) return null;
+      const resp = (await api.checkProgress(sid)) as unknown as Record<string, unknown>;
+      if (!resp.trackAsynchJob) return resp;
+      // Si smette di guardare, ma il lavoro sul server continua e si salva da se':
+      // quindi non e' un errore da finestra, ed e' sbagliato dire «riprova» (chi
+      // riprovasse subito si prenderebbe «si sta gia' aggiornando»).
+      if (Date.now() > scadenza) return { dashboardAggiorna: { esito: 'errore', motivo: 'TEMPO',
+        messaggio: 'L\'aggiornamento sta durando molto: smetto di seguirlo, ma va avanti.'
+          + ' Il risultato comparira\' da se\'.' } };
+      attesa = Math.min(attesa * 2, 5000);
+    }
+  } finally {
+    api.endTrackedJob();
+  }
+}
 
 /** Che cosa dire all'utente per ogni stato della fotografia. */
 const STATI: Record<string, string> = {
@@ -245,24 +317,31 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
     if (inCorso[w.idWidget]) return;
     setInCorso((p) => ({ ...p, [w.idWidget]: true }));
     try {
-      const resp = (await api.postAction2('dashboard.Aggiorna', {
-        sid: SID,
+      const sid = sidJob(w.idWidget);
+      const avvio = (await api.postAction2('dashboard.Aggiorna', {
+        sid,
         idWidget: String(w.idWidget),
       })) as unknown as Record<string, unknown>;
+      // Oltre i 25 secondi il server risponde «sto lavorando» e l'esito arriva col
+      // polling: nella forma e' la stessa risposta, quindi da qui in giu' non cambia
+      // niente.
+      const resp = await seguiJob(avvio, sid, () => vivo.current);
       // Il pannello puo' essersi smontato nei due minuti dell'aggiornamento: non gli si
       // apre una finestra addosso a chi nel frattempo sta guardando altro.
-      if (!vivo.current) return;
-      if (resp.esito !== 'ok') {
+      if (!resp || !vivo.current) return;
+      const esito = (resp.dashboardAggiorna || {}) as Record<string, unknown>;
+      if (esito.esito !== 'ok') {
         const errors = resp.errors as ErrorItem[] | undefined;
-        const motivo = String(resp.motivo || '');
+        const motivo = String(esito.motivo || '');
         if (errors && errors.length > 0) feedback.showServerMessages(errors);
-        else if (motivo === 'TROPPO_PRESTO' || motivo === 'IN_CORSO')
+        else if (motivo === 'TROPPO_PRESTO' || motivo === 'IN_CORSO' || motivo === 'ALTRO_IN_CORSO'
+          || motivo === 'TEMPO')
           // Un freno da un minuto non merita una finestra da chiudere.
-          feedback.info(String(resp.messaggio || 'Riprova fra poco.'));
-        else feedback.error(String(resp.messaggio || 'L\'aggiornamento non e riuscito.'));
+          feedback.info(String(esito.messaggio || 'Riprova fra poco.'));
+        else feedback.error(String(esito.messaggio || 'L\'aggiornamento non e riuscito.'));
         return;
       }
-      const v = (resp.variazioni || {}) as Variazioni;
+      const v = (esito.variazioni || {}) as Variazioni;
       feedback.info(
         v.criteriDiversi
           ? `"${w.titolo || 'Widget'}" aggiornato. I criteri sono cambiati dall'ultima`
@@ -281,7 +360,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
       // deve andarsela a cercare.
       if (v.totale && !v.criteriDiversi) mostraPrimaVariazione(w.idWidget);
     } catch (e) {
-      feedback.failure(e);
+      // Il polling puo' durare minuti: se nel frattempo l'utente e' andato altrove, una
+      // JSONProgress caduta gli aprirebbe «Errore Server» sopra la maschera che sta
+      // compilando. Stesso riguardo che ha leggi() (revisione indipendente, 22/09).
+      if (vivo.current) feedback.failure(e);
     } finally {
       setInCorso((p) => {
         const q = { ...p };
