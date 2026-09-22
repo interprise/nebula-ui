@@ -70,11 +70,13 @@ interface Props {
 }
 
 /**
- * «Aggiorna ora» esiste da G8, che e' il pezzo che lo fa funzionare. La costante resta
- * come interruttore: se un giorno il comando non ci fosse, il pulsante non si disegna —
- * un comando morto in mano all'utente e' peggio di un comando che manca.
+ * La dashboard parla al server con un sid SUO. `Controller` esegue ogni comando dentro
+ * il monitor della Session, e senza sid finirebbe su `S1`, la stessa delle schede di
+ * lavoro: un «Aggiorna ora» su una lista pesante — due minuti misurati — terrebbe fermo
+ * tutto quello che l'utente clicca nel frattempo, con la sola barra in cima a dirlo.
+ * Il lavoro vero gira comunque in una Session di servizio (SXADV-62, revisione 22/09).
  */
-const AGGIORNA_ORA = true;
+const SID = 'D1';
 
 /** Che cosa dire all'utente per ogni stato della fotografia. */
 const STATI: Record<string, string> = {
@@ -208,7 +210,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
     const mia = ++richiesta.current;
     setCaricando(true);
     try {
-      const resp = (await api.postAction2('dashboard.Get')) as unknown as Record<string, unknown>;
+      const resp = (await api.postAction2('dashboard.Get', { sid: SID })) as unknown as Record<
+        string,
+        unknown
+      >;
       if (!vivo.current || mia !== richiesta.current) return;
       const errors = resp.errors as ErrorItem[] | undefined;
       if (errors && errors.length > 0) {
@@ -241,11 +246,19 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
     setInCorso((p) => ({ ...p, [w.idWidget]: true }));
     try {
       const resp = (await api.postAction2('dashboard.Aggiorna', {
+        sid: SID,
         idWidget: String(w.idWidget),
       })) as unknown as Record<string, unknown>;
+      // Il pannello puo' essersi smontato nei due minuti dell'aggiornamento: non gli si
+      // apre una finestra addosso a chi nel frattempo sta guardando altro.
+      if (!vivo.current) return;
       if (resp.esito !== 'ok') {
         const errors = resp.errors as ErrorItem[] | undefined;
+        const motivo = String(resp.motivo || '');
         if (errors && errors.length > 0) feedback.showServerMessages(errors);
+        else if (motivo === 'TROPPO_PRESTO' || motivo === 'IN_CORSO')
+          // Un freno da un minuto non merita una finestra da chiudere.
+          feedback.info(String(resp.messaggio || 'Riprova fra poco.'));
         else feedback.error(String(resp.messaggio || 'L\'aggiornamento non e riuscito.'));
         return;
       }
@@ -281,6 +294,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
   const rimuovi = async (w: Widget) => {
     try {
       const resp = (await api.postAction2('dashboard.RimuoviWidget', {
+        sid: SID,
         idWidget: String(w.idWidget),
       })) as unknown as Record<string, unknown>;
       if (resp.esito !== 'ok') {
@@ -341,6 +355,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
         // niente commutatore, niente avvisi — sulla prima pagina che si apre.
         const foto: Fotografia = w.fotografia || {};
         const mostrate = (foto.righe || []).length;
+        const visibili = (foto.righe || []).filter(
+          (r) => r.n || (r.c || []).some((c) => c.p !== undefined)
+        ).length;
         const totale = foto.totaleRighe;
         return (
         <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
@@ -349,7 +366,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
               {w.titolo}
             </Typography.Text>
             <Space size={0}>
-              {AGGIORNA_ORA && (
+              {(
                 <Tooltip title="Aggiorna ora">
                   <Button
                     type="text"
@@ -523,15 +540,37 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
               )}
             </div>
           ) : null}
+          {foto.variazioni?.criteriDiversi ? (
+            <div className="dash-widget-variazioni">
+              <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                I criteri sono cambiati dall&apos;ultima volta (una data che si aggiorna da
+                sola): le righe non si sono potute confrontare con quelle di prima.
+              </Typography.Text>
+            </div>
+          ) : null}
           {(foto.variazioni?.totale || 0) > 0 ? (
             <div className="dash-widget-variazioni">
-              <span className="chiave chiave-nuova" /> {descriviVariazioni(foto.variazioni || {})}{' '}
+              <span className="chiave chiave-nuova" aria-hidden="true" />{' '}
+              {descriviVariazioni(foto.variazioni || {})}{' '}
               dall&apos;ultimo aggiornamento
+              {/* Il conteggio e' sulla fotografia intera, la tabella ne mostra al
+                  massimo 200: dire 37 e mostrarne 3 senza spiegarlo e' una bugia
+                  involontaria. */}
+              {visibili > 0 && visibili < (foto.variazioni?.totale || 0)
+                ? ` (${visibili} qui sotto)`
+                : null}
+              {foto.parziale
+                ? `, confronto sulle prime ${numero((foto.righeInFotografia || 0))} di ${numero(totale || 0)}`
+                : null}
               {(foto.uscite || []).length > 0 ? (
                 <details>
                   <summary>
                     {(foto.uscite || []).length}{' '}
-                    {(foto.uscite || []).length === 1 ? 'uscita' : 'uscite'} dall&apos;elenco
+                    {foto.parziale
+                      ? 'non piu\' fra le prime righe'
+                      : (foto.uscite || []).length === 1
+                        ? 'uscita dall\'elenco'
+                        : 'uscite dall\'elenco'}
                   </summary>
                   <ul>
                     {(foto.uscite || []).map((r, i) => (
