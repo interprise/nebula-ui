@@ -11,10 +11,24 @@ interface Colonna {
   tipo?: string | null;
 }
 
-/** Una riga: la chiave del record, e una cella per colonna (t = il testo della lista). */
+/**
+ * Una riga: la chiave del record, e una cella per colonna (t = il testo della lista).
+ * Dopo un aggiornamento la riga puo' portare `n` (nuova) e la cella `p` (il valore di
+ * prima): le marcature le mette il server confrontando le due fotografie.
+ */
 interface Riga {
   k?: string;
-  c?: Array<{ t?: string; v?: unknown; errore?: string }>;
+  n?: boolean;
+  c?: Array<{ t?: string; v?: unknown; p?: string | null; errore?: string }>;
+}
+
+interface Variazioni {
+  nuove?: number;
+  cambiate?: number;
+  uscite?: number;
+  totale?: number;
+  /** La ricerca di adesso non e' quella di prima: le righe non si appaiano. */
+  criteriDiversi?: boolean;
 }
 
 interface Fotografia {
@@ -28,6 +42,9 @@ interface Fotografia {
   /** Quante ne tiene la fotografia (tetto 1.000). */
   righeInFotografia?: number;
   righe?: Riga[];
+  /** Le righe che nell'ultimo aggiornamento sono sparite dall'elenco. */
+  uscite?: Riga[];
+  variazioni?: Variazioni;
   parziale?: boolean;
   schemaCambiato?: boolean;
 }
@@ -53,11 +70,11 @@ interface Props {
 }
 
 /**
- * «Aggiorna ora» si accende con G8, che e' il pezzo che lo fa funzionare. Finche' e'
- * spento il pulsante non si disegna: un comando che apre un avviso su una versione
- * futura e' un comando morto in mano all'utente, e su un collaudo e' peggio.
+ * «Aggiorna ora» esiste da G8, che e' il pezzo che lo fa funzionare. La costante resta
+ * come interruttore: se un giorno il comando non ci fosse, il pulsante non si disegna —
+ * un comando morto in mano all'utente e' peggio di un comando che manca.
  */
-const AGGIORNA_ORA = false;
+const AGGIORNA_ORA = true;
 
 /** Che cosa dire all'utente per ogni stato della fotografia. */
 const STATI: Record<string, string> = {
@@ -84,6 +101,42 @@ const NUMERO = (() => {
   }
 })();
 const numero = (n: number) => NUMERO.format(n);
+
+/**
+ * Porta in vista la prima variazione del widget.
+ *
+ * <p>Il bersaglio e' una CELLA, mai la riga: una riga e' larga quanto la tabella, e
+ * centrarla porta fuori la prima colonna — cioe' il codice del record e la parola
+ * «nuova», che e' l'evidenza che non dipende dal colore.
+ *
+ * <p>Si riprova per qualche disegno: quando la tabella e' grande React non ha ancora
+ * finito, e un tentativo solo non trovava niente e non scorreva — in silenzio.
+ */
+const mostraPrimaVariazione = (idWidget: number, tentativi = 12) => {
+  const cerca = () => {
+    const riquadro = document.querySelector(`[data-widget="${idWidget}"]`);
+    const bersaglio =
+      riquadro?.querySelector('td.cella-cambiata') ||
+      riquadro?.querySelector('tr.riga-nuova td');
+    if (bersaglio) {
+      bersaglio.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (tentativi > 0) mostraPrimaVariazione(idWidget, tentativi - 1);
+  };
+  requestAnimationFrame(cerca);
+};
+
+/** «3 nuove, 2 cambiate e 1 uscita»: si nominano solo le cose che sono successe. */
+const descriviVariazioni = (v: Variazioni) => {
+  const pezzi: string[] = [];
+  if (v.nuove) pezzi.push(`${v.nuove} ${v.nuove === 1 ? 'nuova' : 'nuove'}`);
+  if (v.cambiate) pezzi.push(`${v.cambiate} ${v.cambiate === 1 ? 'cambiata' : 'cambiate'}`);
+  if (v.uscite) pezzi.push(`${v.uscite} ${v.uscite === 1 ? 'uscita' : 'uscite'}`);
+  if (pezzi.length === 0) return 'nessuna variazione';
+  if (pezzi.length === 1) return pezzi[0];
+  return pezzi.slice(0, -1).join(', ') + ' e ' + pezzi[pezzi.length - 1];
+};
 
 /**
  * Quando e' stata scattata. Solo l'ora se e' di oggi; con la data se e' piu' vecchia —
@@ -135,6 +188,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
+  /** Quali widget stanno aggiornando adesso: e' roba del singolo, non del pannello. */
+  const [inCorso, setInCorso] = useState<Record<number, boolean>>({});
   /** Quale lettura e' l'ultima chiesta: le risposte in ritardo si scartano. */
   const richiesta = useRef(0);
   /** Il pannello e' ancora a video? Si smonta passando agli avvisi. */
@@ -180,6 +235,48 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
   useEffect(() => {
     void leggi();
   }, [leggi, ricarica]);
+
+  const aggiorna = async (w: Widget) => {
+    if (inCorso[w.idWidget]) return;
+    setInCorso((p) => ({ ...p, [w.idWidget]: true }));
+    try {
+      const resp = (await api.postAction2('dashboard.Aggiorna', {
+        idWidget: String(w.idWidget),
+      })) as unknown as Record<string, unknown>;
+      if (resp.esito !== 'ok') {
+        const errors = resp.errors as ErrorItem[] | undefined;
+        if (errors && errors.length > 0) feedback.showServerMessages(errors);
+        else feedback.error(String(resp.messaggio || 'L\'aggiornamento non e riuscito.'));
+        return;
+      }
+      const v = (resp.variazioni || {}) as Variazioni;
+      feedback.info(
+        v.criteriDiversi
+          ? `"${w.titolo || 'Widget'}" aggiornato. I criteri sono cambiati dall'ultima`
+            + ' volta (una data che si aggiorna da sola), quindi le righe non si possono'
+            + ' confrontare con quelle di prima.'
+          : v.totale
+            ? `"${w.titolo || 'Widget'}" aggiornato: ${descriviVariazioni(v)}.`
+            : `"${w.titolo || 'Widget'}" aggiornato: nessuna variazione.`
+      );
+      // Si rilegge tutto: le righe arrivano gia' con le variazioni segnate sopra, e
+      // cosi' quello che si vede e' esattamente quello che c'e' salvato.
+      await leggi();
+      // E si porta la vista sulla prima variazione: la tabella del widget scorre in
+      // orizzontale, e una cella cambiata in una colonna fuori schermo e' un'evidenza
+      // che non evidenzia niente — chi preme «Aggiorna ora» legge solo il riepilogo e
+      // deve andarsela a cercare.
+      if (v.totale && !v.criteriDiversi) mostraPrimaVariazione(w.idWidget);
+    } catch (e) {
+      feedback.failure(e);
+    } finally {
+      setInCorso((p) => {
+        const q = { ...p };
+        delete q[w.idWidget];
+        return q;
+      });
+    }
+  };
 
   const rimuovi = async (w: Widget) => {
     try {
@@ -246,7 +343,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
         const mostrate = (foto.righe || []).length;
         const totale = foto.totaleRighe;
         return (
-        <article key={w.idWidget} className="dash-widget">
+        <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
           <header className="dash-widget-head">
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
               {w.titolo}
@@ -257,9 +354,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   <Button
                     type="text"
                     size="small"
-                    icon={<ReloadOutlined />}
+                    icon={<ReloadOutlined spin={!!inCorso[w.idWidget]} />}
                     aria-label="Aggiorna ora"
-                    onClick={() => void leggi()}
+                    disabled={!!inCorso[w.idWidget]}
+                    onClick={() => void aggiorna(w)}
                   />
                 </Tooltip>
               )}
@@ -350,7 +448,29 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
             </Typography.Text>
           )}
 
-          {foto.stato === 'OK' ? (
+          {foto.stato === 'OK' ? null : (
+            <>
+              <Typography.Text type="secondary">
+                {STATI[foto.stato || ''] || 'In attesa di dati.'}
+              </Typography.Text>
+              {/* Il testo tecnico si LEGGE — chi sta davanti a un widget rotto deve
+                  poter dire al telefono che cosa c'e' scritto — ma in piccolo e su una
+                  riga sola: per esteso lo da' il suggerimento. */}
+              {foto.messaggio ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 11.5 }}
+                  ellipsis={{ tooltip: foto.messaggio }}
+                >
+                  {foto.messaggio}
+                </Typography.Text>
+              ) : null}
+            </>
+          )}
+          {/* Le righe si mostrano se ci sono, qualunque sia lo stato: dopo un
+              aggiornamento fallito la fotografia buona resta nel database, e lasciarla
+              fuori dagli occhi vuol dire che «resta» solo per modo di dire. */}
+          {mostrate > 0 ? (
             <div className="dash-widget-tabella">
               <table>
                 <thead>
@@ -362,15 +482,30 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                 </thead>
                 <tbody>
                   {(foto.righe || []).map((r, i) => (
-                    <tr key={r.k || i}>
-                      {(r.c || []).map((cella, j) => (
+                    <tr key={r.k || i} className={r.n ? 'riga-nuova' : undefined}>
+                      {(r.c || []).map((cella, j) => {
                         // Gli importi a destra come in ogni lista: il valore grezzo
                         // della cella dice gia' se e' un numero, non serve indovinarlo
                         // dal testo formattato.
-                        <td key={j} className={typeof cella.v === 'number' ? 'number' : undefined}>
-                          {cella.t}
-                        </td>
-                      ))}
+                        const classi = [
+                          typeof cella.v === 'number' ? 'number' : '',
+                          cella.p !== undefined ? 'cella-cambiata' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ');
+                        return (
+                          <td key={j} className={classi || undefined}>
+                            {/* Il valore di prima accanto a quello nuovo: e' l'unica
+                                cosa che rende leggibile «e' cambiato», e arriva gia'
+                                formattato dal server. */}
+                            {cella.p !== undefined && cella.p !== null ? (
+                              <s className="valore-prima">{cella.p}</s>
+                            ) : null}
+                            {j === 0 && r.n ? <span className="segno-nuova">nuova</span> : null}
+                            {cella.t}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
@@ -387,27 +522,33 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                 </Typography.Text>
               )}
             </div>
-          ) : (
-            <>
-              <Typography.Text type="secondary">
-                {STATI[foto.stato || ''] || 'In attesa di dati.'}
-              </Typography.Text>
-              {/* Il testo tecnico si LEGGE — chi sta davanti a un widget rotto deve
-                  poter dire al telefono che cosa c'e' scritto, e nasconderlo dietro il
-                  passaggio del mouse lo toglierebbe a chi usa un dito o un lettore di
-                  schermo. Ma sta in piccolo e su una riga sola: per esteso lo da' il
-                  suggerimento. */}
-              {foto.messaggio ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{ fontSize: 11.5 }}
-                  ellipsis={{ tooltip: foto.messaggio }}
-                >
-                  {foto.messaggio}
-                </Typography.Text>
+          ) : null}
+          {(foto.variazioni?.totale || 0) > 0 ? (
+            <div className="dash-widget-variazioni">
+              <span className="chiave chiave-nuova" /> {descriviVariazioni(foto.variazioni || {})}{' '}
+              dall&apos;ultimo aggiornamento
+              {(foto.uscite || []).length > 0 ? (
+                <details>
+                  <summary>
+                    {(foto.uscite || []).length}{' '}
+                    {(foto.uscite || []).length === 1 ? 'uscita' : 'uscite'} dall&apos;elenco
+                  </summary>
+                  <ul>
+                    {(foto.uscite || []).map((r, i) => (
+                      <li key={r.k || i}>
+                        <s>{(r.c || []).map((c) => c.t).filter(Boolean).slice(0, 3).join(' · ')}</s>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               ) : null}
-            </>
-          )}
+            </div>
+          ) : null}
+          {mostrate === 0 && foto.stato === 'OK' ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Nessuna riga: oggi questa ricerca non trova niente.
+            </Typography.Text>
+          ) : null}
         </article>
         );
       })}

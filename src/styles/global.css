@@ -1938,3 +1938,60 @@ body[style*="cursor: wait"] * {
   white-space: nowrap;
   border-bottom: 1px solid var(--app-surface-muted);
 }
+
+/* Le variazioni dall'ultimo aggiornamento. Il colore non e' l'unico segno: la riga
+   nuova porta anche la parola «nuova» e la cella cambiata il valore di prima
+   barrato, perche' un'evidenza che vive solo nel colore non la vede chi non lo
+   distingue. */
+.dash-widget-tabella tr.riga-nuova td {
+  background: var(--app-diff-new);
+}
+.dash-widget-tabella tr.riga-nuova td:first-child {
+  box-shadow: inset 3px 0 var(--app-diff-new-line);
+}
+.dash-widget-tabella td.cella-cambiata {
+  background: var(--app-diff-changed);
+  box-shadow: inset 0 -2px var(--app-diff-changed-line);
+}
+.dash-widget-tabella .valore-prima {
+  color: var(--app-diff-changed-ink);
+  margin-right: 6px;
+  font-size: 11px;
+}
+.dash-widget-tabella .segno-nuova {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--app-diff-new-line);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 14px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.dash-widget-variazioni {
+  font-size: 11.5px;
+  color: var(--app-text-subdued);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.dash-widget-variazioni .chiave {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.dash-widget-variazioni .chiave-nuova {
+  background: var(--app-diff-new);
+  box-shadow: inset 3px 0 var(--app-diff-new-line);
+}
+.dash-widget-variazioni ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.dash-widget-variazioni summary {
+  cursor: pointer;
+}
