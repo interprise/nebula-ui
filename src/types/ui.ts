@@ -409,6 +409,7 @@ export interface ErrorItem {
 
 export interface LoginInfo {
   login: string;
+  name?: string | null;    // "Nome" of the user record — the Home greets by it when set (SXADV-5475)
   profile: string;
   customerKey: string;
   partitionKey?: string;

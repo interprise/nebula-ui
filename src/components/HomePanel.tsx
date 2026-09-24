@@ -5,6 +5,7 @@ import BannerCard from './BannerCard';
 import DashboardPanel from './DashboardPanel';
 import { avvisiNuovi, segnaVisti } from '../hooks/avvisiVisti';
 import type { Banner, LoginInfo } from '../types/ui';
+import { welcomeText } from './homeWelcome';
 
 interface HomePanelProps {
   loginInfo: LoginInfo;
@@ -50,7 +51,13 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
   // spostargli la pagina sotto il naso mentre legge sarebbe peggio.
   const scelto = useRef(false);
   const deciso = useRef(false);
-  const montato = useRef(Date.now());
+  // L'istante del montaggio si prende in un effetto, non nel render: il render deve
+  // restare puro (react-hooks/purity). Questo effetto e' dichiarato prima di quello
+  // che lo legge, quindi al primo giro il valore c'e' gia'.
+  const montato = useRef(0);
+  useEffect(() => {
+    montato.current = Date.now();
+  }, []);
   useEffect(() => {
     if (scelto.current || deciso.current || nuovi.length === 0) return;
     // Solo all'APERTURA. Un avviso che arriva mezz'ora dopo col Ping non deve
@@ -96,7 +103,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
         {cosa === 'dashboard' ? (
           <Title level={5} style={{ margin: 0, color: '#003a8c' }}>
             <HomeOutlined style={{ marginRight: 8 }} />
-            Benvenuto, {loginInfo.login}
+            {welcomeText(loginInfo)}
             <Text type="secondary" style={{ fontSize: 13, fontWeight: 400, marginLeft: 8 }}>
               {loginInfo.profile}
             </Text>
@@ -105,7 +112,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
           <>
             <HomeOutlined style={{ fontSize: 40, color: '#1677ff', marginBottom: 10 }} />
             <Title level={3} style={{ margin: 0, color: '#003a8c' }}>
-              Benvenuto, {loginInfo.login}
+              {welcomeText(loginInfo)}
             </Title>
             <Text type="secondary" style={{ fontSize: 14 }}>
               {loginInfo.profile}

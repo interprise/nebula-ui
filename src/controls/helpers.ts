@@ -124,21 +124,97 @@ export function parseFlexibleDate(raw: string, dateFmt = 'DD/MM/YYYY'): Dayjs | 
   return parsed.isValid() ? parsed : null;
 }
 
+/** Completa un'ora battuta a mano, come faceva `checkTime` del legacy
+ *  (JSLib.js): il TimePicker antd accetta solo `HH:mm` esatto e un '1030'
+ *  seguito dal Tab lasciava il campo vuoto.
+ *
+ *    - `1`/`2` cifre            → ora intera ('9' → 09:00)
+ *    - `3` cifre                → H mm ('930' → 09:30)
+ *    - `4` cifre                → HH mm ('1030' → 10:30)
+ *    - ora e minuti separati da un carattere qualsiasi non numerico, 1-2
+ *      cifre ciascuno ('9:5' → 09:05, '9.30', '10,30'); l'ora seguita solo
+ *      da `:`, `.` o `,` vale l'ora intera ('9:' → 09:00)
+ *  Ore > 23 e minuti > 59 sono `null`, come nel legacy. Dove il legacy
+ *  indovinava si rifiuta: 5+ cifre (lui troncava a 4), tre gruppi ('1:2:3'),
+ *  minuti senza ora (':30' prendeva l'ora corrente). Del `Dayjs` restituito
+ *  contano solo ora e minuti. */
+export function parseFlexibleTime(raw: string): Dayjs | null {
+  const s = (raw ?? '').trim();
+  let hh: string;
+  let mm: string;
+  const sep = s.match(/^(\d{1,2})[^\d]+(\d{1,2})$/) ?? s.match(/^(\d{1,2})[:.,]$/);
+  if (sep) [hh, mm] = [sep[1], sep[2] ?? '0'];
+  else if (/^\d{1,2}$/.test(s)) [hh, mm] = [s, '0'];
+  else if (/^\d{3,4}$/.test(s)) [hh, mm] = [s.slice(0, -2), s.slice(-2)];
+  else return null;
+  const [h, min] = [Number(hh), Number(mm)];
+  if (h > 23 || min > 59) return null;
+  return dayjs().startOf('day').hour(h).minute(min);
+}
+
+/** Un testo gia' nel formato esatto, battuto nel campo: `undefined` se non e'
+ *  nel formato (tocca al chiamante interpretarlo), `null` se e' nel formato ma
+ *  e' lo stesso valore che il campo ha gia', altrimenti la data da committare.
+ *
+ *  Il testo valido rc-picker lo tiene nel suo stato interno e lo conferma solo
+ *  con Invio, col Tab, o quando il pannello si chiude. Finche' il pannello si
+ *  apriva a ogni tasto, il blur lo chiudeva e il valore passava; col pannello
+ *  che resta chiuso mentre si digita (SXADV-5740.0), uscire col MOUSE lasciava
+ *  la data scritta per intero solo a video: Salva mandava quella vecchia. Il
+ *  confronto col valore attuale evita il doppio commit dopo un Tab, che l'ha
+ *  gia' confermata (il keydown e' un evento discreto: React ridisegna prima
+ *  del blur, e `current` e' gia' la data nuova). */
+export function typedExactValue(raw: string, fmt: string, current: Dayjs | null | undefined): Dayjs | null | undefined {
+  const d = dayjs(raw, fmt, true);
+  if (!d.isValid()) return undefined;
+  return current && current.format(fmt) === raw ? null : d;
+}
+
 /** Blur handler for antd `DatePicker` that restores flexible date entry. Used
  *  with `preserveInvalidOnBlur` so the picker keeps (rather than wipes) the raw
  *  typed text on focus-out: this handler then reads it and, when the picker's
  *  own strict parse would have rejected it, autocompletes via
  *  {@link parseFlexibleDate} and commits the result. Single display format is
  *  kept (not a format array) so the picker never commits mid-typing. Supports
- *  timestamp formats by splitting off a trailing time token. */
+ *  timestamp formats by splitting off a trailing time token, and time-only
+ *  formats (no day/year token) via {@link parseFlexibleTime}.
+ *
+ *  Un testo gia' nel formato esatto lo committa anche lui, se e' diverso dal
+ *  valore attuale ({@link typedExactValue}): uscendo col mouse rc-picker non lo
+ *  conferma piu' (SXADV-5740).
+ *
+ *  Restituisce anche una `key` da dare al picker. Un testo che si completa
+ *  nello STESSO valore del campo ('900' su 09:00, '5/7/2026' su 05/07/2026)
+ *  non si committa (sarebbe un reload per niente), ma rc-picker riscrive il
+ *  proprio testo solo quando cambia il valore formattato: con
+ *  `preserveInvalidOnBlur` a video restava '900'. Cambiare la chiave rimonta
+ *  il picker, a fuoco gia' uscito, e il testo torna quello del valore. Lo
+ *  stesso per un testo che non si lascia interpretare ('2500', '31/02'): non
+ *  si committa e a video torna il valore, invece di un testo che Salva non
+ *  manderebbe.
+ *
+ *  `onResync` chiude il pannello di chi controlla `open` ({@link usePickerOpen}):
+ *  uscendo col mouse rc-picker chiude in un requestAnimationFrame, che il
+ *  rimontaggio annulla, e il picker nuovo nasceva col pannello aperto. */
 export function useFlexibleDateBlur(
   fmt: string,
   commit: (value: Dayjs | null, valueStr: string) => void,
   currentValue?: Dayjs | null,
-): (e: FocusEvent<HTMLElement>) => void {
-  return useCallback(
+  onResync?: () => void,
+): [onBlur: (e: FocusEvent<HTMLElement>) => void, key: number] {
+  const [resyncKey, setResyncKey] = useState(0);
+  const onBlur = useCallback(
     (e: FocusEvent<HTMLElement>) => {
-      const raw = (e.target as HTMLInputElement).value?.trim();
+      // rc-picker passa lo stesso `onBlur` anche al PANNELLO del calendario:
+      // dopo una scelta il fuoco lascia il `<div>` del pannello, che non ha un
+      // `value`. Letto come "campo svuotato", con `currentValue` ancora sulla
+      // data vecchia (la closure precede il commit della scelta) committava
+      // null subito dopo la data appena scelta: il campo lampeggiava e si
+      // svuotava. Su un campo vuoto `currentValue` era null e la guardia sotto
+      // lo salvava, per questo passando dalla X funzionava (SXADV-5740.1).
+      // Il testo da interpretare sta solo nell'input.
+      if (!(e.target instanceof HTMLInputElement)) return;
+      const raw = e.target.value?.trim();
       if (!raw) {
         // Emptied via keyboard (Canc/Backspace). With `preserveInvalidOnBlur`
         // the picker keeps the controlled `value` prop and visually restores
@@ -149,10 +225,26 @@ export function useFlexibleDateBlur(
         if (currentValue) commit(null, '');
         return;
       }
-      // The picker already accepts a well-formed value; don't double-commit.
-      if (dayjs(raw, fmt, true).isValid()) return;
+      const exact = typedExactValue(raw, fmt, currentValue);
+      if (exact !== undefined) {
+        if (exact) commit(exact, raw);
+        return;
+      }
 
+      const resync = () => {
+        setResyncKey((k) => k + 1);
+        onResync?.();
+      };
+      const commitIfChanged = (d: Dayjs | null) => {
+        if (!d || (currentValue && currentValue.format(fmt) === d.format(fmt))) resync();
+        else commit(d, d.format(fmt));
+      };
       const hasTime = /[Hh]/.test(fmt);
+      if (!/[DY]/.test(fmt)) {
+        // Campo solo ora (TimeControl).
+        commitIfChanged(parseFlexibleTime(raw));
+        return;
+      }
       const dateFmt = hasTime ? fmt.split(/\s+/)[0] : fmt;
       let datePart = raw;
       let timePart = '';
@@ -162,17 +254,17 @@ export function useFlexibleDateBlur(
       }
 
       let d = parseFlexibleDate(datePart, dateFmt);
-      if (!d) return;
-      if (hasTime) {
-        const t = timePart
-          ? dayjs(timePart, ['HH:mm', 'HHmm', 'H:mm', 'HH.mm'], true)
-          : null;
-        d = d.hour(t?.isValid() ? t.hour() : 0).minute(t?.isValid() ? t.minute() : 0);
+      if (d && hasTime) {
+        // Senza ora la mezzanotte; un'ora scritta ma non valida non diventa
+        // 00:00 in silenzio.
+        const t = timePart ? parseFlexibleTime(timePart) : dayjs().startOf('day');
+        d = t && d.hour(t.hour()).minute(t.minute());
       }
-      commit(d, d.format(fmt));
+      commitIfChanged(d);
     },
-    [fmt, commit, currentValue],
+    [fmt, commit, currentValue, onResync],
   );
+  return [onBlur, resyncKey];
 }
 
 /** Return focus to a date/time picker's input after a value is chosen from its
@@ -210,6 +302,59 @@ export function useRestorePickerFocus(
   }, [pickerRef]);
 }
 
+/** Apertura del calendario di un DatePicker/TimePicker antd: si apre dal clic
+ *  sul campo (icona compresa) o dalla tastiera (Freccia giu', anche con Alt o
+ *  Ctrl, e Ctrl+Spazio come le combo), MAI dalla digitazione.
+ *
+ *  rc-picker apre il pannello a ogni carattere battuto (`onHelp`) e su Invio:
+ *  chi scriveva una data in un campo vuoto se lo trovava aperto sopra la form
+ *  e per uscire gli servivano due Tab, uno per il pannello e uno per il campo
+ *  (SXADV-5740.0). Nel legacy si digita e basta. Come `useSelectOpen`, gli
+ *  `onOpenChange` di antd valgono solo per CHIUDERE; ad aprire siamo noi. E
+ *  se l'utente comincia a scrivere col pannello gia' aperto (aperto dal clic
+ *  con cui e' entrato nel campo) il pannello si chiude: sta digitando.
+ *
+ *  I campi DATA passano anche `allowClear={false}`: sui campi valorizzati la X di
+ *  antd compare al passaggio del mouse ESATTAMENTE sopra l'icona del
+ *  calendario, e chi cliccava "l'icona" svuotava il campo (con reload partiva
+ *  subito un Post vuoto). Il legacy non aveva la X: si svuota con
+ *  Canc/Backspace, che committa il vuoto (SXADV-5489.1). Vale anche per i
+ *  campi ora, che hanno lo stesso blur flessibile; la X la tiene solo l'editor
+ *  di cella della griglia, dove Canc non committa il vuoto.
+ *
+ *  `disabled`: il clic su un campo disabilitato non deve lasciare il calendario
+ *  "armato". rc-picker chiama `onClick` anche li', e siccome da disabilitato
+ *  non chiede mai di chiudere, il pannello si aprirebbe da solo appena un
+ *  reload rende il campo modificabile. */
+export function usePickerOpen(disabled?: boolean): {
+  open: boolean;
+  onOpenChange: (visible: boolean) => void;
+  onClick: () => void;
+  onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+} {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = useCallback((visible: boolean) => {
+    if (!visible) setOpen(false);
+  }, []);
+  // Reso disabilitato col pannello aperto (una risposta arrivata in quel
+  // momento): rc-picker non chiede di chiudere, e il pannello si riaprirebbe
+  // da solo quando il campo torna modificabile.
+  if (disabled && open) setOpen(false);
+  const onClick = useCallback(() => {
+    if (!disabled) setOpen(true);
+  }, [disabled]);
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === ' ')) {
+      e.preventDefault();
+      setOpen(true);
+    } else if (e.key.length === 1 || ['Backspace', 'Delete', 'Process', 'Unidentified'].includes(e.key)) {
+      // 'Process'/'Unidentified': composizione IME e tastiere virtuali.
+      if (!e.ctrlKey && !e.metaKey) setOpen(false);
+    }
+  }, []);
+  return { open, onOpenChange, onClick, onKeyDown };
+}
+
 /** Controlled-`open` state for an antd `Select` that opens ONLY on a deliberate
  *  gesture — typing, or a click on the trigger arrow — never on a plain
  *  body/focus click. antd opens the dropdown on any click of the selector, but
@@ -227,6 +372,38 @@ export function useSelectOpen(): {
     if (!visible) setOpen(false);
   }, []);
   return { open, setOpen, onOpenChange };
+}
+
+/** Il clic che PORTA il fuoco in un campo numerico ne seleziona tutto il
+ *  contenuto, come il TAB e come `selectOnFocus` dei campi ExtJS della linea
+ *  legacy: un importo gia' scritto si riscrive subito, invece di dover prima
+ *  cancellare le cifre (SXADV-5932). Un secondo clic, a fuoco gia' dentro, non
+ *  viene toccato: il browser mette il cursore dove si e' cliccato, cosi' si
+ *  corregge una cifra sola.
+ *
+ *  Va sul mousedown e non sul focus: il cursore il browser lo mette come
+ *  azione predefinita del mousedown, DOPO l'evento focus, quindi un `select()`
+ *  fatto nel focus viene subito disfatto. Qui si ferma quell'azione e si fanno
+ *  a mano le due cose che contano: fuoco e selezione.
+ *
+ *  Si aggancia come `onMouseDownCapture` all'involucro del campo; conta solo il
+ *  clic dentro il riquadro dell'`<input>` (il "€" accanto non porta il fuoco
+ *  nemmeno nel legacy). */
+export function selectAllOnMouseFocus(e: {
+  button: number;
+  target: EventTarget | null;
+  currentTarget: { querySelector(sel: string): HTMLInputElement | null };
+  preventDefault(): void;
+}): void {
+  if (e.button !== 0) return;
+  const input = e.currentTarget.querySelector('input');
+  if (!input || input.disabled || input.readOnly) return;
+  if (input.ownerDocument?.activeElement === input) return;
+  const box = input.parentElement;
+  if (!box || !box.contains(e.target as Node | null)) return;
+  e.preventDefault();
+  input.focus();
+  input.select();
 }
 
 /** Fa di una `Select` antd un campo di TESTO vero quando ha un valore.
@@ -619,15 +796,12 @@ export function useControlChange(
     (val: unknown) => {
       onChange(fieldName, val);
       if (reload) {
-        // Snapshot focus before the reload fires. For Tab-out reloads
-        // the browser has already moved focus to the next tabIndex
-        // field, so document.activeElement IS the target we want after
-        // re-render. For checkbox toggles the activeElement is the
-        // checkbox itself, so focus stays put. Either way, restoring
-        // from the snapshot matches user intent. When the change came from a
-        // popup that stranded focus (DatePicker calendar), activeElement has no
-        // id — fall back to this control's id so focus returns to the field
-        // instead of <body> after the re-render (SXADV-5680).
+        // Il fuoco da ridare dopo il ridisegno si legge all'arrivo della
+        // risposta, non ora: un'uscita col Tab fa il commit col fuoco ancora
+        // in transito, e leggerlo qui lo rimandava sul campo appena lasciato
+        // (SXADV-5740.0). Qui si arma solo il ripiego: se una scelta da un
+        // popup (calendario) ha lasciato il fuoco su <body>, torna a questo
+        // campo (SXADV-5680).
         captureFocusBeforeReload(control.id);
         // Let the reload return the fresh toolbar: it stages an edit, so the
         // server's dirty state changes and Annulla/Salva must reflect it (was

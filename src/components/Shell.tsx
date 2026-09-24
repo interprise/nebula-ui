@@ -81,12 +81,13 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
-import { consumePendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
+import { consumePendingFocus, discardPendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
+import { headerColor } from './headerColor';
 
 const { Header, Content } = Layout;
 
@@ -513,6 +514,8 @@ function buildMenuItems(
 // Fixed-width header labels so the Azienda/Sede selectors line up vertically
 // regardless of label text width.
 const hdrLabelStyle: React.CSSProperties = { color: '#fff', whiteSpace: 'nowrap', display: 'inline-block', width: 60, flexShrink: 0 };
+// Azienda e Sede hanno la stessa larghezza, cosi' restano incolonnate.
+const hdrSelectStyle: React.CSSProperties = { width: 400, minWidth: 0, flex: '0 1 auto' };
 
 let tabCounter = 1;
 
@@ -796,6 +799,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       api.beginTrackedJob();
       try {
         await poll();
+      } catch (e) {
+        // Il job non arriva a una risposta: il ripristino armato per lui non
+        // deve passare alla prossima.
+        discardPendingFocus();
+        throw e;
       } finally {
         api.endTrackedJob();
       }
@@ -805,6 +813,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
   const processResponseInner = useCallback(
     (tabKey: string, resp: ServerResponse, replay?: ConfirmReplay) => {
+      // Il ripristino del fuoco armato da un campo con reload appartiene a
+      // QUESTA risposta: lo si consuma subito, prima delle uscite anticipate
+      // qui sotto (sessione scaduta, redirect). Lasciato armato lo prendeva la
+      // risposta dopo — anche una pagina nuova aperta dal menu, che rimetteva
+      // il fuoco sul campo di prima invece di portarlo nella maschera
+      // (SXADV-5803). Il fuoco si legge adesso, all'arrivo della risposta
+      // (useControlChange arma solo il ripiego), e lo si ridà dopo il ridisegno.
+      const pendingFocus = consumePendingFocus();
       const r = resp as Record<string, unknown>;
       if (r.notLoggedIn) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
@@ -1100,9 +1116,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
-      // Restore focus after React re-renders. The target id was
-      // captured by useControlChange right before the reload fired.
-      const pendingFocus = consumePendingFocus();
       if (pendingFocus) {
         restoreFocus(pendingFocus);
       } else if (
@@ -1159,6 +1172,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           .catch((e) => {
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
+            discardPendingFocus();
             feedback.failure(e);
           })
           .finally(() => { document.body.style.cursor = ''; });
@@ -1197,6 +1211,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        // Un campo lasciato mentre questa richiesta era in volo ha armato il
+        // ripristino per lei (handleAction esce su `loading`): non arriva.
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1215,6 +1232,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
       processResponse(tab.key, resp);
     } catch {
+      discardPendingFocus();
       // View not accessible — clear the tab
       updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
     }
@@ -1235,6 +1253,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1291,9 +1310,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const handleAction = useCallback(
     async (action: string, params: Record<string, string> = {}) => {
       const tab = getActiveTabState();
-      if (!tab) return;
+      if (!tab) {
+        discardPendingFocus();
+        return;
+      }
 
-      if (tab.loading) return; // Block while a request is pending
+      // Block while a request is pending. Un ripristino del fuoco armato qui
+      // resta: lo consuma la risposta in volo.
+      if (tab.loading) return;
 
       // ToggleItem is a lightweight JSONCommand on controller2 that only flips
       // server-side state and returns a minimal { toggleItem: { itemId, included } }.
@@ -1309,12 +1333,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         } catch (e) {
           feedback.failure(e);
         }
+        // Nessuna risposta passa da processResponse.
+        discardPendingFocus();
         return;
       }
 
       // Impersonate dialog: ImpersonateModal handles input + inline "user not
       // found"; on success it calls refreshAfterIdentityChange.
       if (action === 'impersonateDialog') {
+        discardPendingFocus();
         setImpersonateOpen(true);
         return;
       }
@@ -1331,6 +1358,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           processResponse(tab.key, resp);
           onReloadMenu();
         } catch (e) {
+          discardPendingFocus();
           feedback.failure(e);
         } finally {
           document.body.style.cursor = '';
@@ -1396,8 +1424,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         // A request that never produced a response leaves no navigation to
         // account for — drop any armed breadcrumb-back so it can't be applied
-        // to some later, unrelated response on this tab.
+        // to some later, unrelated response on this tab. Lo stesso per il
+        // ripristino del fuoco armato dal campo che l'ha fatta partire.
         pendingBreadcrumbsRef.current = null;
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1432,6 +1462,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp);
       } catch (e) {
         updateTabState(tab.key, { loading: false });
+        discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
@@ -1687,6 +1718,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (r.notLoggedIn || r.noSession || (resp.errors?.length ?? 0) > 0) stop();
       } catch {
         updateTabState(refreshTabKey, { loading: false });
+        discardPendingFocus();
         stop();
       } finally {
         updateTabState(refreshTabKey, { quietLoading: false });
@@ -1960,11 +1992,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // restituire all'area di editing.
   const { density, setDensity } = useDensity();
 
-  // Session-level functions, kept in both sidebar modes together with the
-  // menu/documentale toggle itself.
+  // Session-level functions, kept in both sidebar modes.
   const commonBarButtons: AppBarButton[] = [
     { key: 'logout', icon: <LogoutOutlined />, tooltip: 'Esci', onClick: onLogout, visible: true, danger: true },
-    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' },
     // Hidden when the credentials live in an external IdP (SSO): there the
     // password is not ours to change.
     { key: 'changePwd', icon: <LockOutlined />, tooltip: 'Cambio Password', onClick: () => showChangePasswordDialog(), visible: loginInfo.changePassword !== false },
@@ -1973,9 +2003,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     { key: 'immersive', icon: <FullscreenOutlined />, tooltip: 'Schermo intero (Ctrl+Shift+F o Shift+F11)', onClick: enterImmersive, visible: true },
   ];
 
+  // The menu/documentale toggle, in both modes too. It comes after Posta
+  // Elettronica so that Schermo intero sits right under Esci (SXADV-5955); in
+  // documentale mode there is no email button and it follows Schermo intero.
+  const cdmsToggleButton: AppBarButton =
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' };
+
   const appBarButtons: AppBarButton[] = [
     ...commonBarButtons,
     { key: 'email', icon: <MailOutlined />, tooltip: 'Posta Elettronica', onClick: () => handleMenuClick('menu.emailSent', 'Posta Elettronica'), visible: !!loginInfo.emailSent, active: activeMenuId === 'menu.emailSent' },
+    cdmsToggleButton,
     // Agenda nascosta per ora: il pannello agenda non è ancora portato sul
     // client React. Per riattivarla: visible: !!loginInfo.agendaList
     { key: 'agenda', icon: <CalendarOutlined />, tooltip: 'Agenda', onClick: () => api.postAction2('ViewAgenda'), visible: false },
@@ -1985,10 +2022,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const fw = (window as unknown as Record<string, unknown>).FreshworksWidget as ((...args: unknown[]) => void) | undefined;
       if (fw) fw('open');
     }, visible: !!loginInfo.assistenza },
-    // cdms moved to top of list
     { key: 'avvisi', icon: <BellOutlined />, tooltip: 'Avvisi', onClick: () => handleMenuClick('menu.avvisi', 'Avvisi'), visible: !!loginInfo.avvisi, active: activeMenuId === 'menu.avvisi' },
     { key: 'notifier', icon: <BulbOutlined />, tooltip: 'Notifiche', onClick: () => handleMenuClick('menu.notifications', 'Notifiche'), visible: !!loginInfo.notifications, badge: true, active: activeMenuId === 'menu.notifications' },
-    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Avvisi e notifiche', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
+    { key: 'banners', icon: <NotificationOutlined />, tooltip: 'Banner Informativi', onClick: () => setBannersModalOpen(true), visible: !!(loginInfo.banners && loginInfo.banners.length > 0), badgeCount: loginInfo.banners?.length || 0 },
     // Le tre funzioni qui sotto sono ingressi di primo livello come una voce di
     // menu, e come quelle devono intitolare la scheda e far ripartire il
     // percorso da zero: le prime due sono voci di menu invisibili (menu.xml,
@@ -2009,6 +2045,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // toggle above already goes back to the menu (SXADV-5790).
   const cdmsBarButtons: AppBarButton[] = [
     ...commonBarButtons,
+    cdmsToggleButton,
     { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsView('cdmsProfiliList', 'Gestione Profili'), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsView('cdmsUtentiList', 'Gestione Utenti'), visible: !!loginInfo.cdmsAdmin },
     { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => openFunctionByAction('Aggiungi Albero', 'AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
@@ -2057,6 +2094,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 size="small"
                 offset={b.badgeCount ? [-2, 6] : [-4, 4]}
                 overflowCount={99}
+                // azzurro e non rosso: e' un conteggio, non un errore (SXADV-5639, 5454.2)
+                color={b.badgeCount || b.badge ? 'var(--app-badge-bg)' : undefined}
               >
                 <Button
                   type="text"
@@ -2107,7 +2146,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             header — they read as one continuous strip across the top of the app,
             and any difference shows up as a step at the sidebar edge. Both derive
             from --app-header-h (SXADV-5742). */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end', gap: 8, height: 'var(--app-header-h)', boxSizing: 'border-box', padding: collapsed ? '0' : '0 8px', background: loginInfo.bkColor || '#1E4176' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-end', gap: 8, height: 'var(--app-header-h)', boxSizing: 'border-box', padding: collapsed ? '0' : '0 8px', background: headerColor(loginInfo.bkColor) }}>
           <Tooltip title={collapsed ? 'Espandi menu' : 'Comprimi menu'} placement="right">
             <Button
               type="text"
@@ -2150,7 +2189,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 key={menuNonce}
                 mode="inline"
                 inlineCollapsed={collapsed}
-                items={buildMenuItems(filteredMenu, 0, collapsed, loginInfo.bkColor || '#1E4176')}
+                items={buildMenuItems(filteredMenu, 0, collapsed, headerColor(loginInfo.bkColor))}
                 // Controlled selection: the internal (uncontrolled) one is lost on
                 // every remount (menuNonce) and is per-Menu, not per-tab. Keying it
                 // off the active tab keeps the open function highlighted and makes
@@ -2182,11 +2221,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         <Header
           style={{
             padding: '0 16px',
-            background: loginInfo.bkColor || '#1E4176',
-            display: 'flex',
+            background: headerColor(loginInfo.bkColor),
+            // Tre colonne e non una riga flex: con flex il blocco centrale stava
+            // nel mezzo dello spazio AVANZATO fra logo e utente, che hanno
+            // larghezze diverse, e Azienda/Sede finivano spostati rispetto
+            // all'area di lavoro sotto (SXADV-5639, 5454.1B). Le due colonne
+            // laterali si dividono il resto in parti uguali, cosi' il centro e'
+            // il centro della testata, cioe' dell'area sotto; non scendono sotto
+            // il proprio contenuto, e quando lo spazio manca e' il centro a
+            // stringersi.
+            display: 'grid',
+            gridTemplateColumns: 'minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr)',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
+            columnGap: 16,
             // Vertical density (SXADV-5742): the header is the single largest
             // fixed band above the editing area. Height and logo size come from
             // the chrome scale in tokens.css so the whole band can be retuned in
@@ -2202,7 +2249,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               prefixed "Rel." (SXADV-5454.2A). ALFA goes between the two, as in the
               classic client ("PANDORA ALFA"): it qualifies the product, not the
               release. The server raises the flag (SXADV-5454.2B). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifySelf: 'start' }}>
             <img
               src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
               alt={loginInfo.brand || 'Pandora'}
@@ -2215,7 +2262,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           </div>
 
           {/* Center: company/site selectors */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', justifyContent: 'center', minWidth: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
               {loginInfo.aziende && loginInfo.aziende.length === 1 && (
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
@@ -2224,7 +2271,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 </div>
               )}
               {loginInfo.aziende && loginInfo.aziende.length > 1 && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Azienda:</Text>
                   <Select
                     size="small"
@@ -2233,7 +2280,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     onChange={handleAziendaChange}
                     loading={contextChanging}
                     disabled={contextChanging}
-                    style={{ width: 240, minWidth: 0 }}
+                    // Largo quanto basta per leggere codice e ragione sociale
+                    // (SXADV-5639, 5454.1A: a 240px si leggeva "C.N.A. SERVIZI M...");
+                    // si stringe solo se la testata non ha posto.
+                    style={hdrSelectStyle}
                     options={loginInfo.aziende}
                     fieldNames={{ label: 'text', value: 'value' }}
                   />
@@ -2246,7 +2296,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 </div>
               )}
               {loginInfo.sedi && loginInfo.sedi.length > 1 && (
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Sede:</Text>
                   <Select
                     size="small"
@@ -2255,7 +2305,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     onChange={handleSedeChange}
                     loading={contextChanging}
                     disabled={contextChanging}
-                    style={{ width: 240, minWidth: 0 }}
+                    style={hdrSelectStyle}
                     options={loginInfo.sedi}
                     fieldNames={{ label: 'text', value: 'value' }}
                   />
@@ -2268,7 +2318,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               anchored here, right before the login icon (SXADV-5454.4b); its
               background is highlighted for immediate legibility (SXADV-5454.3) and
               the status dot is green — active login — not red (SXADV-5454.4a). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifySelf: 'end' }}>
             {loginInfo.logoaz && !loginInfo.logoaz.endsWith('/') && !loginInfo.logoaz.includes('null') && (
               <img
                 src={`/entrasp/${loginInfo.logoaz}`}
@@ -2547,7 +2597,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
       {/* Banners modal: shows all active banners regardless of banHomePage */}
       <Modal
-        title={<><NotificationOutlined style={{ color: '#1677ff', marginRight: 8 }} />Avvisi e notifiche</>}
+        title={<><NotificationOutlined style={{ color: '#1677ff', marginRight: 8 }} />Banner Informativi</>}
         open={bannersModalOpen}
         onCancel={() => setBannersModalOpen(false)}
         footer={null}

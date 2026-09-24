@@ -13,6 +13,7 @@ import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
+import { listColumnWidth } from './listColumnWidth';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -1120,45 +1121,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const headerDecorWidth = (!allDataLocal && hdr.sortExpression ? HEADER_SORT_ICON_WIDTH : 0)
           + (hdr.configureIcon ? HEADER_CONFIG_ICON_WIDTH : 0);
         const hdrMinWidth = headerLabelMinWidth(longestWord) + headerDecorWidth;
-        // Content-based min width from control.size: columns should at least
-        // show their declared content width, matching form behavior. Boolean
-        // (checkbox) columns are intrinsically narrow regardless of size.
-        // Custom (cell-renderable) controls don't fit the text-char model and
-        // get a more generous minimum so embedded components (reportBar etc.)
-        // aren't clipped. If the sum exceeds the viewport the grid scrolls
-        // horizontally — better than clipping the declared content.
-        const colSize = colCtrl?.size;
-        // Filler columns (trailing padding in the template with no control)
-        // must still carry pixel width so continuation-row cells that map to
-        // these units don't collapse to 0px. Use the header-based flex units
-        // with a per-unit pixel estimate.
-        const isFiller = !colCtrl;
-        let contentMinWidth = 0;
-        if (colSize) {
-          const perChar = isCustom ? 8 : 6.3;
-          contentMinWidth = Math.round(Math.min(colSize * perChar + 16, 500));
-        } else if (isFiller) {
-          const units = hdr.colspan || 1;
-          contentMinWidth = Math.round(units * 6.3);
-        }
-        // Date/timestamp columns must always fit a formatted date (dd/mm/yyyy),
-        // even when the header is short ("Dal"/"Al") and no size is declared —
-        // otherwise they collapse far too narrow (item 5455.5).
-        if (colCtrlType === 'date' || colCtrlType === 'timestamp') {
-          contentMinWidth = Math.max(contentMinWidth, colCtrlType === 'timestamp' ? 130 : 88);
-        }
-        const effectiveMinWidth = Math.max(hdrMinWidth, contentMinWidth, secondaryMinWidth.get(idx) || 0);
-        // Starting width honors the server's colspan proportions (the same
-        // model the legacy grid used): the server sizes columns in colspan
-        // units — ui.totalCols spread over ui.totalWidth — so e.g. Descrizione
-        // at colspan 12 is meant to be by far the widest column. Without this,
-        // width collapses to effectiveMinWidth (a header/content *minimum*), so
-        // text columns with no declared `size` (codice, descrizione) render far
-        // too narrow. Floor at the minimum so nothing clips, and fall back to
-        // the minimum when the server omits the proportion metadata.
-        const perUnit = ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0;
-        const colspanWidth = perUnit > 0 ? Math.round((hdr.colspan || 1) * perUnit) : 0;
-        const effectiveWidth = Math.max(effectiveMinWidth, colspanWidth);
+        // Larghezza di partenza: proporzione del server (colspan), con un
+        // pavimento per intestazione, contenuto dichiarato e bande di
+        // continuazione; le colonne Sì/No solo l'intestazione (SXADV-5847).
+        const { width: effectiveWidth, minWidth: colMinWidth } = listColumnWidth({
+          headerMinWidth: hdrMinWidth,
+          ctrlType: colCtrlType,
+          size: colCtrl?.size,
+          isCustom: !!isCustom,
+          isFiller: !colCtrl,
+          colspan: hdr.colspan || 1,
+          perUnit: ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0,
+          secondaryMinWidth: secondaryMinWidth.get(idx),
+        });
 
         // Editable column support
         const colMeta = editableColumns.get(idx);
@@ -1266,7 +1241,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // The colspan-as-flex-unit-count is recovered from ui.headers in
           // computeUnitOffsets for continuation-row cell alignment.
           width: effectiveWidth,
-          minWidth: Math.min(40, effectiveMinWidth),
+          minWidth: colMinWidth,
           resizable: true,
           cellRenderer: resolvedCellRenderer,
           // `colIdx` serve a OGNI renderer di valore per ritrovare gli extra
@@ -1424,7 +1399,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
        stessa coordinata su cui il server allinea celle ed etichette
        (`colspan` cumulativo), quindi è anche ciò che permette di ritrovare
        l'etichetta giusta per ognuna. */
-    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean };
+    type FlatCol = { band: number; unit: number; span: number; hasContent: boolean; ctrlType?: string };
     const flatCols = new Map<string, FlatCol>();
 
     // Build row data, detecting continuation rows (first cell is DUMMY elementType 9)
@@ -1472,8 +1447,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               const known = flatCols.get(field);
               if (known) {
                 known.hasContent = known.hasContent || filled;
+                known.ctrlType ??= cell.control?.type as string | undefined;
               } else {
-                flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled });
+                flatCols.set(field, { band: contRowIdx, unit, span, hasContent: filled, ctrlType: cell.control?.type as string | undefined });
               }
               unit += span;
             }
@@ -1687,7 +1663,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           colTokens.set(field, tokens);
           const longest = label.split(/\s+/).reduce((a, b) => (a.length > b.length ? a : b), '');
           const minW = Math.max(FLAT_COL_MIN_WIDTH, headerLabelMinWidth(longest));
-          const width = Math.max(minW, perUnitPx > 0 ? Math.round(m.span * perUnitPx) : minW);
+          // Sì/No: la larghezza non viene dal size della maschera (SXADV-5847).
+          const width = isBooleanType(m.ctrlType) || perUnitPx <= 0
+            ? minW
+            : Math.max(minW, Math.round(m.span * perUnitPx));
           cols.push({
             field,
             headerName: label,

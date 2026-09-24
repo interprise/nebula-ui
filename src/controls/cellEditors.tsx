@@ -3,7 +3,7 @@ import { Input, InputNumber, DatePicker, Select, Checkbox } from 'antd';
 import type { ICellEditorParams, ICellRendererParams } from 'ag-grid-community';
 import dayjs from 'dayjs';
 import { fetchComboOptions } from '../services/api';
-import { parseFlexibleDate } from './helpers';
+import { parseFlexibleDate, usePickerOpen } from './helpers';
 
 // Column metadata from server (attached via cellEditorParams / cellRendererParams)
 interface ColMeta {
@@ -101,6 +101,7 @@ export const DateCellEditor = React.forwardRef(
     })();
     const [value, setValue] = useState<dayjs.Dayjs | null>(initial);
     const pickerRef = useRef<React.ComponentRef<typeof DatePicker>>(null);
+    const pickerOpen = usePickerOpen(); // SXADV-5740.0: digitare non apre il calendario
     // Latest raw text the user typed, captured live. On Tab, AG Grid ends the
     // edit WITHOUT calling getValue() (verified), so we can't rely on it for a
     // typed-but-unpicked value like a bare day. We capture keystrokes and, on
@@ -129,6 +130,7 @@ export const DateCellEditor = React.forwardRef(
     return (
       <DatePicker
         ref={pickerRef}
+        {...pickerOpen}
         value={value}
         onChange={(d) => setValue(d)}
         onBlur={() => {
