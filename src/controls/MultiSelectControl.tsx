@@ -209,20 +209,43 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
     return pinned.length ? [...pinned, ...base] : base;
   }, [allOptions, filter, staticOptions.length, onlySelected, pendingKeys, knownItemsByKey]);
 
+  // Il fuoco, dopo una scelta, resta sul controllo: il bottone del selettore.
+  // La X di una voce sparisce col suo clic, e il pannello aperto dalla banda
+  // delle voci (che il fuoco non lo prende) alla chiusura lo lascia su <body>;
+  // da li' il ricaricamento non sa dove tornare, e un TAB ripartiva dalla cima
+  // della mappa (SXADV-5958). `preventScroll`: la mappa resta dov'e'.
+  const pickerRef = useRef<HTMLButtonElement>(null);
+  const keepFocusOnControl = useCallback(() => {
+    pickerRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const removeKey = useCallback((key: string) => {
     if (!editable) return;
     const next = selectedKeys.filter((k) => k !== key);
     const nextValue = next.join(',');
+    keepFocusOnControl();
     setLocalValue(nextValue);
     onChange(nextValue);
-  }, [editable, selectedKeys, onChange, setLocalValue]);
+  }, [editable, selectedKeys, onChange, setLocalValue, keepFocusOnControl]);
 
+  // Dal pannello il fuoco non esce finche' e' aperto (il Drawer lo trattiene)
+  // e alla chiusura torna dove stava prima dell'apertura, <body> se lo si e'
+  // aperto dalla banda: dopo Conferma lo si porta sul controllo a chiusura
+  // finita. Al fotogramma dopo: il Drawer ridà il fuoco all'elemento di
+  // partenza DOPO aver chiamato afterOpenChange, e lo scavalcherebbe.
+  const focusAfterCloseRef = useRef(false);
   const applySelection = useCallback(() => {
     const nextValue = pendingKeys.join(',');
+    focusAfterCloseRef.current = true;
     setLocalValue(nextValue);
     onChange(nextValue);
     setDrawerOpen(false);
   }, [pendingKeys, onChange, setLocalValue]);
+  const handleDrawerOpenChange = useCallback((open: boolean) => {
+    if (open || !focusAfterCloseRef.current) return;
+    focusAfterCloseRef.current = false;
+    requestAnimationFrame(keepFocusOnControl);
+  }, [keepFocusOnControl]);
 
   const togglePending = useCallback((key: string) => {
     setPendingKeys((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
@@ -295,6 +318,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
       {editable && (
         <Tooltip title={selectedKeys.length > 0 ? 'Modifica selezione' : 'Seleziona'}>
           <Button
+            ref={pickerRef}
             className="multiselect-picker-btn"
             size="small"
             icon={selectedKeys.length > 0 ? <FolderOpenOutlined /> : <UnorderedListOutlined />}
@@ -308,6 +332,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
         placement="right"
         width={480}
         open={drawerOpen}
+        afterOpenChange={handleDrawerOpenChange}
         onClose={() => setDrawerOpen(false)}
         extra={
           <Space>

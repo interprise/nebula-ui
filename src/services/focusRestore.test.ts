@@ -87,14 +87,15 @@ describe('discardPendingFocus: il segno armato si puo\' scartare', () => {
   it('consumare due volte: la seconda risposta non trova il segno', () => {
     captureFocusBeforeReload('campoReload');
     // Fuoco sospeso su <body>: si torna al campo che ha lanciato il reload.
-    expect(consumePendingFocus()).toBe('campoReload');
+    // Dal SXADV-5958 il ritorno e' un oggetto { restoreId }: null = niente armato.
+    expect(consumePendingFocus()).toEqual({ restoreId: 'campoReload' });
     expect(consumePendingFocus()).toBeNull();
   });
 
   it('consumare con il fuoco posato su un campo con id restituisce quel campo, una volta', () => {
     captureFocusBeforeReload('campoReload');
     attivo = new FintoElemento('campoSuccessivo');
-    expect(consumePendingFocus()).toBe('campoSuccessivo');
+    expect(consumePendingFocus()).toEqual({ restoreId: 'campoSuccessivo' });
     expect(consumePendingFocus()).toBeNull();
   });
 
@@ -102,7 +103,7 @@ describe('discardPendingFocus: il segno armato si puo\' scartare', () => {
     captureFocusBeforeReload('primo');
     discardPendingFocus();
     captureFocusBeforeReload('secondo');
-    expect(consumePendingFocus()).toBe('secondo');
+    expect(consumePendingFocus()).toEqual({ restoreId: 'secondo' });
   });
 
   it('un segno riarmato prima della risposta vale il ripiego piu\' recente', () => {
@@ -111,7 +112,7 @@ describe('discardPendingFocus: il segno armato si puo\' scartare', () => {
     // dell'ultimo campo lasciato.
     captureFocusBeforeReload('primo');
     captureFocusBeforeReload('secondo');
-    expect(consumePendingFocus()).toBe('secondo');
+    expect(consumePendingFocus()).toEqual({ restoreId: 'secondo' });
     expect(consumePendingFocus()).toBeNull();
   });
 });
@@ -145,7 +146,7 @@ describe('focusNewPage: il cursore sulla pagina nuova (SXADV-5969.1)', () => {
     disabled = false;
     readOnly = false;
     top = 0;
-    focus = vi.fn((_opts?: FocusOptions) => { doc.activeElement = this; });
+    focus = vi.fn(() => { doc.activeElement = this; });
     select = vi.fn();
     getClientRects() { return [{}]; }
     getBoundingClientRect() { return { top: this.top, bottom: this.top + 24 }; }

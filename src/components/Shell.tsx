@@ -82,7 +82,7 @@ import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/te
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
 import { filterMenuTree } from './menuFilter';
-import { consumePendingFocus, discardPendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
+import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
@@ -1101,20 +1101,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
-      if (pendingFocus) {
-        restoreFocus(pendingFocus);
-      } else if (
-        // Pagina nuova (M/MC: templateKey alla radice; un ricaricamento della
-        // stessa pagina e' D e lo porta dentro `ui`) sulla scheda che si sta
-        // guardando: il cursore va nella mappa, come nel legacy (SXADV-5803).
-        // Non se la risposta apre una finestra (errore, avvertimento,
-        // conferma): il fuoco e' della finestra.
-        resp.templateKey
-        && tabKey === activeTabRef.current
-        && !(resp.errors ?? []).some((e) => e.type !== 'INFO' && e.type !== 'NOTIFICATION')
-      ) {
-        focusNewPage(resp.currField);
-      }
+      // Ricaricamento armato = stessa pagina, anche se la risposta porta il
+      // template (le mappe di interrogazione lo portano sempre, SXADV-5958);
+      // altrimenti pagina nuova: il cursore va nella mappa (SXADV-5803).
+      focusAfterResponse(pendingFocus, resp, tabKey === activeTabRef.current);
     },
     // `tabs`: ogni percorso di merge (hydrate da template in cache, rowUpdate,
     // pageOnly, detailPageOnly, instradamento albero+dettaglio) legge la scheda

@@ -56,13 +56,24 @@ export function discardPendingFocus(): void {
   pending = null;
 }
 
-export function consumePendingFocus(): string | null {
+/** Esito di un ricaricamento armato: la risposta e' della STESSA pagina, e
+ *  `restoreId` e' il campo su cui ridare il fuoco (null = lascialo dov'e'). */
+export interface PendingFocus {
+  restoreId: string | null;
+}
+
+/** `null` = nessun ricaricamento armato: la risposta puo' essere una pagina
+ *  nuova. Altrimenti e' un ricaricamento, anche quando non c'e' un campo a cui
+ *  ridare il fuoco — un controllo senza `id` (il MultiSelect) o il fuoco su un
+ *  elemento senza id. Prima i due casi tornavano tutti e due `null`, e un
+ *  ricaricamento senza bersaglio passava per pagina nuova (SXADV-5958). */
+export function consumePendingFocus(): PendingFocus | null {
   const p = pending;
   pending = null;
   if (!p) return null;
   const active = document.activeElement;
   // Posato su qualcosa senza id: e' dell'utente, non lo si sposta.
-  return focusStranded(active) ? p.fallbackId : (active as HTMLElement).id || null;
+  return { restoreId: focusStranded(active) ? p.fallbackId : (active as HTMLElement).id || null };
 }
 
 export function restoreFocus(id: string | null): void {
@@ -167,4 +178,33 @@ export function focusNewPage(currField?: string | null): void {
     if (++attempts < 10) requestAnimationFrame(tryFocus);
   };
   requestAnimationFrame(tryFocus);
+}
+
+/**
+ * Il fuoco dopo una risposta completata. Un ricaricamento armato
+ * ({@link consumePendingFocus} non nullo) e' la stessa pagina: si ridà il fuoco
+ * al campo di prima, se c'e', e basta. Il `templateKey` alla radice da solo non
+ * dice "pagina nuova": le mappe di interrogazione rispondono sempre col template
+ * (modalita' M, SXADV-5465), anche al Post di un filtro con reload, e prese per
+ * pagina nuova portavano il cursore su "ID DOC" e la mappa in cima (SXADV-5958).
+ * Senza ricaricamento armato, la pagina nuova sulla scheda che si guarda prende
+ * il cursore come nel legacy (SXADV-5803), tranne quando la risposta apre una
+ * finestra (errore, avvertimento, conferma): il fuoco e' della finestra.
+ */
+export function focusAfterResponse(
+  pendingFocus: PendingFocus | null,
+  resp: { templateKey?: unknown; currField?: string | null; errors?: { type?: string }[] },
+  isActiveTab: boolean,
+): void {
+  if (pendingFocus) {
+    restoreFocus(pendingFocus.restoreId);
+    return;
+  }
+  if (
+    resp.templateKey
+    && isActiveTab
+    && !(resp.errors ?? []).some((e) => e.type !== 'INFO' && e.type !== 'NOTIFICATION')
+  ) {
+    focusNewPage(resp.currField);
+  }
 }
