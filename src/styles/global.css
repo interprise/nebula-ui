@@ -1995,3 +1995,95 @@ body[style*="cursor: wait"] * {
 .dash-widget-variazioni summary {
   cursor: pointer;
 }
+
+/* SXADV-62 G10 · il numero e le barre di un widget. Disegnati a mano, sui token:
+   nessuna libreria di grafici (piano §5.3). */
+.dash-numero {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+.dash-numero-valore {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.dash-numero-parziale {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--app-text-subdued);
+}
+.dash-numero-delta {
+  font-size: 12.5px;
+  color: var(--app-text-subdued);
+  font-variant-numeric: tabular-nums;
+}
+.dash-numero-delta-valore {
+  font-weight: 600;
+}
+.dash-tono-bene {
+  color: var(--app-trend-good);
+}
+.dash-tono-male {
+  color: var(--app-trend-bad);
+}
+.dash-risultato-nota {
+  font-size: 11.5px;
+}
+.dash-barre ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dash-barra {
+  display: grid;
+  grid-template-columns: minmax(0, 38%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dash-barra-etichetta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-barra-traccia {
+  height: 12px;
+  background: var(--app-surface-muted);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.dash-barra-riempimento {
+  display: block;
+  height: 100%;
+  background: var(--app-bar);
+}
+.dash-barra-negativa .dash-barra-riempimento {
+  background: var(--app-bar-negative);
+}
+.dash-barra-altri .dash-barra-etichetta {
+  font-style: italic;
+  color: var(--app-text-subdued);
+}
+.dash-barra-valore {
+  text-align: right;
+  white-space: nowrap;
+}
+.dash-modifica-motivo {
+  font-size: 12px;
+}
+.dash-modifica-anteprima {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--app-border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

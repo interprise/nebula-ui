@@ -36,6 +36,13 @@
   --app-diff-changed: #fff7e6;
   --app-diff-changed-line: #fa8c16;
   --app-diff-changed-ink: #ad4e00;
+  /* Numero e barre di un widget (SXADV-62 G10). La tendenza ha un colore solo se
+     l'utente ha detto se «sale» e' una buona notizia; freccia e testo ci sono
+     sempre, il colore non e' mai l'unico segno. */
+  --app-trend-good: #237804;   /* 4,5:1 su bianco anche sul testo piccolo */
+  --app-trend-bad: #cf1322;
+  --app-bar: #4096ff;
+  --app-bar-negative: #fa8c16;
   --app-surface-muted: #f5f5f5;
 
   /* --- Feedback ----------------------------------------------------------- */

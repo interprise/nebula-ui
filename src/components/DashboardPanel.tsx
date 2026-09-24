@@ -1,12 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { ReloadOutlined, CloseOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
+import { RisultatoVista } from './dashboard/RisultatoWidget';
+import {
+  mostraRisultato,
+  type Opzioni,
+  type Risultato,
+  type Trasformazione,
+} from './dashboard/risultato';
+import ModificaWidget from './dashboard/ModificaWidget';
 
 /** Una colonna della lista fotografata: l'intestazione che il widget mostra. */
 interface Colonna {
+  /** Il nome con cui la trasformazione si riferisce alla colonna. */
+  item?: string;
   etichetta?: string;
   tipo?: string | null;
 }
@@ -62,6 +72,11 @@ interface Widget {
   colonne?: Colonna[];
   filtri?: Array<{ etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
   fotografia: Fotografia;
+  /** La trasformazione salvata (G9), o null: il widget mostra la lista. */
+  trasformazione?: Trasformazione | null;
+  opzioni?: Opzioni | null;
+  /** Il risultato gia' calcolato dal server: il client lo disegna e basta. */
+  risultato?: Risultato | null;
 }
 
 interface Props {
@@ -264,6 +279,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
   const [errore, setErrore] = useState<string | null>(null);
   /** Quali widget stanno aggiornando adesso: e' roba del singolo, non del pannello. */
   const [inCorso, setInCorso] = useState<Record<number, boolean>>({});
+  /** Il widget aperto nel pannello «Modifica widget». */
+  const [modifica, setModifica] = useState<Widget | null>(null);
   /** Quale lettura e' l'ultima chiesta: le risposte in ritardo si scartano. */
   const richiesta = useRef(0);
   /** Il pannello e' ancora a video? Si smonta passando agli avvisi. */
@@ -373,6 +390,22 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
     }
   };
 
+  /**
+   * Dopo il salvataggio si rilegge (titolo, forma e risultato provvisorio si vedono
+   * subito) e si lancia «Aggiorna ora»: il numero esatto — su tutta la ricerca, non
+   * sulle righe salvate — lo calcola solo un aggiornamento. Se il server lo rifiuta
+   * perche' e' troppo presto, il widget resta col risultato provvisorio, e lo dice.
+   */
+  const salvato = async (id: number, titolo: string) => {
+    const w = (widget || []).find((x) => x.idWidget === id);
+    // Si chiude solo il pannello di QUESTO widget: se l'utente l'ha gia' chiuso e ne ha
+    // aperto un altro mentre il salvataggio viaggiava, quello resta aperto.
+    setModifica((m) => (m && m.idWidget === id ? null : m));
+    await leggi();
+    // col titolo nuovo: e' quello che il riepilogo dell'aggiornamento deve nominare
+    if (w && vivo.current) await aggiorna({ ...w, titolo });
+  };
+
   const rimuovi = async (w: Widget) => {
     try {
       const resp = (await api.postAction2('dashboard.RimuoviWidget', {
@@ -460,6 +493,15 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   />
                 </Tooltip>
               )}
+              <Tooltip title="Modifica">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  aria-label="Modifica"
+                  onClick={() => setModifica(w)}
+                />
+              </Tooltip>
               {/* Niente suggerimento su questo tasto: resta aperto sotto il puntatore,
                   e quando la finestrella di conferma non ha spazio a destra antd la apre
                   proprio li' sopra — il tasto «Togli» si becca il clic del suggerimento
@@ -566,10 +608,20 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
               ) : null}
             </>
           )}
+          {w.risultato && (w.forma === 'kpi' || w.forma === 'bar') ? (
+            <RisultatoVista
+              risultato={w.risultato}
+              forma={w.forma}
+              trasformazione={w.trasformazione}
+              opzioni={w.opzioni}
+            />
+          ) : null}
           {/* Le righe si mostrano se ci sono, qualunque sia lo stato: dopo un
               aggiornamento fallito la fotografia buona resta nel database, e lasciarla
-              fuori dagli occhi vuol dire che «resta» solo per modo di dire. */}
-          {mostrate > 0 ? (
+              fuori dagli occhi vuol dire che «resta» solo per modo di dire. Al posto
+              del numero o delle barre no: li' la tabella torna solo se il calcolo non
+              si applica. */}
+          {mostrate > 0 && !mostraRisultato(w.forma, w.risultato) ? (
             <div className="dash-widget-tabella">
               <table>
                 <thead>
@@ -665,7 +717,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
               ) : null}
             </div>
           ) : null}
-          {mostrate === 0 && foto.stato === 'OK' ? (
+          {mostrate === 0 && foto.stato === 'OK' && !mostraRisultato(w.forma, w.risultato) ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               Nessuna riga: oggi questa ricerca non trova niente.
             </Typography.Text>
@@ -673,6 +725,12 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
         </article>
         );
       })}
+      <ModificaWidget
+        widget={modifica}
+        sid={SID}
+        onClose={() => setModifica(null)}
+        onSalvato={(id, titolo) => void salvato(id, titolo)}
+      />
     </div>
   );
 };
