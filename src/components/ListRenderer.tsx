@@ -14,6 +14,7 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
 import { listColumnWidth } from './listColumnWidth';
+import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import {
   getCellEditorForType,
   isBooleanType,
@@ -866,8 +867,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      prime colonne bloccate. Offerta solo dove c'è qualcosa da linearizzare —
      senza bande di continuazione il record è già su una riga. A differenza
      dello zoom vale anche per le liste a tutta pagina: la scansione di molti
-     record ne guadagna lì esattamente come in un tab. */
-  const canFlatten = !!gridId && !!(ui.continuationHeaders && ui.continuationHeaders.length > 0);
+     record ne guadagna lì esattamente come in un tab.
+     Stessa offerta dove il record è già su una riga ma le colonne non entrano
+     nella finestra (Domino > Tessere, SXADV-5965): lì il guadagno è tutto nelle
+     prime colonne bloccate e nelle righe senza a-capo. La misura la aggiorna la
+     griglia (`measureColsOverflow`). */
+  const [colsOverflow, setColsOverflow] = useState(false);
+  const canFlatten = canOfferOneLine({
+    gridId,
+    hasContinuationBands: !!(ui.continuationHeaders && ui.continuationHeaders.length > 0),
+    columnsOverflow: colsOverflow,
+    oneLineOn: !!gridId && isOneLine(gridId),
+  });
   // Come per `adaptivePageSize`: il valore arriva nell'header su un render FULL
   // e nel `paging` su un aggiornamento di pagina, quindi si leggono entrambi.
   const pinnedSpec = useMemo(
@@ -1947,6 +1958,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
   }, []);
 
+  /** Le colonne sforano la larghezza della griglia? Decide se offrire la
+   *  modalità una-riga anche senza bande di continuazione (SXADV-5965). */
+  const measureColsOverflow = useCallback(() => {
+    const api = gridApiRef.current;
+    const viewport = getGridViewport();
+    if (!api || api.isDestroyed() || !viewport) return;
+    const widths = api.getAllDisplayedColumns().map((c) => c.getActualWidth());
+    setColsOverflow(columnsOverflow(widths, viewport.clientWidth));
+  }, [getGridViewport]);
+
   /* Adaptive page size (SXADV-5742) ---------------------------------------
    * The server can't know how many rows fit: that depends on the window size,
    * the browser zoom and — once a record can be shown wrapped or flat — on the
@@ -2706,7 +2727,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           defaultColDef={WRAPPING_HEADER_COLDEF}
           rowData={rowData}
           components={cellEditorComponents}
-          onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); }}
+          onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); measureColsOverflow(); }}
+          onGridSizeChanged={measureColsOverflow}
+          onDisplayedColumnsChanged={measureColsOverflow}
+          onColumnResized={(e) => { if (e.finished) measureColsOverflow(); }}
+          // Righe nuove possono far comparire la barra verticale, che toglie
+          // spazio in larghezza senza nessun evento di dimensione: si rimisura
+          // dopo il disegno.
+          onModelUpdated={() => requestAnimationFrame(measureColsOverflow)}
           context={{ onAction, onChange, headersByField, onBoolToggle: handleBoolToggle, selectorPad: isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0 }}
           onRowClicked={handleRowClicked}
           onCellKeyDown={handleCellKeyDown as any}
