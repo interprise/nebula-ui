@@ -459,7 +459,8 @@ export interface Banner {
 
 export interface MenuItem {
   id: string;
-  description: string;
+  /** Puo' mancare: con l'azienda Domino una voce arriva senza (SXADV-5969). */
+  description?: string;
   children?: MenuItem[];
   leaf?: boolean;
   iconCls?: string;

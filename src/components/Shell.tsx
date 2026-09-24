@@ -80,6 +80,7 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { negationFieldName } from '../controls/helpers';
+import { filterMenuTree } from './menuFilter';
 import { consumePendingFocus, discardPendingFocus, restoreFocus, focusNewPage } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
@@ -375,22 +376,6 @@ function applyDetailPage(
   const newRows = ui.rows.map(visitRow);
   if (!changed) return ui;
   return { ...ui, rows: newRows };
-}
-
-function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
-  const lowerFilter = filter.toLowerCase();
-  const result: MenuItem[] = [];
-  for (const item of items) {
-    const textMatches = item.description.toLowerCase().includes(lowerFilter);
-    const filteredChildren = item.children ? filterMenuTree(item.children, filter) : [];
-    if (textMatches || filteredChildren.length > 0) {
-      result.push({
-        ...item,
-        children: filteredChildren.length > 0 ? filteredChildren : item.children,
-      });
-    }
-  }
-  return result;
 }
 
 /** Etichetta di una voce di menu dal suo id (ricorsiva sull'albero). Fuori dal

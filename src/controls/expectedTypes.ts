@@ -36,6 +36,7 @@ export const EXPECTED_CONTROL_TYPES = [
   'htmlFormat',
   'imageFormat',
   'lookup',
+  'map',
   'money',
   'multiselect',
   'navigateView',

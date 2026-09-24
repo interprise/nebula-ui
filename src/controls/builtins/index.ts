@@ -37,6 +37,7 @@ import {
   AttachmentsControl,
   BpmStatusControl,
   ImageFormatControl,
+  MapControl,
   NavigateViewButtonControl,
   PathControl,
   PopupUrlControl,
@@ -92,6 +93,7 @@ export function registerBuiltinControls(): void {
     navigateViewButton: NavigateViewButtonControl,
     path: PathControl,
     popupUrl: PopupUrlControl,
+    map: MapControl,
     uploadButton: UploadButtonControl,
     // Phase 1b inheritors: reuse existing text/boolean renderers
     alternateKey: TextControl,

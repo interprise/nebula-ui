@@ -8,6 +8,7 @@ import {
 import type { ControlComponent } from '../types';
 import { triggerDownload } from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
+import { mapUrl } from '../mapUrl';
 
 interface AttachmentItem { key: string; fileName: string }
 
@@ -114,6 +115,28 @@ export const NavigateViewButtonControl: ControlComponent = ({ control, onAction 
     >
       {control.prompt as string | undefined}
     </Button>
+  );
+};
+
+/** GMap (SXADV-5969.2): il bottone con l'icona della mappa accanto
+ *  all'indirizzo, come il legacy (ui.js, tipo "map": `map.png`, "Mostra mappa",
+ *  fuori dalla sequenza del TAB). Apre Google Maps in una scheda nuova — vedi
+ *  `mapUrl`. Senza indirizzo resta al suo posto ma spento. */
+export const MapControl: ControlComponent = ({ control }) => {
+  if (control.visible === false) return null;
+  const url = mapUrl(control.address as string | undefined, control.pathFrom as string | undefined);
+  return (
+    <Button
+      id={control.id}
+      size="small"
+      className="nb-map-button"
+      icon={<img src="/entrasp/images/icons/map.png" alt="" width={16} height={16} />}
+      title="Mostra mappa"
+      aria-label="Mostra mappa"
+      tabIndex={-1}
+      disabled={!url}
+      onClick={() => { if (url) window.open(url, '_blank', 'noopener,noreferrer'); }}
+    />
   );
 };
 
