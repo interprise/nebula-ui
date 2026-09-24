@@ -13,6 +13,7 @@ import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
+import { rememberRow, recallRow, findRememberedRow } from './rowSelectionMemory';
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import {
@@ -27,12 +28,6 @@ const { Text } = Typography;
 type SortDispatch = (sortExpression: string) => void;
 const sortDispatchRef = { current: null as SortDispatch | null };
 const toggleItemDispatchRef = { current: null as ((itemId: string) => void) | null };
-
-/** Last-selected record path per list, keyed by tab(sid)+view. Survives the
- *  ListRenderer remount that happens when navigating into a detail and back,
- *  so the originating row can be re-highlighted and scrolled into view on
- *  return (item 5455.1C). */
-const lastSelectedByView = new Map<string, string>();
 
 /** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort.
  *  Also renders a configureIcon (green/red dot) when in configuring mode. */
@@ -464,6 +459,10 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
    Il selettore ci e' entrato con SXADV-5861 — apriva il micro-detail per un
    istante prima di navigare al detail integrale. */
 const ROW_ACTIVATION_IGNORE = '.list-cell-control, .selector-nav-cell, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]';
+
+/** Per quanto, tornando in lista, si riallinea la riga di partenza mentre le
+ *  altezze delle righe si assestano (SXADV-5957.1). */
+const ALIGN_WINDOW_MS = 1500;
 
 /** Leftmost navigate-to-detail column for listEdit+detailView lists (the
  *  legacy "selector"). Field click edits in the panel; this icon opens the
@@ -1891,7 +1890,16 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   );
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const lastHoverPath = useRef<string | null>(null);
-  const lastSelectedPath = useRef<string | null>(null);
+  // La riga evidenziata come corrente. La legge anche la regola di classe
+  // della griglia, cosi' la trova addosso anche una riga che AG Grid disegna
+  // DOPO (fuori vista, o ricreata scorrendo): la classe messa a mano sul DOM
+  // valeva solo per le righe gia' disegnate (SXADV-5957.1).
+  const selectedPathRef = useRef<string | null>(null);
+  // La riga gia' riportata a vista dopo il ritorno. Si riallinea una volta
+  // sola: le risposte successive che rimandano le righe (un campo della
+  // testata, un refresh) non devono strappare la griglia a chi la sta
+  // scorrendo. Un clic su una riga lo azzera: il prossimo ritorno riallinea.
+  const alignedPathRef = useRef<string | null>(null);
 
   // An embedded grid fills the space its container actually leaves it, measured
   // in pixels. Sizing it to content (or to a fixed 60vh) makes a tall grid
@@ -2101,6 +2109,22 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     });
   }, [getGridViewport]);
 
+  /** La riga corrente: subito sulle righe gia' disegnate, e tramite
+   *  `selectedRowClassRules` su quelle che AG Grid disegnera' dopo. */
+  const markSelected = useCallback((path: string | null) => {
+    selectedPathRef.current = path;
+    applyClassByPath(path, 'record-group-selected');
+  }, [applyClassByPath]);
+
+  // Oggetto stabile: regole nuove farebbero ridisegnare tutte le righe, e le
+  // righe a tutta larghezza rimontano i loro controlli. La regola legge la ref,
+  // quindi vale al momento in cui AG Grid disegna la riga; una regola falsa
+  // toglie la classe, cosi' non resta su una riga che ha cambiato record.
+  const selectedRowClassRules = useMemo(() => ({
+    'record-group-selected': (params: { data?: Record<string, unknown> }) =>
+      selectedPathRef.current != null && params.data?._selectorPath === selectedPathRef.current,
+  }), []);
+
   // Track which row is currently in edit mode for listEdit views
   const editingRowPath = useRef<string | null>(null);
 
@@ -2109,9 +2133,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const activateRow = useCallback((data: Record<string, unknown> | undefined) => {
     if (!data || data._isBreakRow) return;
     const path = data._selectorPath as string | undefined;
-    lastSelectedPath.current = path ?? null;
-    if (path) lastSelectedByView.set(selKey, path); else lastSelectedByView.delete(selKey);
-    applyClassByPath(path ?? null, 'record-group-selected');
+    rememberRow(selKey, path);
+    alignedPathRef.current = null;
+    markSelected(path ?? null);
 
     const command = data._selectorCommand as string | undefined;
     if (!path) return;
@@ -2141,7 +2165,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
     // Non-editable lists: the selector navigates to the detail as before.
     if (command) onAction(command, { navpath: path });
-  }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, applyClassByPath, selKey]);
+  }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, selKey]);
 
   // Lo stesso clic su una banda di continuazione arriva sia qui sia a
   // handleGridClick: si attiva una volta sola (SXADV-5920, vedi rowActivation).
@@ -2473,8 +2497,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     gridContainerRef.current?.classList.remove('grid-waiting');
     if (!isListEdit || !editingRowPath.current) return;
     // Re-apply selection highlight (may be lost during grid re-render from other actions)
-    applyClassByPath(editingRowPath.current, 'record-group-selected');
-  }, [rowData, isListEdit, applyClassByPath]);
+    markSelected(editingRowPath.current);
+  }, [rowData, isListEdit, markSelected]);
 
   // Auto-open the bottom edit panel on a NEW server edit-path row — the record
   // just added by "Nuovo" on an editable list. Gated on pendingAdd (consumed
@@ -2522,42 +2546,86 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       }
       editingRowPath.current = serverEditingPath;
       pendingAddSeenRef.current = false;
-      applyClassByPath(serverEditingPath, 'record-group-selected');
+      markSelected(serverEditingPath);
       api.ensureIndexVisible(rowIndex, 'middle');
       onSelectRecord?.(serverEditingPath);
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);
-  }, [rowData, serverEditingPath, isListEdit, onSelectRecord, pendingAdd, applyClassByPath]);
+  }, [rowData, serverEditingPath, isListEdit, onSelectRecord, pendingAdd, markSelected]);
 
   // Returning to a list after a detail: re-highlight the originating record and
   // scroll it into view (item 5455.1C). The path is read from the module-level
-  // map so it survives the remount; retries a few frames until the grid API and
-  // rows are ready.
+  // memory so it survives the remount; retries a few frames until the grid API
+  // and rows are ready.
+  //
+  // Lo scorrimento si ripete finche' la riga e' davvero a vista: con le righe
+  // ad altezza automatica AG Grid parte da altezze stimate, e le bande di
+  // continuazione crescono ancora per mezzo secondo e piu' dopo il primo
+  // disegno. Il primo `ensureIndexVisible` verso il fondo della pagina si
+  // fermava prima, con la riga ancora sotto il bordo (SXADV-5957.1). Si
+  // riallinea per una finestra di tempo, e si smette appena l'utente mette
+  // mano alla griglia: da li' lo scorrimento e' suo.
   useEffect(() => {
     if (isListEdit) return; // edit mode handled by the effect above
-    const stored = lastSelectedByView.get(selKey);
+    const stored = recallRow(selKey);
     if (!stored) return;
     let raf = 0;
     let tries = 0;
+    let since = 0;
+    let userTookOver = false;
+    let target: { path: string; rowIndex: number; id: string } | null = null;
+    const container = gridContainerRef.current;
+    const takeOver = () => { userTookOver = true; };
+    const USER_SCROLL_EVENTS = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+    USER_SCROLL_EVENTS.forEach((t) => container?.addEventListener(t, takeOver, { capture: true, passive: true }));
+    const inView = (id: string): boolean => {
+      const viewport = getGridViewport();
+      const el = viewport?.querySelector<HTMLElement>(`.ag-center-cols-container [row-id="${id}"]`);
+      if (!viewport || !el) return false;
+      const v = viewport.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+    };
     const attempt = () => {
       const api = gridApiRef.current;
-      if (!api) {
+      if (!api || api.isDestroyed()) {
         if (tries++ < 10) raf = requestAnimationFrame(attempt);
         return;
       }
-      lastSelectedPath.current = stored;
-      applyClassByPath(stored, 'record-group-selected');
-      let rowIndex: number | null = null;
-      api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
-        if (rowIndex == null && n.data?._selectorPath === stored && n.rowIndex != null) rowIndex = n.rowIndex;
-      });
-      if (rowIndex == null && tries++ < 10) { raf = requestAnimationFrame(attempt); return; }
-      if (rowIndex != null) api.ensureIndexVisible(rowIndex, 'middle');
+      if (!target) {
+        const nodes: { path: string; rowIndex: number; id: string }[] = [];
+        api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null; id?: string }) => {
+          const p = n.data?._selectorPath as string | undefined;
+          if (p && !n.data?._isContinuationRow && n.rowIndex != null && n.id != null) {
+            nodes.push({ path: p, rowIndex: n.rowIndex, id: n.id });
+          }
+        });
+        const match = findRememberedRow(stored, nodes.map((n) => n.path), !!embedded);
+        if (!match) {
+          if (tries++ < 10) raf = requestAnimationFrame(attempt);
+          return;
+        }
+        // La lista rinata con un viewstate nuovo (5957.2) da' alla riga un
+        // percorso nuovo: da qui in poi vale quello.
+        if (match !== stored) rememberRow(selKey, match);
+        markSelected(match);
+        if (alignedPathRef.current === match) return;
+        alignedPathRef.current = match;
+        target = nodes.find((n) => n.path === match) ?? null;
+        if (!target) return;
+        since = performance.now();
+      }
+      if (userTookOver) return;
+      if (!inView(target.id)) api.ensureIndexVisible(target.rowIndex, 'middle');
+      if (performance.now() - since < ALIGN_WINDOW_MS) raf = requestAnimationFrame(attempt);
     };
     raf = requestAnimationFrame(attempt);
-    return () => cancelAnimationFrame(raf);
-  }, [rowData, selKey, isListEdit, applyClassByPath]);
+    return () => {
+      cancelAnimationFrame(raf);
+      USER_SCROLL_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
+    };
+  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport]);
 
   // The server emits gridActions for embedded lists only. `ui.footer` (the
   // legacy below-the-grid Add) is deliberately no longer rendered — its command
@@ -2742,6 +2810,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           isFullWidthRow={isFullWidthRow}
           fullWidthCellRenderer={fullWidthCellRenderer}
           getRowClass={getRowClass}
+          rowClassRules={selectedRowClassRules}
           rowHeight={GRID_ROW_HEIGHT}
           getRowHeight={continuationRowFloor}
           suppressRowClickSelection
