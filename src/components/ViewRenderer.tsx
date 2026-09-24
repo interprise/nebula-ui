@@ -24,6 +24,7 @@ import EditPanel from './EditPanel';
 import { viewstateIdOf } from './listEditPosting';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
+import { solvePromptBand, type LeadingPrompt } from './promptBand';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -253,42 +254,6 @@ function buildRuler(allRows: UIRow[], hostWidth: number, density: Density, total
   // outside the table and don't constrain the ruler.
   const totalCols = formCols || totalColsHint || 0;
 
-  // The label band is the run of leading columns every prompt cell shares. Its
-  // width is a property of the LONGEST LABEL, not of the server's column count:
-  // billed at the uniform 24px/column it came out ~240px wide against ~180px of
-  // actual text, and since prompts are right-aligned all that slack piled up on
-  // the left as dead space while the fields it pushed rightwards ran off the
-  // edge of the screen (SXADV-5742.1).
-  let promptBandCols = 0;
-  for (const row of rows) {
-    const first = row.cells[0];
-    if (first && first.visible !== false && first.elementType === ELTYPE_PROMPT) {
-      promptBandCols = Math.max(promptBandCols, first.colspan || 1);
-    }
-  }
-
-  // Sized PER COLUMN, not per band: prompt cells don't all span the same number
-  // of columns, so a band merely wide enough for the longest label leaves the
-  // rows with a shorter colspan too narrow and wraps them anyway. What every row
-  // shares is the column, so the requirement each label imposes is
-  // (its width / its colspan) and the band is the largest of those, times the
-  // widest prompt colspan in the view.
-  //
-  // Rimisurato quando cambia la densita': il corpo del carattere e' cambiato e
-  // con lui la larghezza che ogni etichetta pretende.
-  let promptBandWidth = 0;
-  if (promptBandCols) {
-    const font = layoutTableFont(density);
-    let perCol = 0;
-    for (const row of rows) {
-      const first = row.cells[0];
-      if (!first || first.visible === false || first.elementType !== ELTYPE_PROMPT || !first.prompt) continue;
-      const span = first.colspan || 1;
-      perCol = Math.max(perCol, (measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING) / span);
-    }
-    promptBandWidth = perCol ? Math.ceil(perCol * promptBandCols) : 0;
-  }
-
   // Pavimento delle colonne di contenuto, derivato dai controlli che questa
   // tabella contiene davvero e non da una costante: ogni cella con un controllo
   // incomprimibile pretende (larghezza + padding) / colspan px per colonna, e la
@@ -337,11 +302,49 @@ function buildRuler(allRows: UIRow[], hostWidth: number, density: Density, total
   // resta comunque, e la stretta si è pagata solo in campi tagliati. Quando la
   // larghezza che entrerebbe è sotto il pavimento la tabella torna quindi alle
   // colonne che i suoi controlli chiedono e scorre, come faceva il legacy.
+  const fittedColFor = (bandCols: number, bandWidth: number) =>
+    (hostWidth - bandWidth - RULER_GUTTER) / (totalCols - bandCols);
+  const contentColFor = (bandCols: number, bandWidth: number) => {
+    const fitted = fittedColFor(bandCols, bandWidth);
+    return fitted >= contentColFloor ? fitted : contentColWish;
+  };
+
+  // The label band is the run of leading columns EVERY prompt cell shares — the
+  // smallest leading-prompt colspan, not the widest (SXADV-5969.3, see
+  // promptBand.ts). Its width is a property of the LONGEST LABEL, not of the
+  // server's column count: billed at the uniform 24px/column it came out ~240px
+  // wide against ~180px of actual text, and since prompts are right-aligned all
+  // that slack piled up on the left as dead space while the fields it pushed
+  // rightwards ran off the edge of the screen (SXADV-5742.1).
+  //
+  // Rimisurato quando cambia la densita': il corpo del carattere e' cambiato e
+  // con lui la larghezza che ogni etichetta pretende.
+  // Una riga che comincia con un'etichetta VUOTA conta per la banda come le
+  // altre (le sue colonne restano etichetta), ma non pretende larghezza.
+  const leadingPrompts: LeadingPrompt[] = [];
+  const font = layoutTableFont(density);
+  for (const row of rows) {
+    const first = row.cells[0];
+    if (!first || first.visible === false || first.elementType !== ELTYPE_PROMPT) continue;
+    leadingPrompts.push({
+      span: first.colspan || 1,
+      width: first.prompt ? measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING : 0,
+    });
+  }
+  const bandColsShared = leadingPrompts.length ? Math.min(...leadingPrompts.map((p) => p.span)) : 0;
+  const { cols: promptBandCols, width: promptBandWidth } = solvePromptBand(
+    leadingPrompts,
+    (bandWidth) => contentColFor(bandColsShared, bandWidth),
+    MIN_CONTENT_COL,
+  );
+
   const contentCols = totalCols - promptBandCols;
-  const fitRuler = hostWidth > 0 && promptBandWidth > 0 && contentCols > 0;
-  const fittedColWidth = fitRuler
-    ? (hostWidth - promptBandWidth - RULER_GUTTER) / contentCols
-    : 0;
+  // Una banda larga 0 e' legittima: le etichette vuote la tengono stretta e
+  // quelle scritte stanno tutte nelle colonne di contenuto che si prendono.
+  // Conta che ci sia almeno un'etichetta scritta, come prima (SXADV-5969).
+  const fitRuler = hostWidth > 0 && contentCols > 0 && promptBandCols > 0
+    && leadingPrompts.some((p) => p.width > 0);
+  const fittedColWidth = fitRuler ? fittedColFor(promptBandCols, promptBandWidth) : 0;
   const contentColWidth = fitRuler
     ? (fittedColWidth >= contentColFloor ? fittedColWidth : contentColWish)
     : DEFAULT_COL_WIDTH;

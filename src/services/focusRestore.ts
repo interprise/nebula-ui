@@ -151,7 +151,17 @@ export function focusNewPage(currField?: string | null): void {
       target.focus({ preventScroll: true });
       // Come focusInputField: il testo gia' presente resta selezionato.
       if (target instanceof HTMLInputElement && target.type === 'text' && !target.readOnly) target.select();
-      revealVertically(target);
+      // Si scorre fino al campo solo quando arriva come currField. Il ripiego,
+      // il PRIMO campo modificabile, puo' stare sotto la prima schermata — su
+      // Iscritti la testata anagrafica e' tutta in sola lettura e il primo
+      // campo e' "Data Iscrizione Cna", 320px piu' in basso — e la pagina nuova
+      // si apriva scorsa, con i primi campi della testata fuori vista
+      // (SXADV-5969.1). Il cursore resta li' anche se non si vede: il browser
+      // lo porta in vista alla prima battuta, e TAB passa al campo dopo.
+      // Limite noto: in alcune rese FULL il CORE mette in currField proprio il
+      // primo campo modificabile (UIControl.render, stessa viewstate del post),
+      // e li' si scorre ancora; aprendo da una lista non succede.
+      if (target === byServer) revealVertically(target);
       return;
     }
     if (++attempts < 10) requestAnimationFrame(tryFocus);
