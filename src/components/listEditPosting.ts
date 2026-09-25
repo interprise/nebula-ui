@@ -53,3 +53,26 @@ export function viewstateIdOf(rowPath: string): string {
   const dot = last.lastIndexOf('.');
   return dot > 0 ? last.slice(0, dot) : last;
 }
+
+/** L'id NUDO del viewstate di una lista, base dei nomi di campo del post
+ *  page-wide di una multiEdit (`buildColumnFieldName`).
+ *
+ *  Finora arrivava solo dalla colonna selettore (`col.selector.basePath`), e una
+ *  lista dichiarata `selector="false"` quella colonna non ce l'ha: le spunte
+ *  partivano come `selected.` e CORE, che cerca `selected.<id>`, non vedeva
+ *  nessuna riga selezionata. Crea Campagna nasceva senza Eventi e Aggancia
+ *  Campagna lasciava `getContatti()` a null (SXADV-5995, SXADV-5996, vista
+ *  anagraficheListSelCmp). Senza selettore l'id si prende dal percorso vivo
+ *  della lista o, in mancanza, da quello della prima riga: e' lo stesso id, e
+ *  arriva a ogni risposta (mai da un template in cache, vedi SXADV-5887).
+ */
+export function resolveListBasePath(opts: {
+  selectorBasePath?: string;
+  uiPath?: string;
+  rowPaths?: (string | undefined)[];
+}): string {
+  if (opts.selectorBasePath) return opts.selectorBasePath;
+  if (opts.uiPath) return viewstateIdOf(opts.uiPath);
+  const first = opts.rowPaths?.find((p) => !!p);
+  return first ? viewstateIdOf(first) : '';
+}

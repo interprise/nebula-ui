@@ -11,7 +11,7 @@ import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } fr
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
-import { buildColumnFieldName, resolveReloadNavpath } from './listEditPosting';
+import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
 import { rememberRow, recallRow, findRememberedRow } from './rowSelectionMemory';
 import { listColumnWidth } from './listColumnWidth';
@@ -1799,7 +1799,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     };
     return { basePath: '', canEdit: false, canUpdate: true, command: 'NavigateDetail' };
   }, [ui.columns, ui.panelSelector]);
-  const selectorBasePath = selectorInfo.basePath;
+  // Senza colonna selettore (selector="false") l'id del viewstate si ricava dal
+  // percorso vivo della lista: senza, le spunte di una multiEdit partono come
+  // `selected.` e il server non vede nessuna riga (SXADV-5995/5996).
+  const selectorBasePath = useMemo(
+    () => resolveListBasePath({
+      selectorBasePath: selectorInfo.basePath,
+      uiPath: ui.path,
+      rowPaths: rowData.map((r) => r._selectorPath as string | undefined),
+    }),
+    [selectorInfo.basePath, ui.path, rowData],
+  );
 
   // Collect all row values for an editable column and push to formValues, keyed
   // by the bare list id (selectorBasePath) — the same key format the server's
