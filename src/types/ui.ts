@@ -435,6 +435,7 @@ export interface LoginInfo {
   areaDocumenti?: boolean;
   notifications?: boolean;
   assistenza?: boolean;
+  bot?: boolean;           // utilita.bot — mounts the AI agent widget (SXADV-5775)
   banners?: Banner[];
 }
 

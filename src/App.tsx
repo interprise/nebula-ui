@@ -24,6 +24,7 @@ import type { HostAPI } from './controls/hostApi';
 import { SidContext } from './components/ViewRenderer';
 import { useFeedback } from './hooks/feedback';
 import { serverHtml, HTML_POLICY } from './services/serverHtml';
+import { syncAgentWidget } from './services/agentWidget';
 registerBuiltinControls();
 
 const DEFAULT_CONTROLS_PLUGIN_URL = '/entrasp/app-plugins/entrasp-controls.js';
@@ -338,6 +339,11 @@ const App: React.FC = () => {
         cf_sottocategoria: '',
       },
     });
+  }, [loginInfo]);
+
+  // Widget dell'agente AI (SXADV-5775): come il legacy, se loginfo.bot.
+  useEffect(() => {
+    syncAgentWidget(loginInfo);
   }, [loginInfo]);
 
   if (!configLoaded) {
