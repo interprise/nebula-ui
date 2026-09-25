@@ -3,6 +3,7 @@ import type { CSSProperties, Dispatch, FocusEvent, KeyboardEvent, RefObject, Set
 import type { RefSelectProps as BaseSelectRef } from 'antd/es/select';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { UIControl } from '../types/ui';
+import type { FieldCaption, FieldChange } from './types';
 import { captureFocusBeforeReload } from '../services/focusRestore';
 import { DataVersionContext } from './dataVersion';
 import { formFontSizePx } from '../hooks/density';
@@ -784,17 +785,17 @@ export function useCommonProps(
  *  reload when the control carries `reload: true`. */
 export function useControlChange(
   control: UIControl,
-  onChange: (name: string, value: unknown) => void,
+  onChange: FieldChange,
   onAction: (action: string, params?: Record<string, string>) => void,
-): (value: unknown) => void {
+): (value: unknown, caption?: FieldCaption) => void {
   const fieldName = getFieldName(control);
   const reload = control.reload;
   const command = (control.command as string) || 'Post';
   const navpath = (control.navpath as string) || '';
   const option1 = (control.option1 as string) || '';
   return useCallback(
-    (val: unknown) => {
-      onChange(fieldName, val);
+    (val: unknown, caption?: FieldCaption) => {
+      onChange(fieldName, val, caption);
       if (reload) {
         // Il fuoco da ridare dopo il ridisegno si legge all'arrivo della
         // risposta, non ora: un'uscita col Tab fa il commit col fuoco ancora
@@ -827,7 +828,7 @@ export function useControlChange(
  *  `commit` handler for onBlur/onPressEnter. */
 export function useCommitReload(
   control: UIControl,
-  onChange: (name: string, value: unknown) => void,
+  onChange: FieldChange,
   onAction: (action: string, params?: Record<string, string>) => void,
 ): { store: (value: unknown) => void; commit: () => void } {
   const fieldName = getFieldName(control);

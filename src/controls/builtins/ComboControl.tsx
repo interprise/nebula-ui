@@ -1,7 +1,7 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Select } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
-import type { ControlComponent } from '../types';
+import type { ControlComponent, FieldCaption, FieldChange } from '../types';
 import type { UIControl } from '../../types/ui';
 import { useCommonProps, useControlChange, getTextMaxWidth, comboWidthForSize, useSelectKeys, useSyncedState, useSelectOpen, useComboTextField, mandatoryStatus, getFieldName } from '../helpers';
 import type { CommonInputProps } from '../helpers';
@@ -19,10 +19,10 @@ const RemoteCombo: React.FC<{
   commonProps: CommonInputProps;
   value: unknown;
   widthStyle: React.CSSProperties;
-  onChange: (val: unknown) => void;
+  onChange: (val: unknown, caption?: FieldCaption) => void;
   // Raw Shell onChange (name, value) — updates formValues WITHOUT firing a
   // reload, used by the Esc undo so restoring a value isn't a server action.
-  rawOnChange: (name: string, value: unknown) => void;
+  rawOnChange: FieldChange;
 }> = ({ control, commonProps, value, widthStyle, onChange, rawOnChange }) => {
   const sid = useContext(SidContext);
   // List-data mode (editable cells in a list) ships the current value's label as
@@ -86,9 +86,13 @@ const RemoteCombo: React.FC<{
     // Con `searchValue` controllato il testo di ricerca non se ne va da solo:
     // senza questo, scelta la voce resterebbe scritto quello che si era
     // digitato per trovarla, sopra il nominativo appena scelto.
-    showLabel(val ? String(options.find(o => o.value === val)?.label ?? val) : '');
+    const caption = val ? String(options.find(o => o.value === val)?.label ?? val) : '';
+    showLabel(caption);
     if (!val) setOpen(false); // clearing (× or Canc) closes the list
-    onChange(val);
+    // La didascalia va con il codice: l'elenco e' del server, e tornando sulla
+    // scheda il campo si ridisegna da li' (SXADV-5989). Vuota se si svuota,
+    // altrimenti riapparirebbe la voce di prima.
+    onChange(val, caption);
   }, [onChange, setSelected, setOpen, showLabel, options]);
 
   const loadedRef = useRef(false);
@@ -221,8 +225,11 @@ const RemoteCombo: React.FC<{
     setSelected(val);
     // Anche l'annullamento rimette nell'input la didascalia GIUSTA: senza,
     // resterebbe scritta quella del valore appena annullato.
-    showLabel(val ? String(options.find(o => o.value === val)?.label ?? val) : '');
-    rawOnChange(getFieldName(control), val ?? '');
+    const caption = val ? String(options.find(o => o.value === val)?.label ?? val) : '';
+    showLabel(caption);
+    // Con la didascalia, come una scelta: tornando sulla scheda non deve
+    // ricomparire quella della voce appena annullata (SXADV-5989).
+    rawOnChange(getFieldName(control), val ?? '', caption);
   }, [control, rawOnChange, setSelected, showLabel, options]);
   // Chiusura (Esc, clic fuori, scelta): il testo di ricerca se ne va con la
   // tendina, quindi il ref torna vuoto e la freccia riprende a fare da toggle.

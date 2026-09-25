@@ -80,7 +80,7 @@ import { ensureNotificationPermission, notify } from '../services/notifications'
 import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
-import { negationFieldName } from '../controls/helpers';
+import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
 import { filterMenuTree } from './menuFilter';
 import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
@@ -135,6 +135,10 @@ interface TabState {
   uiData?: UIData;
   currField?: string;
   formValues: Record<string, string | string[]>;
+  // Didascalie delle scelte non ancora spedite fatte da un elenco remoto
+  // (combo, selezione multipla), per nome di campo: nei formValues c'e' solo
+  // il codice. Servono a ridisegnare la scheda al ritorno (SXADV-5989).
+  formCaptions?: Record<string, PendingCaption>;
   loading?: boolean;
   // Richiesta in volo lanciata dalla scheda stessa per ricaricarsi
   // (refreshInterval): `loading` resta vero e blocca gli altri clic, ma il velo
@@ -509,6 +513,7 @@ const defaultTab: TabState = {
   label: 'Sessione 1',
   sid: 'S1',
   formValues: {},
+  formCaptions: {},
 };
 
 // Lazy-load CDMS tree component (separate chunk, downloaded on demand)
@@ -619,7 +624,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     const key = `tab_${tabCounter}`;
     const fv: Record<string, string | string[]> = {};
     formValuesRef.current[key] = fv;
-    const tab: TabState = { key, label: label || `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv };
+    const tab: TabState = { key, label: label || `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv, formCaptions: {} };
     setTabs((prev) => [...prev, tab]);
     setActiveTab(key);
     return tab;
@@ -664,7 +669,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const resetToHome = useCallback(() => {
     tabCounter = 1;
     formValuesRef.current = { tab_1: {} };
-    setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {} }]);
+    setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {}, formCaptions: {} }]);
     setActiveTab('tab_1');
   }, []);
 
@@ -711,41 +716,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     },
     [changeContext, loginInfo.sede]
   );
-
-  // Extract values from editable form controls only — the server already has readonly values
-  const extractFormValues = useCallback((ui: UITree): Record<string, string | string[]> => {
-    const values: Record<string, string | string[]> = {};
-    const walkRows = (rows: UIRow[]) => {
-      for (const row of rows) {
-        for (const cell of row.cells) {
-          const ctrl = cell.control;
-          if (!ctrl) continue;
-          // Only collect from editable controls (server already has readonly state)
-          if (ctrl.editable && !ctrl.noPost && !ctrl.disabled) {
-            const name = ctrl.name || ctrl.id;
-            if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
-              values[name] = String(ctrl.value);
-            }
-            // Re-seed the negation ($not) flag from the server's authoritative
-            // state so it survives this rebuild and is posted on ExecuteQuery.
-            // Without it, toggling "not" then triggering any reload would drop
-            // the flag (no control carries it) — same class of loss the scalar
-            // value above was fixed for (SXADV-5465).
-            if (name && ctrl.negation && ctrl.negationValue) {
-              values[negationFieldName(name)] = '1';
-            }
-          }
-
-          // Recurse into embedded/detail views and tabs
-          if (ctrl.contentRows) {
-            walkRows(ctrl.contentRows);
-          }
-        }
-      }
-    };
-    if (ui.rows) walkRows(ui.rows);
-    return values;
-  }, []);
 
   // Handle grid column value changes (array of values for all rows in a column)
   const handleGridChange = useCallback(
@@ -1112,7 +1082,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // getActiveTabState, che dipende da tabs — quindi bastava stabilizzare
     // handleErrors per congelare qui un elenco di schede vecchio e far ripartire
     // i merge da dati superati, senza che niente lo segnalasse.
-    [handleErrors, updateTabState, extractFormValues, tabs, feedback]
+    [handleErrors, updateTabState, tabs, feedback]
   );
 
   processResponseInnerRef.current = processResponseInner;
@@ -1165,6 +1135,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
       // Reset form values for the new screen
       tab.formValues = {};
+      tab.formCaptions = {};
       formValuesRef.current[tab.key] = tab.formValues;
       editNavpathRef.current = null;
       // Keep the current view mounted under a loading overlay while the new
@@ -1263,7 +1234,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const n = Number(p.id.substring(1));
       const key = `tab_${n}`;
       fvs[key] = {};
-      return { key, label: p.title || `Sessione ${n}`, sid: p.id, menuId: p.menuId, formValues: fvs[key], restorePending: true };
+      return { key, label: p.title || `Sessione ${n}`, sid: p.id, menuId: p.menuId, formValues: fvs[key], formCaptions: {}, restorePending: true };
     });
     // Le schede aperte dopo il ripristino non devono riusare il sid di una
     // Session gia' viva: il contatore riparte dal massimo ricostruito.
@@ -1497,7 +1468,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const dirtyFieldsRef = useRef<Set<string>>(new Set());
 
   const handleFieldChange = useCallback(
-    (name: string, value: unknown) => {
+    (name: string, value: unknown, caption?: PendingCaption) => {
       const tab = getActiveTabState();
       if (!tab) return;
       dirtyFieldsRef.current.add(name);
@@ -1508,6 +1479,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         : value == null ? '' : String(value);
       tab.formValues[name] = stored;
       formValuesRef.current[tab.key] = tab.formValues;
+      if (caption !== undefined) (tab.formCaptions ??= {})[name] = caption;
     },
     [getActiveTabState]
   );
@@ -1660,6 +1632,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   };
 
   const currentTab = getActiveTabState();
+  // La vista si disegna dallo stato di sessione della scheda, non solo dalla
+  // risposta del server: tornando su una scheda i controlli rinascono, e senza
+  // questo perdevano tutto quello che si era scritto e non ancora spedito
+  // (SXADV-5989). Si ricalcola quando cambiano la vista o i formValues interi
+  // (una risposta, un cambio di scheda), non a ogni tasto: i formValues si
+  // aggiornano sul posto e i controlli, finche' restano montati, il valore
+  // digitato ce l'hanno gia'.
+  const currentUi = currentTab?.ui;
+  const currentFormValues = currentTab?.formValues;
+  const currentCaptions = currentTab?.formCaptions;
+  const shownUi = useMemo(
+    () => (currentUi && currentFormValues ? applyPendingValues(currentUi, currentFormValues, currentCaptions) : currentUi),
+    [currentUi, currentFormValues, currentCaptions],
+  );
   // While a pane owns the current viewstate its trail wins: the tab's `ui` is
   // still the enclosing view and its own trail stops short of the pane.
   const breadcrumbs = currentTab?.paneBreadcrumbs ?? currentTab?.ui?.breadcrumbs;
@@ -2471,7 +2457,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       <PendingAddContext.Provider value={consumePendingAdd}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
                           <ViewRenderer
-                            ui={currentTab.ui}
+                            ui={shownUi ?? currentTab.ui}
                             onAction={handleAction}
                             onChange={handleFieldChange}
                             onGridChange={handleGridChange}

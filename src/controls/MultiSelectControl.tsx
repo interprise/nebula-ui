@@ -12,6 +12,7 @@ import type { UIControl } from '../types/ui';
 import { SidContext } from '../components/ViewRenderer';
 import { useSyncedState } from './helpers';
 import * as api from '../services/api';
+import type { FieldCaption } from './types';
 
 interface SelItem {
   value: string;
@@ -25,7 +26,7 @@ interface MultiSelectControlProps {
   editable: boolean;
   hint?: string;
   value: unknown;
-  onChange: (val: unknown) => void;
+  onChange: (val: unknown, caption?: FieldCaption) => void;
   onAction: (action: string, params?: Record<string, string>) => void;
   maxWidth?: number;
 }
@@ -219,14 +220,23 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
     pickerRef.current?.focus({ preventScroll: true });
   }, []);
 
+  // Le voci scelte con la loro didascalia: al server va solo l'elenco dei
+  // codici, ma tornando sulla scheda le pastiglie si ridisegnano da qui
+  // (SXADV-5989) e di una voce trovata nel pannello il controllo rinato non
+  // saprebbe piu' il nome.
+  const captionOf = useCallback(
+    (keys: string[]) => keys.map((k) => knownItemsByKey[k] || { value: k, text: labelMap[k] ?? k }),
+    [knownItemsByKey, labelMap],
+  );
+
   const removeKey = useCallback((key: string) => {
     if (!editable) return;
     const next = selectedKeys.filter((k) => k !== key);
     const nextValue = next.join(',');
     keepFocusOnControl();
     setLocalValue(nextValue);
-    onChange(nextValue);
-  }, [editable, selectedKeys, onChange, setLocalValue, keepFocusOnControl]);
+    onChange(nextValue, captionOf(next));
+  }, [editable, selectedKeys, onChange, setLocalValue, keepFocusOnControl, captionOf]);
 
   // Dal pannello il fuoco non esce finche' e' aperto (il Drawer lo trattiene)
   // e alla chiusura torna dove stava prima dell'apertura, <body> se lo si e'
@@ -238,9 +248,9 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
     const nextValue = pendingKeys.join(',');
     focusAfterCloseRef.current = true;
     setLocalValue(nextValue);
-    onChange(nextValue);
+    onChange(nextValue, captionOf(pendingKeys));
     setDrawerOpen(false);
-  }, [pendingKeys, onChange, setLocalValue]);
+  }, [pendingKeys, onChange, setLocalValue, captionOf]);
   const handleDrawerOpenChange = useCallback((open: boolean) => {
     if (open || !focusAfterCloseRef.current) return;
     focusAfterCloseRef.current = false;

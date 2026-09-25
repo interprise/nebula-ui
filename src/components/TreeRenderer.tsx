@@ -5,13 +5,14 @@ import type { UITree, TreeNode } from '../types/ui';
 import { SidContext, PaneToolbarContext, useIsTabLabelEcho } from './ViewRenderer';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
+import type { FieldCaption, FieldChange } from '../controls/types';
 
 const { Text } = Typography;
 
 interface TreeRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
-  onChange: (name: string, value: unknown) => void;
+  onChange: FieldChange;
 }
 
 /** Convert server TreeNode[] to Ant Design DataNode[] with optional match highlighting */
@@ -260,10 +261,10 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   }, [ui]);
 
   // Handle detail field changes — update local ref AND Shell's formValues
-  const handleDetailChange = useCallback((name: string, value: unknown) => {
+  const handleDetailChange = useCallback((name: string, value: unknown, caption?: FieldCaption) => {
     const strValue = value == null ? '' : String(value);
     detailFormValues.current[name] = strValue;
-    onChange(name, value);
+    onChange(name, value, caption);
   }, [onChange]);
 
 
