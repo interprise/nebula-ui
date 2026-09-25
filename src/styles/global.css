@@ -1840,7 +1840,9 @@ body[style*="cursor: wait"] * {
 }
 .selector-nav:hover { background: rgba(22, 119, 255, 0.12); }
 .edit-panel-body { padding: 6px 8px; overflow: auto; }
-.edit-panel-table { border-collapse: collapse; width: 100%; }
+/* Colonne fisse in proporzione ai colspan (colgroup in EditPanel): un campo
+   non allarga la tabella e non spinge fuori i successivi (SXADV-5918). */
+.edit-panel-table { border-collapse: collapse; width: 100%; table-layout: fixed; }
 .edit-panel-th {
   font-size: 11px;
   font-weight: 600;
@@ -1848,6 +1850,8 @@ body[style*="cursor: wait"] * {
   text-align: left;
   padding: 2px 4px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .edit-panel-td { padding: 2px 4px; vertical-align: top; }
 

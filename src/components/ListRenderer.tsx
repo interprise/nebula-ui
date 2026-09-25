@@ -2322,13 +2322,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // translates via --grid-scroll-x, mirroring the continuation cells.
   const injectContinuationHeaders = useCallback(() => {
     const container = gridContainerRef.current;
+    if (!container) return;
+    // Prima si tolgono le fasce della lista di prima, POI si guarda se questa
+    // ne ha: il contenitore della griglia sopravvive al cambio di funzione, e
+    // uscendo prima della pulizia le bande di una lista a piu' righe (Criteri
+    // Raggruppamento Fatturazione) restavano sopra la lista successiva che non
+    // ne ha (Tipi Evento).
+    container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
     const contHeaders = ui.continuationHeaders;
-    if (!container || !contHeaders || contHeaders.length === 0) return;
+    if (!contHeaders || contHeaders.length === 0) return;
 
     const agHeader = container.querySelector('.ag-header');
     if (!agHeader) return;
-
-    container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
     // In one-line le bande sono diventate colonne vere, con la loro etichetta
     // nell'intestazione della griglia: la fascia iniettata sarebbe un doppione
     // sospeso su righe che non esistono più. La rimozione sopra deve comunque

@@ -7,6 +7,7 @@ import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
+import { panelTableUnits } from './editPanelLayout';
 
 /**
  * Bottom edit panel for listEdit lists. The grid stays read-only; selecting a
@@ -94,7 +95,7 @@ const deleteCommandOf = (ui: UITree): string => {
 const HeaderRow: React.FC<{ headers: ListHeader[] }> = ({ headers }) => (
   <tr>
     {headers.map((h, i) => (
-      <th key={i} colSpan={h.colspan} className="edit-panel-th">{h.text}</th>
+      <th key={i} colSpan={h.colspan} className="edit-panel-th" title={h.text}>{h.text}</th>
     ))}
   </tr>
 );
@@ -144,6 +145,11 @@ const CellContent: React.FC<{
   return <span>{val}</span>;
 };
 
+/** Sotto questa larghezza per colonna di layout la tabella smette di
+ *  stringersi e il corpo del pannello scorre: meglio una barra che campi da
+ *  pochi pixel. */
+const PANEL_UNIT_MIN_PX = 6;
+
 /** Grid-shaped body (nessuna detailViewName): render the record's main +
  *  continuation rows as an aligned table, labelled by the grid's headers — no
  *  per-field prompts. */
@@ -156,8 +162,25 @@ const GridBody: React.FC<{
   if (rows.length === 0) return null;
   const [mainRow, ...contRows] = rows;
   const contHeaders = listUi.continuationHeaders ?? [];
+  // Righe davvero rese, per contare le colonne di layout: vedi panelTableUnits.
+  const units = panelTableUnits([
+    visibleHeaders(listUi.headers ?? []).map((h) => h.colspan),
+    visibleCells(mainRow.cells).map((c) => c.colspan),
+    ...contRows.flatMap((cr, ci) => !hasVisibleContent(cr.cells) ? [] : [
+      visibleHeaders(contHeaders[ci] ?? []).map((h) => h.colspan),
+      visibleCells(cr.cells).map((c) => c.colspan),
+    ]),
+  ]);
   return (
-    <table className="edit-panel-table">
+    <table
+      className="edit-panel-table"
+      style={units > 0 ? { minWidth: units * PANEL_UNIT_MIN_PX } : undefined}
+    >
+      {units > 0 && (
+        <colgroup>
+          {Array.from({ length: units }, (_, i) => <col key={i} style={{ width: `${100 / units}%` }} />)}
+        </colgroup>
+      )}
       <thead>
         {listUi.headers && listUi.headers.length > 0 && <HeaderRow headers={visibleHeaders(listUi.headers)} />}
       </thead>
