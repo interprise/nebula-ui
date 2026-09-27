@@ -1515,6 +1515,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     [getActiveTabState, updateTabState, handleAction],
   );
 
+  // SXADV-62: il clic su una riga di un widget apre il suo record nella scheda della
+  // Home, come ingresso di primo livello: la scheda prende il titolo del widget e la
+  // history riparte da zero. Il record lo cerca ViewByKey con la chiave della riga.
+  const handleApriDettaglio = useCallback(
+    (titolo: string, viewName: string, chiave: string) => {
+      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave });
+    },
+    [openFunctionByAction],
+  );
+
   // Request notification permission once on mount
   useEffect(() => {
     ensureNotificationPermission();
@@ -2481,6 +2491,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       key={`${loginInfo.customerKey || ''}|${loginInfo.sede || ''}|${loginInfo.login || ''}`}
                       loginInfo={loginInfo}
                       onBannerClick={handleBannerClick}
+                      onApriDettaglio={handleApriDettaglio}
                     />
                   )
                 )}

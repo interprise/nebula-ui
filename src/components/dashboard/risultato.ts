@@ -40,6 +40,8 @@ export interface Trasformazione {
 export interface Opzioni {
   /** Il numero che sale e' una buona notizia o da tenere d'occhio. */
   sale?: 'bene' | 'male';
+  /** La vista che apre il clic su una riga (SXADV-62, 27/09); assente = quella della lista. */
+  vistaDettaglio?: string;
 }
 
 /** Raggruppamento sempre, anche a quattro cifre: vedi NUMERO in DashboardPanel. */

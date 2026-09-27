@@ -10,6 +10,8 @@ import { welcomeText } from './homeWelcome';
 interface HomePanelProps {
   loginInfo: LoginInfo;
   onBannerClick?: (navigateTo: string) => void;
+  /** Il clic su una riga di un widget: apre il record nella scheda (vedi DashboardPanel). */
+  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => void;
 }
 
 type Cosa = 'dashboard' | 'avvisi';
@@ -19,7 +21,7 @@ const APERTURA_MS = 30000;
 
 const { Title, Text } = Typography;
 
-const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
+const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio }) => {
   // Memoizzato per davvero: era ricalcolato a ogni disegno, quindi il useMemo qui
   // sotto non teneva e a ogni ridisegno si rileggeva localStorage e si ricalcolava
   // il riconoscitore di ogni avviso, testo per testo (e hpText puo' essere lungo).
@@ -146,7 +148,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick }) => {
       </div>
 
       {cosa === 'dashboard' ? (
-        <DashboardPanel />
+        <DashboardPanel onApriDettaglio={onApriDettaglio} />
       ) : hasContent ? (
         <div>
           {banners.map((b, i) => (

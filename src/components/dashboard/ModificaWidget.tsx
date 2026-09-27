@@ -27,6 +27,8 @@ export interface WidgetDaModificare {
   intervalloMin?: number;
   trasformazione?: Trasformazione | null;
   opzioni?: Opzioni | null;
+  /** Il dettaglio della lista: quello che apre il clic se il campo resta vuoto. */
+  dettaglioPredefinito?: string | null;
   colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null }>;
 }
 
@@ -52,6 +54,8 @@ interface Bozza {
   topN: number;
   resto: string;
   sale: '' | 'bene' | 'male';
+  /** La vista che apre il clic su una riga; vuota = quella della lista. */
+  vistaDettaglio: string;
   intervallo: number;
 }
 
@@ -87,6 +91,7 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     topN: t.topN || 10,
     resto: t.resto || 'altri',
     sale: w.opzioni?.sale || '',
+    vistaDettaglio: typeof w.opzioni?.vistaDettaglio === 'string' ? w.opzioni.vistaDettaglio : '',
     intervallo: w.intervalloMin || 60,
   };
 };
@@ -111,6 +116,22 @@ const trasformazioneDa = (b: Bozza): Trasformazione | null => {
     t.resto = b.resto;
   }
   return t;
+};
+
+/**
+ * Le opzioni da salvare: `sale` solo per il numero, la vista di dettaglio solo se
+ * scritta. Le chiavi che il pannello non conosce restano come erano: il server le
+ * conserva, e un Salva da qui non deve cancellarle. Vuote = stringa vuota, come
+ * prima: il server salva NULL.
+ */
+const opzioniDa = (b: Bozza, prima: Opzioni | null | undefined): string => {
+  const o: Opzioni = { ...(prima || {}) };
+  delete o.sale;
+  delete o.vistaDettaglio;
+  if (b.forma === 'kpi' && b.sale) o.sale = b.sale;
+  const vista = b.vistaDettaglio.trim();
+  if (vista) o.vistaDettaglio = vista;
+  return Object.keys(o).length ? JSON.stringify(o) : '';
 };
 
 /** Perche' le barre non si possono scegliere, o null. */
@@ -297,7 +318,7 @@ const ModificaWidget: React.FC<Props> = ({ widget, sid, onClose, onSalvato }) =>
         titolo: bozza.titolo.trim(),
         forma: bozza.forma,
         trasformazione: trasformazione ? JSON.stringify(trasformazione) : '',
-        opzioni: bozza.forma === 'kpi' && bozza.sale ? JSON.stringify({ sale: bozza.sale }) : '',
+        opzioni: opzioniDa(bozza, widget.opzioni),
         intervalloMin: String(bozza.intervallo),
       })) as unknown as Record<string, unknown>;
       if (resp.esito === 'ok') {
@@ -502,6 +523,20 @@ const ModificaWidget: React.FC<Props> = ({ widget, sid, onClose, onSalvato }) =>
               ) : null}
             </>
           )}
+
+          {/* Per ogni forma: tornando alla lista il campo c'e' ancora. */}
+          <Form.Item
+            label="Apri il dettaglio con"
+            extra="Il clic su una riga apre questa vista. Vuoto: quella della lista."
+          >
+            <Input
+              value={bozza.vistaDettaglio}
+              onChange={(e) => cambia({ vistaDettaglio: e.target.value })}
+              placeholder={widget?.dettaglioPredefinito || 'nessun dettaglio'}
+              allowClear
+              aria-label="Vista di dettaglio"
+            />
+          </Form.Item>
 
           <Form.Item label="Aggiorna ogni">
             <Select

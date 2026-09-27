@@ -1943,6 +1943,20 @@ body[style*="cursor: wait"] * {
   border-bottom: 1px solid var(--app-surface-muted);
 }
 
+/* Una riga che apre il suo record (SXADV-62, 27/09): la manina e lo stesso fondo al
+   passaggio che hanno le righe di lista; col Tab il bordo del fuoco sul link della
+   prima cella. */
+.dash-widget-tabella tr.riga-apribile {
+  cursor: pointer;
+}
+.dash-widget-tabella tr.riga-apribile:not(.riga-nuova):hover td {
+  background: var(--app-surface-muted);
+}
+.dash-widget-tabella .riga-apri:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 1px;
+}
+
 /* Le variazioni dall'ultimo aggiornamento. Il colore non e' l'unico segno: la riga
    nuova porta anche la parola «nuova» e la cella cambiata il valore di prima
    barrato, perche' un'evidenza che vive solo nel colore non la vede chi non lo

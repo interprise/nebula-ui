@@ -75,6 +75,10 @@ interface Widget {
   /** La trasformazione salvata (G9), o null: il widget mostra la lista. */
   trasformazione?: Trasformazione | null;
   opzioni?: Opzioni | null;
+  /** La vista che apre il clic su una riga, o null: righe non cliccabili. */
+  dettaglio?: string | null;
+  /** Il dettaglio della lista, segnaposto del campo in «Modifica widget». */
+  dettaglioPredefinito?: string | null;
   /** Il risultato gia' calcolato dal server: il client lo disegna e basta. */
   risultato?: Risultato | null;
 }
@@ -82,6 +86,12 @@ interface Widget {
 interface Props {
   /** Si richiama quando la Home torna a galla, per riprendere i dati aggiornati. */
   ricarica?: number;
+  /**
+   * Apre il record di una riga nella scheda corrente, come funzione di primo livello
+   * (`ViewByKey` con `newTask`): la Shell lo sa fare, il pannello no. Senza, le righe
+   * non si cliccano.
+   */
+  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => void;
 }
 
 /**
@@ -272,8 +282,48 @@ const ogni = (min?: number) => {
  * criterio del pezzo. Quello che si vede — intestazioni, testi delle celle, conteggio —
  * e' quello che il server ha gia' calcolato quando il widget e' stato aggiunto.
  */
-const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
+const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
   const feedback = useFeedback();
+
+  /**
+   * Un clic gia' partito: finche' la Home non lascia il posto al dettaglio (e si smonta)
+   * o non arriva un errore, gli altri clic non aprono niente. Un tempo di sicurezza lo
+   * libera se la ViewByKey fallisse lasciando la Home a video.
+   */
+  const apertura = useRef(false);
+
+  /**
+   * Il clic su una riga: prima il server dice quale dettaglio e se il record c'e' ancora
+   * (dashboard.ApriRecord, sul sid della dashboard); solo allora la Shell lo apre nella
+   * scheda. Senza il controllo, un record cancellato dopo l'ultimo aggiornamento
+   * lascerebbe la scheda senza pagina: «Sessione non valida».
+   */
+  const apriRecord = useCallback(
+    async (w: Widget, chiave: string) => {
+      if (!onApriDettaglio || apertura.current) return;
+      apertura.current = true;
+      let aperto = false;
+      try {
+        const resp = (await api.postAction2('dashboard.ApriRecord', {
+          sid: SID,
+          idWidget: String(w.idWidget),
+          k: chiave,
+        })) as unknown as Record<string, unknown>;
+        if (resp.esito === 'ok' && typeof resp.viewName === 'string' && resp.viewName) {
+          onApriDettaglio(w.titolo || 'Dettaglio', resp.viewName, chiave);
+          aperto = true;
+          window.setTimeout(() => { apertura.current = false; }, 20000);
+          return;
+        }
+        feedback.warning(String(resp.messaggio || 'Questo record non si puo\' aprire.'));
+      } catch (e) {
+        feedback.failure(e);
+      } finally {
+        if (!aperto) apertura.current = false;
+      }
+    },
+    [onApriDettaglio, feedback],
+  );
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
@@ -470,6 +520,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
         // niente commutatore, niente avvisi — sulla prima pagina che si apre.
         const foto: Fotografia = w.fotografia || {};
         const mostrate = (foto.righe || []).length;
+        // Quante volte compare ogni chiave: una riga si apre solo se la sua e' unica.
+        const chiaviRipetute = new Map<string, number>();
+        for (const r of foto.righe || [])
+          if (r.k) chiaviRipetute.set(r.k, (chiaviRipetute.get(r.k) || 0) + 1);
         const visibili = (foto.righe || []).filter(
           (r) => r.n || (r.c || []).some((c) => c.p !== undefined)
         ).length;
@@ -632,8 +686,28 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {(foto.righe || []).map((r, i) => (
-                    <tr key={r.k || i} className={r.n ? 'riga-nuova' : undefined}>
+                  {(foto.righe || []).map((r, i) => {
+                    // Si apre il record della riga col dettaglio che il server ha
+                    // scelto (quello della lista, o quello indicato nel widget). Non si
+                    // apre una riga senza chiave, con la chiave "null" (una chiave con
+                    // parti nulle) o con una chiave ripetuta: su alcune liste si ripete,
+                    // e si aprirebbe un record diverso da quello cliccato.
+                    const apribile = !!(
+                      w.dettaglio && onApriDettaglio && r.k && r.k !== 'null'
+                      && chiaviRipetute.get(r.k) === 1
+                    );
+                    const apri = () => {
+                      if (apribile) void apriRecord(w, r.k as string);
+                    };
+                    const classiRiga = [r.n ? 'riga-nuova' : '', apribile ? 'riga-apribile' : '']
+                      .filter(Boolean)
+                      .join(' ');
+                    return (
+                    <tr
+                      key={r.k || i}
+                      className={classiRiga || undefined}
+                      {...(apribile ? { title: 'Apri il dettaglio', onClick: apri } : {})}
+                    >
                       {(r.c || []).map((cella, j) => {
                         // Gli importi a destra come in ogni lista: il valore grezzo
                         // della cella dice gia' se e' un numero, non serve indovinarlo
@@ -653,12 +727,33 @@ const DashboardPanel: React.FC<Props> = ({ ricarica }) => {
                               <s className="valore-prima">{cella.p}</s>
                             ) : null}
                             {j === 0 && r.n ? <span className="segno-nuova">nuova</span> : null}
-                            {cella.t}
+                            {/* La tr resta una riga di tabella per chi legge con lo
+                                screen reader: il link sta nella prima cella, e il clic
+                                del mouse vale su tutta la riga. */}
+                            {j === 0 && apribile ? (
+                              <span
+                                role="link"
+                                tabIndex={0}
+                                className="riga-apri"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    apri();
+                                  }
+                                }}
+                              >
+                                {cella.t}
+                              </span>
+                            ) : (
+                              cella.t
+                            )}
                           </td>
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               {(w.colonne || []).length === 0 && mostrate > 0 && (
