@@ -2103,6 +2103,51 @@ body[style*="cursor: wait"] * {
   text-align: right;
   white-space: nowrap;
 }
+/* SXADV-6013 · i totali per gruppo sotto il numero, e il totale sotto le barre. */
+.dash-parziali {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dash-parziale {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 1px 0;
+  border-bottom: 1px solid var(--app-surface-muted);
+}
+.dash-parziale-etichetta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-parziale-valore {
+  text-align: right;
+  white-space: nowrap;
+}
+.dash-parziale-altri .dash-parziale-etichetta {
+  font-style: italic;
+  color: var(--app-text-subdued);
+}
+.dash-parziale-totale,
+.dash-barre-totale {
+  font-weight: 600;
+  border-bottom: none;
+}
+.dash-barre-totale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--app-surface-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .dash-modifica-motivo {
   font-size: 12px;
 }

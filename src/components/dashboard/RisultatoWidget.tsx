@@ -43,6 +43,50 @@ const Base: React.FC<{ r: Risultato }> = ({ r }) => {
   );
 };
 
+/** «(parziale)» accanto a un totale calcolato su una parte delle righe o dei gruppi. */
+const conParziale = (testo: string, r: Risultato) =>
+  r.completo === false ? `${testo} (parziale)` : testo;
+
+/**
+ * I totali di ciascun gruppo sotto il numero (SXADV-6013): con un raggruppamento il
+ * numero da solo dice quanto, non dove. Gruppi e ordine sono quelli del server, primi N
+ * e «Altri» come nelle barre. Il totale generale si aggiunge solo se il numero grande
+ * non lo e' gia' (somma dei gruppi).
+ */
+const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
+  const gruppi = r.gruppi || [];
+  if (!(trasformazione?.group || []).length || gruppi.length === 0) return null;
+  const intero = conteggio(trasformazione, true);
+  const altri = r.altri && aNumero(r.altri.valore) !== null ? r.altri : null;
+  const totale = aNumero(r.totale);
+  const riga = (chiave: string, etichetta: string, valore: string, classe = '') => (
+    <li key={chiave} className={`dash-parziale ${classe}`.trim()}>
+      <span className="dash-parziale-etichetta" title={etichetta}>
+        {etichetta}
+      </span>
+      <span className="dash-parziale-valore">{valore}</span>
+    </li>
+  );
+  return (
+    <ul className="dash-parziali">
+      {gruppi.map((g, i) =>
+        riga(`g${i}`, g.etichetta || g.k || '(vuoto)', scrivi(g.valore, intero))
+      )}
+      {altri
+        ? riga(
+            'altri',
+            `Altri (${scrivi(altri.gruppi ?? 0, true)} ${altri.gruppi === 1 ? 'gruppo' : 'gruppi'})`,
+            scrivi(altri.valore, intero),
+            'dash-parziale-altri'
+          )
+        : null}
+      {totale !== null && trasformazione?.outAgg !== 'sum'
+        ? riga('totale', 'Totale', conParziale(scrivi(totale, intero), r), 'dash-parziale-totale')
+        : null}
+    </ul>
+  );
+};
+
 const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
   const intero = conteggio(trasformazione, false);
   const n = aNumero(r.numero);
@@ -75,6 +119,7 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
           <span className="dash-numero-delta-testo">rispetto all&apos;aggiornamento precedente</span>
         </div>
       ) : null}
+      <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} />
       <Base r={r} />
     </div>
   );
@@ -84,6 +129,7 @@ const Barre: React.FC<Props> = ({ risultato: r, trasformazione }) => {
   const intero = conteggio(trasformazione, true);
   const gruppi = r.gruppi || [];
   const altri = r.altri && aNumero(r.altri.valore) !== null ? r.altri : null;
+  const totale = aNumero(r.totale);
   const valori = gruppi.map((g) => aNumero(g.valore) ?? 0);
   if (altri) valori.push(aNumero(altri.valore) ?? 0);
   const massimo = Math.max(0, ...valori.map((v) => Math.abs(v)));
@@ -121,6 +167,12 @@ const Barre: React.FC<Props> = ({ risultato: r, trasformazione }) => {
             )
           : null}
       </ul>
+      {totale !== null ? (
+        <div className="dash-barre-totale">
+          <span>Totale</span>
+          <span className="dash-barra-valore">{conParziale(scrivi(totale, intero), r)}</span>
+        </div>
+      ) : null}
       <Base r={r} />
     </div>
   );

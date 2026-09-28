@@ -16,6 +16,11 @@ export interface Gruppo {
 export interface Risultato {
   gruppi?: Gruppo[];
   numero?: number | string | null;
+  /**
+   * La somma dei valori di TUTTI i gruppi superstiti, anche quelli in «altri» (SXADV-6013).
+   * Solo con un raggruppamento e con conteggio o somma; altrimenti null.
+   */
+  totale?: number | string | null;
   delta?: number | string | null;
   altri?: { valore?: number | string | null; righe?: number; gruppi?: number } | null;
   gruppiTotali?: number;
