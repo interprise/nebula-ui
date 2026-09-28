@@ -1504,13 +1504,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // zero (newTask), cosi' il percorso non si accoda a quello di prima
   // (SXADV-5783).
   const openFunctionByAction = useCallback(
-    (label: string, action: string, params?: Record<string, string>) => {
+    (label: string, action: string, params?: Record<string, string>): boolean => {
       const tab = getActiveTabState();
-      if (!tab || tab.loading) return;
+      if (!tab || tab.loading) return false;
       // La scheda cambia funzione: la voce di menu di prima non e' piu' quella
       // aperta, e il pulsante che la segnava non deve restare acceso.
       updateTabState(tab.key, { label, menuId: undefined, functionAction: action });
       handleAction(action, { ...params, newTask: '1' });
+      return true;
     },
     [getActiveTabState, updateTabState, handleAction],
   );
@@ -1519,9 +1520,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Home, come ingresso di primo livello: la scheda prende il titolo del widget e la
   // history riparte da zero. Il record lo cerca ViewByKey con la chiave della riga.
   const handleApriDettaglio = useCallback(
-    (titolo: string, viewName: string, chiave: string) => {
-      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave });
-    },
+    (titolo: string, viewName: string, chiave: string) =>
+      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave }),
+    [openFunctionByAction],
+  );
+
+  // SXADV-5999.2: «Naviga» su un widget apre la lista della sua ricerca, rifatta oggi,
+  // nella scheda della Home e come ingresso di primo livello (vedi NavigaCommand).
+  const handleNaviga = useCallback(
+    (titolo: string, idWidget: number) =>
+      openFunctionByAction(titolo, 'dashboard.Naviga', { idWidget: String(idWidget) }),
     [openFunctionByAction],
   );
 
@@ -2492,6 +2500,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       loginInfo={loginInfo}
                       onBannerClick={handleBannerClick}
                       onApriDettaglio={handleApriDettaglio}
+                      onNaviga={handleNaviga}
                     />
                   )
                 )}

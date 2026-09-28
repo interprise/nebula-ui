@@ -29,11 +29,15 @@ export interface WidgetDaModificare {
   opzioni?: Opzioni | null;
   /** Il dettaglio della lista: quello che apre il clic se il campo resta vuoto. */
   dettaglioPredefinito?: string | null;
+  /** Da quali aziende vengono i risultati adesso, e se la lista dipende dall'azienda. */
+  ambito?: { modo?: string; codici?: string[]; possibile?: boolean } | null;
   colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null }>;
 }
 
 interface Props {
   widget: WidgetDaModificare | null;
+  /** Le aziende su cui l'utente puo' entrare (SXADV-6000), da dashboard.Get. */
+  aziende?: Array<{ codice: string; descrizione?: string }>;
   sid: string;
   onClose: () => void;
   /** Il salvataggio e' andato: chi apre il pannello rilegge e aggiorna. */
@@ -56,6 +60,9 @@ interface Bozza {
   sale: '' | 'bene' | 'male';
   /** La vista che apre il clic su una riga; vuota = quella della lista. */
   vistaDettaglio: string;
+  /** SXADV-6000: da quali aziende prendere i risultati. */
+  ambito: 'corrente' | 'scelte' | 'tutte';
+  aziendeScelte: string[];
   intervallo: number;
 }
 
@@ -92,6 +99,11 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     resto: t.resto || 'altri',
     sale: w.opzioni?.sale || '',
     vistaDettaglio: typeof w.opzioni?.vistaDettaglio === 'string' ? w.opzioni.vistaDettaglio : '',
+    ambito:
+      w.opzioni?.aziende?.modo === 'scelte' || w.opzioni?.aziende?.modo === 'tutte'
+        ? w.opzioni.aziende.modo
+        : 'corrente',
+    aziendeScelte: Array.isArray(w.opzioni?.aziende?.codici) ? [...w.opzioni.aziende.codici] : [],
     intervallo: w.intervalloMin || 60,
   };
 };
@@ -124,13 +136,23 @@ const trasformazioneDa = (b: Bozza): Trasformazione | null => {
  * conserva, e un Salva da qui non deve cancellarle. Vuote = stringa vuota, come
  * prima: il server salva NULL.
  */
-const opzioniDa = (b: Bozza, prima: Opzioni | null | undefined): string => {
+const opzioniDa = (
+  b: Bozza,
+  prima: Opzioni | null | undefined,
+  ambitoPossibile = true,
+): string => {
   const o: Opzioni = { ...(prima || {}) };
   delete o.sale;
   delete o.vistaDettaglio;
+  delete o.aziende;
   if (b.forma === 'kpi' && b.sale) o.sale = b.sale;
   const vista = b.vistaDettaglio.trim();
   if (vista) o.vistaDettaglio = vista;
+  // Su una lista che non dipende dall'azienda l'ambito non si manda: il server lo
+  // rifiuterebbe, e chi cambia solo il titolo resterebbe bloccato.
+  if (ambitoPossibile && b.ambito === 'tutte') o.aziende = { modo: 'tutte' };
+  else if (ambitoPossibile && b.ambito === 'scelte')
+    o.aziende = { modo: 'scelte', codici: b.aziendeScelte };
   return Object.keys(o).length ? JSON.stringify(o) : '';
 };
 
@@ -146,7 +168,7 @@ const motivoNoBarre = (b: Bozza) => (b.gruppo ? null : 'serve un raggruppamento'
  * (`dashboard.Save`) non tocca la fotografia: il numero esatto arriva con
  * l'aggiornamento che chi apre il pannello lancia subito dopo.
  */
-const ModificaWidget: React.FC<Props> = ({ widget, sid, onClose, onSalvato }) => {
+const ModificaWidget: React.FC<Props> = ({ widget, aziende, sid, onClose, onSalvato }) => {
   const feedback = useFeedback();
   const [bozza, setBozza] = useState<Bozza | null>(null);
   const [anteprima, setAnteprima] = useState<Risultato | null>(null);
@@ -318,7 +340,7 @@ const ModificaWidget: React.FC<Props> = ({ widget, sid, onClose, onSalvato }) =>
         titolo: bozza.titolo.trim(),
         forma: bozza.forma,
         trasformazione: trasformazione ? JSON.stringify(trasformazione) : '',
-        opzioni: opzioniDa(bozza, widget.opzioni),
+        opzioni: opzioniDa(bozza, widget.opzioni, widget.ambito?.possibile !== false),
         intervalloMin: String(bozza.intervallo),
       })) as unknown as Record<string, unknown>;
       if (resp.esito === 'ok') {
@@ -536,6 +558,43 @@ const ModificaWidget: React.FC<Props> = ({ widget, sid, onClose, onSalvato }) =>
               allowClear
               aria-label="Vista di dettaglio"
             />
+          </Form.Item>
+
+          {/* SXADV-6000: da quali aziende vengono i risultati. Il server rifiuta una
+              scelta vuota o un'azienda non abilitata, e il messaggio resta qui. */}
+          <Form.Item
+            label="Aziende"
+            extra={
+              widget?.ambito?.possibile === false
+                ? 'Questa lista non dipende dall\'azienda.'
+                : 'Con piu\' aziende si aprono dalla Home solo le righe dell\'azienda corrente.'
+            }
+          >
+            <Radio.Group
+              value={bozza.ambito}
+              onChange={(e) => cambia({ ambito: e.target.value })}
+              disabled={widget?.ambito?.possibile === false}
+              aria-label="Ambito aziende"
+            >
+              <Radio value="corrente">Solo l&apos;azienda corrente</Radio>
+              <Radio value="scelte">Aziende scelte</Radio>
+              <Radio value="tutte">Tutte le mie aziende ({(aziende || []).length})</Radio>
+            </Radio.Group>
+            {bozza.ambito === 'scelte' && widget?.ambito?.possibile !== false ? (
+              <Select
+                mode="multiple"
+                value={bozza.aziendeScelte}
+                onChange={(v: string[]) => cambia({ aziendeScelte: v })}
+                options={(aziende || []).map((a) => ({
+                  value: a.codice,
+                  label: a.descrizione ? `${a.codice} — ${a.descrizione}` : a.codice,
+                }))}
+                optionFilterProp="label"
+                placeholder="Scegli le aziende"
+                style={{ width: '100%', marginTop: 8 }}
+                aria-label="Aziende scelte"
+              />
+            ) : null}
           </Form.Item>
 
           <Form.Item label="Aggiorna ogni">

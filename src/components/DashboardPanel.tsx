@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { ReloadOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CloseOutlined, EditOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
@@ -28,6 +28,8 @@ interface Colonna {
  */
 interface Riga {
   k?: string;
+  /** L'azienda del record: c'e' solo nei widget su piu' aziende (SXADV-6000). */
+  az?: string;
   n?: boolean;
   c?: Array<{ t?: string; v?: unknown; p?: string | null; errore?: string }>;
 }
@@ -79,9 +81,31 @@ interface Widget {
   dettaglio?: string | null;
   /** Il dettaglio della lista, segnaposto del campo in «Modifica widget». */
   dettaglioPredefinito?: string | null;
+  /**
+   * Da quali aziende vengono i risultati (SXADV-6000): `codici` sono quelle effettive
+   * adesso; `possibile` dice se la lista dipende dall'azienda.
+   */
+  ambito?: Ambito;
   /** Il risultato gia' calcolato dal server: il client lo disegna e basta. */
   risultato?: Risultato | null;
 }
+
+export interface Ambito {
+  modo?: 'corrente' | 'scelte' | 'tutte';
+  codici?: string[];
+  possibile?: boolean;
+  /** Abilitate ma lasciate fuori: li' l'utente ha un altro profilo (SXADV-6000). */
+  escluse?: string[];
+}
+
+/** Un'azienda su cui l'utente puo' entrare. */
+export interface AziendaAbilitata {
+  codice: string;
+  descrizione?: string;
+}
+
+/** Il widget prende i risultati da piu' aziende (o da un'altra)? */
+const suPiuAziende = (w: Widget) => !!w.ambito && !!w.ambito.modo && w.ambito.modo !== 'corrente';
 
 interface Props {
   /** Si richiama quando la Home torna a galla, per riprendere i dati aggiornati. */
@@ -91,7 +115,13 @@ interface Props {
    * (`ViewByKey` con `newTask`): la Shell lo sa fare, il pannello no. Senza, le righe
    * non si cliccano.
    */
-  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => void;
+  /** Torna false se la scheda non ha potuto partire (sta gia' caricando). */
+  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => boolean;
+  /**
+   * «Naviga» (SXADV-5999.2): apre nella scheda corrente la lista della ricerca del
+   * widget, rifatta oggi (`dashboard.Naviga` con `newTask`). Senza, il bottone non c'e'.
+   */
+  onNaviga?: (titolo: string, idWidget: number) => boolean;
 }
 
 /**
@@ -282,7 +312,7 @@ const ogni = (min?: number) => {
  * criterio del pezzo. Quello che si vede — intestazioni, testi delle celle, conteggio —
  * e' quello che il server ha gia' calcolato quando il widget e' stato aggiunto.
  */
-const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
+const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }) => {
   const feedback = useFeedback();
 
   /**
@@ -310,8 +340,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
           k: chiave,
         })) as unknown as Record<string, unknown>;
         if (resp.esito === 'ok' && typeof resp.viewName === 'string' && resp.viewName) {
-          onApriDettaglio(w.titolo || 'Dettaglio', resp.viewName, chiave);
-          aperto = true;
+          // La guardia resta chiusa solo se l'apertura e' partita davvero.
+          aperto = onApriDettaglio(w.titolo || 'Dettaglio', resp.viewName, chiave);
+          if (!aperto) return;
           window.setTimeout(() => { apertura.current = false; }, 20000);
           return;
         }
@@ -324,6 +355,37 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
     },
     [onApriDettaglio, feedback],
   );
+
+  /**
+   * «Naviga»: prima il server controlla che la ricerca del widget si possa riaprire
+   * (dashboard.PreparaNaviga, senza eseguirla), poi la Shell apre la lista nella scheda.
+   * Stesso turno dei clic sulle righe: una cosa alla volta.
+   */
+  const naviga = useCallback(
+    async (w: Widget) => {
+      if (!onNaviga || apertura.current) return;
+      apertura.current = true;
+      let aperto = false;
+      try {
+        const resp = (await api.postAction2('dashboard.PreparaNaviga', {
+          sid: SID,
+          idWidget: String(w.idWidget),
+        })) as unknown as Record<string, unknown>;
+        if (resp.esito === 'ok') {
+          aperto = onNaviga(w.titolo || 'Lista', w.idWidget);
+          if (!aperto) return;
+          window.setTimeout(() => { apertura.current = false; }, 20000);
+          return;
+        }
+        feedback.warning(String(resp.messaggio || 'La lista di questo widget non si puo\' aprire.'));
+      } catch (e) {
+        feedback.failure(e);
+      } finally {
+        if (!aperto) apertura.current = false;
+      }
+    },
+    [onNaviga, feedback],
+  );
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
@@ -331,6 +393,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
   const [inCorso, setInCorso] = useState<Record<number, boolean>>({});
   /** Il widget aperto nel pannello «Modifica widget». */
   const [modifica, setModifica] = useState<Widget | null>(null);
+  /** L'azienda corrente e quelle abilitate (SXADV-6000), come le dice dashboard.Get. */
+  const [aziendaCorrente, setAziendaCorrente] = useState<string | null>(null);
+  const [aziendeAbilitate, setAziendeAbilitate] = useState<AziendaAbilitata[]>([]);
   /** Quale lettura e' l'ultima chiesta: le risposte in ritardo si scartano. */
   const richiesta = useRef(0);
   /** Il pannello e' ancora a video? Si smonta passando agli avvisi. */
@@ -362,6 +427,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
       }
       setErrore(null);
       setWidget((resp.widget as Widget[]) || []);
+      setAziendaCorrente(typeof resp.aziendaCorrente === 'string' ? resp.aziendaCorrente : null);
+      setAziendeAbilitate(Array.isArray(resp.aziendeAbilitate)
+        ? (resp.aziendeAbilitate as AziendaAbilitata[])
+        : []);
     } catch (e) {
       // Niente finestre per un pannello che non c'e' piu': l'utente e' passato agli
       // avvisi e si vedrebbe comparire «Errore Server» per qualcosa che non guarda.
@@ -534,7 +603,37 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
               {w.titolo}
             </Typography.Text>
+            {suPiuAziende(w) ? (
+              <Tooltip
+                title={(w.ambito?.codici || [])
+                  .map((c) => {
+                    const d = aziendeAbilitate.find((a) => a.codice === c)?.descrizione;
+                    return d ? `${c} — ${d}` : c;
+                  })
+                  .join(', ')
+                  + ((w.ambito?.escluse || []).length
+                    ? ` — escluse perche' li' hai un altro profilo: ${(w.ambito?.escluse || []).join(', ')}`
+                    : '')}
+              >
+                <Tag className="dash-widget-ambito">
+                  {w.ambito?.modo === 'tutte'
+                    ? 'tutte le aziende'
+                    : `${(w.ambito?.codici || []).length} ${(w.ambito?.codici || []).length === 1 ? 'azienda' : 'aziende'}`}
+                </Tag>
+              </Tooltip>
+            ) : null}
             <Space size={0}>
+              {onNaviga ? (
+                <Tooltip title="Apri la lista completa">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<UnorderedListOutlined />}
+                    aria-label="Naviga alla lista di origine"
+                    onClick={() => void naviga(w)}
+                  />
+                </Tooltip>
+              ) : null}
               {(
                 <Tooltip title="Aggiorna ora">
                   <Button
@@ -680,6 +779,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
               <table>
                 <thead>
                   <tr>
+                    {suPiuAziende(w) ? <th>Azienda</th> : null}
                     {(w.colonne || []).map((c, i) => (
                       <th key={i}>{c.etichetta}</th>
                     ))}
@@ -692,9 +792,12 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
                     // apre una riga senza chiave, con la chiave "null" (una chiave con
                     // parti nulle) o con una chiave ripetuta: su alcune liste si ripete,
                     // e si aprirebbe un record diverso da quello cliccato.
+                    // Nei widget su piu' aziende si aprono solo le righe dell'azienda
+                    // corrente: il dettaglio girerebbe nel suo contesto (SXADV-6000).
                     const apribile = !!(
                       w.dettaglio && onApriDettaglio && r.k && r.k !== 'null'
                       && chiaviRipetute.get(r.k) === 1
+                      && (!suPiuAziende(w) || (!!r.az && r.az === aziendaCorrente))
                     );
                     const apri = () => {
                       if (apribile) void apriRecord(w, r.k as string);
@@ -708,6 +811,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
                       className={classiRiga || undefined}
                       {...(apribile ? { title: 'Apri il dettaglio', onClick: apri } : {})}
                     >
+                      {suPiuAziende(w) ? <td className="dash-cella-azienda">{r.az || ''}</td> : null}
                       {(r.c || []).map((cella, j) => {
                         // Gli importi a destra come in ogni lista: il valore grezzo
                         // della cella dice gia' se e' un numero, non serve indovinarlo
@@ -822,6 +926,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio }) => {
       })}
       <ModificaWidget
         widget={modifica}
+        aziende={aziendeAbilitate}
         sid={SID}
         onClose={() => setModifica(null)}
         onSalvato={(id, titolo) => void salvato(id, titolo)}

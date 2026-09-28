@@ -42,6 +42,8 @@ export interface Opzioni {
   sale?: 'bene' | 'male';
   /** La vista che apre il clic su una riga (SXADV-62, 27/09); assente = quella della lista. */
   vistaDettaglio?: string;
+  /** Da quali aziende vengono i risultati (SXADV-6000); assente = l'azienda corrente. */
+  aziende?: { modo?: 'corrente' | 'scelte' | 'tutte'; codici?: string[] };
 }
 
 /** Raggruppamento sempre, anche a quattro cifre: vedi NUMERO in DashboardPanel. */

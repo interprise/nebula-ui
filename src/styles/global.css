@@ -1943,6 +1943,16 @@ body[style*="cursor: wait"] * {
   border-bottom: 1px solid var(--app-surface-muted);
 }
 
+/* SXADV-6000: l'etichetta dell'ambito aziende accanto al titolo del widget, e la
+   colonna dell'azienda che nei widget su piu' aziende dice di chi e' ogni riga. */
+.dash-widget-ambito {
+  margin-inline: 6px 0;
+  flex: none;
+}
+.dash-widget-tabella td.dash-cella-azienda {
+  color: var(--app-text-subdued);
+}
+
 /* Una riga che apre il suo record (SXADV-62, 27/09): la manina e lo stesso fondo al
    passaggio che hanno le righe di lista; col Tab il bordo del fuoco sul link della
    prima cella. */
