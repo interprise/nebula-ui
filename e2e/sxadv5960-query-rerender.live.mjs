@@ -21,6 +21,12 @@
  * Piu' i casi del collaudo (5960.1 Sede 008 + Stato Confermato; 5960.2 Stato
  * Confermato -> Esegui -> indietro; Pulisci dopo) e una ricerca a zero righe
  * con lo Stato impostato (resta sulla mappa: e' anch'essa un ridisegno).
+ * SXADV-6005: i casi "Non Valorizzato" (voce NULL della tendina) verificano
+ * anche il TESTO ridisegnato (displayText/displayValue = l'etichetta della voce
+ * NULL fra le opzioni del server), e lo scenario del collaudo Sede = Non
+ * Valorizzato -> Esegui: a zero righe si resta sulla mappa senza ERROR, con
+ * l'avviso NO_DATA_FOUND, e la Sede resta NULL / "Non Valorizzato".
+ * Solo questi: --only 'non valorizzato'
  *
  * SOLA LETTURA: solo ExecuteMenuItem, ListUIControlList, MultiSelectList, Post
  * dei filtri di una mappa di query, ExecuteQuery, BackTo, ClearQuery. Mai
@@ -352,24 +358,55 @@ function verify(tab, steps, expected) {
   return problems;
 }
 
-/** Un filtro: apri, compila, (reload), Esegui, indietro, verifica. */
+/** Testo mostrato da una tendina: il ramo di dettaglio manda `displayText`,
+ *  quello di lista `displayValue` (ComboControl accetta entrambi). */
+function shownText(ctrl) {
+  if (!ctrl) return undefined;
+  return ctrl.displayText ?? ctrl.displayValue;
+}
+
+/** SXADV-6005: oltre al valore, la tendina ridisegnata deve MOSTRARE il testo
+ *  atteso (per "Non Valorizzato": l'etichetta della voce NULL delle opzioni). */
+function verifyText(tab, expectedText) {
+  const problems = [];
+  for (const [controlName, text] of Object.entries(expectedText || {})) {
+    const ctrl = findControl(tab, controlName);
+    if (!ctrl) { problems.push(`${controlName}: controllo assente dopo il ridisegno`); continue; }
+    const shown = shownText(ctrl);
+    if (norm(shown) !== norm(text)) {
+      problems.push(`${controlName}: testo atteso ${JSON.stringify(text)}, ridisegnato ${JSON.stringify(shown)} (value ${JSON.stringify(ctrl.value)})`);
+    }
+  }
+  return problems;
+}
+
+/** Un filtro: apri, compila, (reload), Esegui, indietro, verifica.
+ *  `chooser` torna il valore, oppure `{ value, text }` quando anche il testo
+ *  mostrato dalla tendina ridisegnata va verificato. */
 function filterCase(label, controlName, chooser) {
   return {
     name: `filtro ${label} [${controlName}]`,
     run: async () => {
       const tab = await openQuery();
-      const value = await chooser(tab);
+      const chosen = await chooser(tab);
+      const value = chosen != null && typeof chosen === 'object' ? chosen.value : chosen;
+      const text = chosen != null && typeof chosen === 'object' ? chosen.text : undefined;
       if (value == null) return { skip: 'nessun valore disponibile fra le opzioni del server' };
+      const expectedText = text != null ? { [controlName]: text } : {};
       const steps = [];
       await setField(tab, controlName, value, steps);
-      const afterReload = steps.length ? verify(tab, steps, { [controlName]: value }) : [];
+      const afterReload = steps.length
+        ? [...verify(tab, steps, { [controlName]: value }), ...verifyText(tab, expectedText)]
+        : [];
       const eq = await action(tab, 'ExecuteQuery');
       steps.push({ step: 'ExecuteQuery', ...eq });
       const landed = viewNameOf(tab);
+      const eqMode = eq.mode;
       const msgs = (eq.resp.errors || []).map((e) => `${e.type}:${(e.message || '').slice(0, 60)}`).join(' / ');
       if (!eq.errors.length) await backToQuery(tab, steps);
       const problems = [...afterReload.map((p) => 'dopo il reload: ' + p), ...verify(tab, steps, { [controlName]: value })];
-      const via = landed === QUERY_VIEW ? 'Esegui resta sulla mappa' : `Esegui -> ${landed} -> BackTo`;
+      if (!problems.length) problems.push(...verifyText(tab, expectedText));
+      const via = landed === QUERY_VIEW ? `Esegui resta sulla mappa (${eqMode})` : `Esegui -> ${landed} -> BackTo (${steps[steps.length - 1].mode})`;
       return { problems: [...new Set(problems)], info: `valore ${JSON.stringify(value)}; ${via}${msgs ? ' [' + msgs + ']' : ''}` };
     },
   };
@@ -377,6 +414,12 @@ function filterCase(label, controlName, chooser) {
 
 const firstOf = (controlName, prefer) => async (tab) => pick(await comboOptions(tab, controlName), prefer)?.value ?? null;
 const statoConfermato = async (tab) => pick(await comboOptions(tab, 'stato'), (t, v) => /confermat/i.test(t) || v === 'C')?.value ?? null;
+/** La voce "Non Valorizzato" come la manda il server fra le opzioni della
+ *  tendina (value NULL, testo = MISSING_VALUE localizzato): valore e testo. */
+const nonValorizzato = (controlName) => async (tab) => {
+  const o = (await comboOptions(tab, controlName)).find((x) => x && x.value === 'NULL');
+  return o ? { value: 'NULL', text: String(o.text ?? '') } : null;
+};
 const sede008 = async (tab) => pick(await comboOptions(tab, 'sedeEmissione'), (t, v) => /^\s*008\b/.test(t) || /(^|\|)008$/.test(v))?.value ?? null;
 
 const cases = [
@@ -393,8 +436,10 @@ const cases = [
   filterCase('Flag Gestione', 'tabGestione', firstOf('tabGestione')),
   filterCase('Stato SDI (MultiSelect, reload)', 'stSdi', async (tab) => pick(await multiSelectOptions(tab, 'stSdi'))?.value ?? null),
   // "Non Valorizzato": una voce che l'utente sceglie dalla tendina come le altre.
-  filterCase('Valuta = Non Valorizzato', 'valuta', async () => 'NULL'),
-  filterCase('Flag Gestione = Non Valorizzato', 'tabGestione', async () => 'NULL'),
+  // SXADV-6005: valore NULL E testo "Non Valorizzato" (preso dalle opzioni del server).
+  filterCase('Valuta = Non Valorizzato', 'valuta', nonValorizzato('valuta')),
+  filterCase('Flag Gestione = Non Valorizzato', 'tabGestione', nonValorizzato('tabGestione')),
+  filterCase('Sede = Non Valorizzato', 'sedeEmissione', nonValorizzato('sedeEmissione')),
   filterCase('Accompagnatorie (CheckFilter)', 'acc', async () => 'true'),
   filterCase('Data reg. da (data)', 'dataRegDa', async () => '01/01/2024'),
 ];
@@ -493,6 +538,67 @@ cases.push({
     const eq = await action(tab, 'ExecuteQuery');
     steps.push({ step: 'ExecuteQuery', ...eq });
     return { problems: verify(tab, steps, { stato, idDocumento: '-5960' }), info: `esito: ${viewNameOf(tab)}` };
+  },
+});
+
+/** SXADV-6005, scenario del collaudo: Sede = Non Valorizzato -> Esegui. Se la
+ *  ricerca resta sulla mappa (zero righe): nessun ERROR, l'avviso NO_DATA_FOUND
+ *  ("L'interrogazione non ha restituito alcun risultato.") c'e' fra gli errors[]
+ *  non bloccanti, e la Sede ridisegnata porta ancora NULL / "Non Valorizzato".
+ *  Se invece arrivano righe (dati locali diversi da quelli di Elena), si torna
+ *  con BackTo e si verifica lo stesso il ridisegno. */
+function noDataProblems(eq) {
+  const errs = eq.resp.errors || [];
+  const noData = errs.find((e) => e.mnemonic === 'NO_DATA_FOUND')
+    || errs.find((e) => e.type !== 'ERROR' && /non ha restituito alcun risultato/i.test(e.message || ''));
+  if (!noData) return [`manca l'avviso di zero righe (NO_DATA_FOUND); errors[] = ${JSON.stringify(errs).slice(0, 300)}`];
+  if (noData.type === 'ERROR') return [`l'avviso di zero righe arriva come ERROR: ${noData.message}`];
+  return [];
+}
+
+cases.push({
+  name: 'QA 6005: Sede = Non Valorizzato -> Esegui (resta Non Valorizzato)',
+  run: async () => {
+    const tab = await openQuery();
+    const nv = await nonValorizzato('sedeEmissione')(tab);
+    if (!nv) return { skip: 'la voce NULL non e\' fra le opzioni della Sede' };
+    const steps = [];
+    await setField(tab, 'sedeEmissione', nv.value, steps);
+    const eq = await action(tab, 'ExecuteQuery');
+    steps.push({ step: 'ExecuteQuery', ...eq });
+    const problems = [];
+    const stayed = viewNameOf(tab) === QUERY_VIEW;
+    if (stayed && !eq.errors.length) problems.push(...noDataProblems(eq));
+    if (!eq.errors.length) await backToQuery(tab, steps);
+    problems.push(...verify(tab, steps, { sedeEmissione: nv.value }));
+    if (!eq.errors.length) problems.push(...verifyText(tab, { sedeEmissione: nv.text }));
+    const msgs = (eq.resp.errors || []).map((e) => `${e.type}:${e.mnemonic}`).join(' / ');
+    return {
+      problems: [...new Set(problems)],
+      info: `${stayed ? 'zero righe, resta sulla mappa' : 'righe trovate -> BackTo'} (${eq.mode}) [${msgs}] testo=${JSON.stringify(nv.text)}`,
+    };
+  },
+});
+
+cases.push({
+  name: 'QA 6005: Sede = Non Valorizzato + N. doc inesistente -> zero righe sulla mappa',
+  run: async () => {
+    // Stesso scenario reso deterministico: zero righe comunque siano i dati locali.
+    const tab = await openQuery();
+    const nv = await nonValorizzato('sedeEmissione')(tab);
+    if (!nv) return { skip: 'la voce NULL non e\' fra le opzioni della Sede' };
+    const steps = [];
+    await setField(tab, 'sedeEmissione', nv.value, steps);
+    const impossible = 'SXADV6005-NESSUNO-' + Date.now();
+    await setField(tab, 'numDocDa', impossible, steps);
+    const eq = await action(tab, 'ExecuteQuery');
+    steps.push({ step: 'ExecuteQuery', ...eq });
+    const problems = verify(tab, steps, { sedeEmissione: nv.value, numDocDa: impossible });
+    if (!eq.errors.length && viewNameOf(tab) === QUERY_VIEW) {
+      problems.push(...noDataProblems(eq));
+      problems.push(...verifyText(tab, { sedeEmissione: nv.text }));
+    }
+    return { problems: [...new Set(problems)], info: `esito: ${viewNameOf(tab)} (${eq.mode})` };
   },
 });
 
