@@ -331,6 +331,24 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
   const apertura = useRef(false);
 
   /**
+   * Il server ha detto di no. Un rifiuto previsto porta `messaggio` e resta un avviso;
+   * un'eccezione arriva da Controller solo come `errors`, e va nella finestra degli
+   * errori come ogni altro errore del server: mostrare la sola frase di ripiego
+   * nascondeva proprio il testo che serve a capire (Naviga su ALFA, 28/09).
+   */
+  const rifiuto = useCallback(
+    (resp: Record<string, unknown>, ripiego: string) => {
+      const errors = resp.errors as ErrorItem[] | undefined;
+      if (typeof resp.messaggio !== 'string' && Array.isArray(errors) && errors.length > 0) {
+        feedback.showServerMessages(errors);
+        return;
+      }
+      feedback.warning(typeof resp.messaggio === 'string' && resp.messaggio ? resp.messaggio : ripiego);
+    },
+    [feedback],
+  );
+
+  /**
    * Il clic su una riga: prima il server dice quale dettaglio e se il record c'e' ancora
    * (dashboard.ApriRecord, sul sid della dashboard); solo allora la Shell lo apre nella
    * scheda. Senza il controllo, un record cancellato dopo l'ultimo aggiornamento
@@ -354,14 +372,14 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
           window.setTimeout(() => { apertura.current = false; }, 20000);
           return;
         }
-        feedback.warning(String(resp.messaggio || 'Questo record non si puo\' aprire.'));
+        rifiuto(resp, 'Questo record non si puo\' aprire.');
       } catch (e) {
         feedback.failure(e);
       } finally {
         if (!aperto) apertura.current = false;
       }
     },
-    [onApriDettaglio, feedback],
+    [onApriDettaglio, feedback, rifiuto],
   );
 
   /**
@@ -385,14 +403,14 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
           window.setTimeout(() => { apertura.current = false; }, 20000);
           return;
         }
-        feedback.warning(String(resp.messaggio || 'La lista di questo widget non si puo\' aprire.'));
+        rifiuto(resp, 'La lista di questo widget non si puo\' aprire.');
       } catch (e) {
         feedback.failure(e);
       } finally {
         if (!aperto) apertura.current = false;
       }
     },
-    [onNaviga, feedback],
+    [onNaviga, feedback, rifiuto],
   );
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
