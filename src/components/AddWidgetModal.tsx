@@ -3,6 +3,7 @@ import { Modal, Form, Input, InputNumber, Select, Space, Tag, Spin, Typography }
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
+import { leggiOrdinamentoLocale, leggiOrdineColonne } from './dashboard/ordineColonne';
 
 /** Quello che il server chiama "sorgente" del widget, per la parte che qui si mostra. */
 interface Sorgente {
@@ -169,6 +170,8 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
 
   const salva = async (valori: { titolo: string; intervallo: number }) => {
     const mia = apertura.current;
+    const ordine = leggiOrdineColonne(sid);
+    const ordinamento = leggiOrdinamentoLocale(sid);
     setSalvando(true);
     try {
       const resp = (await api.postAction2('dashboard.AddWidget', {
@@ -176,6 +179,10 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
         titolo: valori.titolo.trim(),
         intervallo: String(valori.intervallo),
         date: JSON.stringify(date),
+        // SXADV-6001.0: le colonne nella posizione in cui l'utente le vede nella lista.
+        ...(ordine ? { ordineColonne: JSON.stringify(ordine) } : {}),
+        // e l'ordinamento cliccato, quando la lista stava in una pagina e ordinava AG Grid
+        ...(ordinamento ? { ordinamentoLocale: JSON.stringify(ordinamento) } : {}),
       })) as unknown as Record<string, unknown>;
       if (resp.esito !== 'ok') {
         mostraRisposta(resp, 'Il widget non e stato salvato.');

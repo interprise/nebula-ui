@@ -12,6 +12,7 @@ import {
   type Trasformazione,
 } from './dashboard/risultato';
 import ModificaWidget from './dashboard/ModificaWidget';
+import { ordinaRighe, permuta } from './dashboard/ordineColonne';
 
 /** Una colonna della lista fotografata: l'intestazione che il widget mostra. */
 interface Colonna {
@@ -72,6 +73,13 @@ interface Widget {
   descrizione?: string | null;
   filtriLeggibili?: boolean;
   colonne?: Colonna[];
+  /** Permutazione di `colonne`: la posizione che avevano nella lista (SXADV-6001.0). */
+  ordineColonne?: number[] | null;
+  /**
+   * L'ordinamento cliccato su una lista che stava in una pagina (lo faceva AG Grid, il
+   * server non lo conosce): colonna = indice in `colonne` e nelle celle (SXADV-6001.0).
+   */
+  ordinamentoLocale?: { colonna: number; verso: 'asc' | 'desc' } | null;
   filtri?: Array<{ etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
   fotografia: Fotografia;
   /** La trasformazione salvata (G9), o null: il widget mostra la lista. */
@@ -597,6 +605,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
           (r) => r.n || (r.c || []).some((c) => c.p !== undefined)
         ).length;
         const totale = foto.totaleRighe;
+        // Le colonne nella posizione che avevano nella lista d'origine (SXADV-6001.0).
+        // Con lo schema cambiato le celle non corrispondono piu' alle intestazioni, e
+        // riordinarle le confonderebbe ancora di piu'.
+        const ordine = foto.schemaCambiato ? null : w.ordineColonne;
         return (
         <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
           <header className="dash-widget-head">
@@ -780,13 +792,17 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
                 <thead>
                   <tr>
                     {suPiuAziende(w) ? <th>Azienda</th> : null}
-                    {(w.colonne || []).map((c, i) => (
+                    {permuta(w.colonne || [], ordine).map((c, i) => (
                       <th key={i}>{c.etichetta}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {(foto.righe || []).map((r, i) => {
+                  {ordinaRighe(
+                    foto.righe || [],
+                    foto.schemaCambiato ? null : w.ordinamentoLocale?.colonna,
+                    w.ordinamentoLocale?.verso,
+                  ).map((r, i) => {
                     // Si apre il record della riga col dettaglio che il server ha
                     // scelto (quello della lista, o quello indicato nel widget). Non si
                     // apre una riga senza chiave, con la chiave "null" (una chiave con
@@ -812,7 +828,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
                       {...(apribile ? { title: 'Apri il dettaglio', onClick: apri } : {})}
                     >
                       {suPiuAziende(w) ? <td className="dash-cella-azienda">{r.az || ''}</td> : null}
-                      {(r.c || []).map((cella, j) => {
+                      {permuta(r.c || [], ordine).map((cella, j) => {
                         // Gli importi a destra come in ogni lista: il valore grezzo
                         // della cella dice gia' se e' un numero, non serve indovinarlo
                         // dal testo formattato.

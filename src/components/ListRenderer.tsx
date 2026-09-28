@@ -17,6 +17,12 @@ import { rememberRow, recallRow, findRememberedRow } from './rowSelectionMemory'
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import {
+  nomiInOrdine,
+  ordinamentoVisualizzato,
+  registraOrdinamentoLocale,
+  registraOrdineColonne,
+} from './dashboard/ordineColonne';
+import {
   getCellEditorForType,
   isBooleanType,
   cellEditorComponents,
@@ -1772,6 +1778,39 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   // Refs and helpers for grouped hover/selection on multi-row records
   const gridApiRef = useRef<GridApi | null>(null);
+
+  /* SXADV-6001.0: la finestra «Aggiungi alla dashboard» legge da qui la posizione
+     che l'utente ha dato alle colonne trascinandole: il server non la conosce. Solo
+     la lista a pagina intera, perche' quelle incorporate non diventano widget. */
+  const headersRef = useRef(ui.headers);
+  useEffect(() => {
+    headersRef.current = ui.headers;
+  }, [ui.headers]);
+  useEffect(() => {
+    if (embedded || !sid) return;
+    const togliOrdine = registraOrdineColonne(sid, () => {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed()) return null;
+      return nomiInOrdine(
+        api.getAllDisplayedColumns().map((c) => c.getColId()),
+        (headersRef.current || []).map((h) => h.name),
+      );
+    });
+    // L'ordinamento cliccato quando la lista sta in una pagina: li' ordina AG Grid, e
+    // il server non lo sa. A piu' pagine ordina il server e lo stato qui non ha sort.
+    const togliOrdinamento = registraOrdinamentoLocale(sid, () => {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed()) return null;
+      return ordinamentoVisualizzato(
+        api.getColumnState(),
+        (headersRef.current || []).map((h) => h.name),
+      );
+    });
+    return () => {
+      togliOrdine();
+      togliOrdinamento();
+    };
+  }, [sid, embedded]);
 
   // Extract selector info for building field names and determining click behavior
   const selectorInfo = useMemo(() => {
