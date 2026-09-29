@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect, useContext } 
 import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
-import { SidContext, PaneToolbarContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, PaneToolbarContext, PendingAddContext, useIsTabLabelEcho } from './ViewRenderer';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 import type { FieldCaption, FieldChange } from '../controls/types';
@@ -83,6 +83,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   // toolbar rendered with the tree goes stale (its Add keeps the tree's path
   // and answers NoSession). Hand the pane's own toolbar up to the tab.
   const setPaneToolbar = useContext(PaneToolbarContext);
+  const consumePendingAdd = useContext(PendingAddContext);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loadedKeys, setLoadedKeys] = useState<string[]>([]);
@@ -219,6 +220,11 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     if (keys.length === 0 || !navigateView) return;
     const key = String(keys[0]);
     setSelectedKey(key);
+    // Un altro nodo e' un altro record: un Nuovo rimasto armato nel pannello
+    // precedente (un Add finito senza riga) non deve aprire il pannello di
+    // riga sulla prima lista del nuovo dettaglio. Il clic sul nodo non passa
+    // da Shell, quindi il flag si spegne qui (SXADV-5918).
+    consumePendingAdd?.();
     document.body.style.cursor = 'wait';
     try {
       const resp = await api.postAction('LocateAndNavigate', {
@@ -239,7 +245,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     } finally {
       document.body.style.cursor = '';
     }
-  }, [navigateView, treeViewName, sid, extractDetailFormValues, setPaneToolbar, applyNodeLabel]);
+  }, [navigateView, treeViewName, sid, extractDetailFormValues, setPaneToolbar, applyNodeLabel, consumePendingAdd]);
 
   // Il ritorno all'albero e' un BackTo sullo STESSO viewstate, quindi `ui.path`
   // resta identico e il pannello non si chiuderebbe da solo. Il segnale e' un

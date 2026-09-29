@@ -89,6 +89,7 @@ import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
+import { treeHoldingTab, routesToTreePane } from './treeDetailRouting';
 
 const { Header, Content } = Layout;
 
@@ -812,15 +813,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // lands in the tab — another view from the menu, a link action, a back —
       // replaces the tree as usual (SXADV-5650).
       const existingUi = tabs.find((t) => t.key === tabKey)?.ui;
-      const treeUi =
-        existingUi?.viewType === 'tree' && existingUi.navigateView ? existingUi : undefined;
-      const isTreeDetail = (ui: UITree) =>
-        !!treeUi &&
-        ui.viewType !== 'tree' &&
-        !ui.treeNodes &&
-        // Emitted on every METADATA/FULL render (it is part of the cached
-        // template too, so a hydrated view carries it as well).
-        ui.viewName === treeUi.navigateView;
+      const treeUi = treeHoldingTab(existingUi);
       const pendingBack = pendingBreadcrumbsRef.current;
       if (pendingBack && pendingBack.tabKey === tabKey) {
         const errs = resp.errors ?? [];
@@ -868,11 +861,25 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // apriva da solo su di lei (SXADV-5888). Il cambio di template dice
         // che si e' lasciata la lista: da qui in avanti quell'Add non riguarda
         // piu' nessun pannello.
-        if (resp.templateKey !== prevTemplateKey) pendingAddRef.current = false;
+        //
+        // Tranne quando la risposta e' il pannello di destra di un albero: la
+        // scheda resta l'albero, e il template e' quello del dettaglio (mai
+        // uguale a quello della scheda) anche per il Nuovo di una lista
+        // incorporata nel dettaglio, che la lista non la lascia affatto. Li'
+        // il reset disarmava il Nuovo prima che il pannello rientrato in
+        // modifica lo leggesse: riga vuota nella lista e nessun micro-detail
+        // (SXADV-5918.1, Categorie Statistiche -> Figlie -> Nuovo).
         if (resp.template) putTemplate(resp.templateKey, resp.template);
         const bindings = resp.bindings ?? {};
         const scopePaths = resp.scopePaths ?? {};
         const hydrated = hydrate(metaTemplate, resp.values, resp.dynProps, bindings, scopePaths);
+        // Un Add finito in ERROR la riga non l'ha aggiunta: nel pannello
+        // dell'albero il flag resterebbe armato per la prima lista che passa.
+        const addFailed = (resp.errors ?? []).some((e) => e.type === 'ERROR');
+        if (resp.templateKey !== prevTemplateKey
+            && (addFailed || !routesToTreePane(treeUi, hydrated, !!resp.newRecord))) {
+          pendingAddRef.current = false;
+        }
         // Breadcrumbs vary per navigation and are NOT cached in the template
         // -- merge them in from the response root.
         update.ui = resp.breadcrumbs !== undefined ? { ...hydrated, breadcrumbs: resp.breadcrumbs } : hydrated;
@@ -1046,7 +1053,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // A brand-new record is deliberately left out: the pane re-enters edit
       // mode by re-navigating to the SELECTED node, which a record that has no
       // key yet cannot do — "Nuovo" keeps opening as a full page.
-      if (treeUi && update.ui && !update.ui.newRecord && isTreeDetail(update.ui)) {
+      if (treeUi && update.ui && routesToTreePane(treeUi, update.ui, !!update.ui.newRecord)) {
         update.ui = { ...treeUi, _detailResponse: update.ui } as UITree;
         // The tab still IS the tree, so its manifest has to keep describing the
         // tree. TreeRenderer re-enters edit mode with a LocateAndNavigate of its
