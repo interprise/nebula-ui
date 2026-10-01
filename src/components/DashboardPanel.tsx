@@ -130,6 +130,12 @@ interface Props {
    * widget, rifatta oggi (`dashboard.Naviga` con `newTask`). Senza, il bottone non c'e'.
    */
   onNaviga?: (titolo: string, idWidget: number) => boolean;
+  /**
+   * Chiesto PRIMA dei controlli sul server di un'apertura (ApriRecord, PreparaNaviga):
+   * se la scheda che la riceverebbe sta ancora lavorando, la Shell lo dice e torna
+   * false, e qui non parte niente. Assente = sempre si'.
+   */
+  puoAprire?: () => boolean;
 }
 
 /**
@@ -320,7 +326,7 @@ const ogni = (min?: number) => {
  * criterio del pezzo. Quello che si vede — intestazioni, testi delle celle, conteggio —
  * e' quello che il server ha gia' calcolato quando il widget e' stato aggiunto.
  */
-const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }) => {
+const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, puoAprire }) => {
   const feedback = useFeedback();
 
   /**
@@ -357,6 +363,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
   const apriRecord = useCallback(
     async (w: Widget, chiave: string) => {
       if (!onApriDettaglio || apertura.current) return;
+      if (puoAprire && !puoAprire()) return;
       apertura.current = true;
       let aperto = false;
       try {
@@ -379,7 +386,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
         if (!aperto) apertura.current = false;
       }
     },
-    [onApriDettaglio, feedback, rifiuto],
+    [onApriDettaglio, puoAprire, feedback, rifiuto],
   );
 
   /**
@@ -390,6 +397,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
   const naviga = useCallback(
     async (w: Widget) => {
       if (!onNaviga || apertura.current) return;
+      if (puoAprire && !puoAprire()) return;
       apertura.current = true;
       let aperto = false;
       try {
@@ -410,7 +418,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
         if (!aperto) apertura.current = false;
       }
     },
-    [onNaviga, feedback, rifiuto],
+    [onNaviga, puoAprire, feedback, rifiuto],
   );
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
@@ -735,7 +743,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga }
                 {/* «prime N» deve essere il numero che si VEDE. La fotografia ne tiene
                     fino a 1.000, ma alla Home ne arrivano al massimo 200: dire «prime
                     1.000» con 200 righe sotto gli occhi e' una bugia misurabile. */}
-                {mostrate < totale
+                {/* Numero e barre sono calcolati su TUTTA la ricerca: «prime 200 di
+                    4.762» li farebbe sembrare parziali (SXADV-62, 24/09). Vale solo
+                    quando il widget mostra davvero il risultato e non ripiega sulle righe. */}
+                {mostrate < totale && !mostraRisultato(w.forma, w.risultato)
                   ? `prime ${numero(mostrate)} di ${numero(totale)}`
                   : `${numero(totale)} ${totale === 1 ? 'riga' : 'righe'}`}
               </span>

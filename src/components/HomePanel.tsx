@@ -14,6 +14,8 @@ interface HomePanelProps {
   onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => boolean;
   /** «Naviga» su un widget: apre la lista della sua ricerca nella scheda. */
   onNaviga?: (titolo: string, idWidget: number) => boolean;
+  /** La scheda di lavoro puo' ricevere un'apertura adesso? (vedi DashboardPanel) */
+  puoAprire?: () => boolean;
 }
 
 type Cosa = 'dashboard' | 'avvisi';
@@ -23,7 +25,7 @@ const APERTURA_MS = 30000;
 
 const { Title, Text } = Typography;
 
-const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga }) => {
+const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga, puoAprire }) => {
   // Memoizzato per davvero: era ricalcolato a ogni disegno, quindi il useMemo qui
   // sotto non teneva e a ogni ridisegno si rileggeva localStorage e si ricalcolava
   // il riconoscitore di ogni avviso, testo per testo (e hpText puo' essere lungo).
@@ -150,7 +152,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
       </div>
 
       {cosa === 'dashboard' ? (
-        <DashboardPanel onApriDettaglio={onApriDettaglio} onNaviga={onNaviga} />
+        <DashboardPanel onApriDettaglio={onApriDettaglio} onNaviga={onNaviga} puoAprire={puoAprire} />
       ) : hasContent ? (
         <div>
           {banners.map((b, i) => (

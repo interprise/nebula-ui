@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, Suspense } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider } from 'antd';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider, Empty } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -509,6 +509,20 @@ const hdrSelectStyle: React.CSSProperties = { width: 400, minWidth: 0, flex: '0 
 
 let tabCounter = 1;
 
+// La scheda fissa «Home» (SXADV-62): sta in testa alla barra delle schede, non e' una
+// Session (niente sid, niente TabState) e non conta nel limite delle sessioni.
+const HOME_KEY = 'home';
+
+// Un ingresso chiesto mentre si guarda la Home (voce di menu, Naviga, clic su una riga,
+// avviso, cartella del documentale). Si esegue nella scheda di lavoro, dopo averla resa
+// attiva: per questo e' un descrittore e non una funzione, perche' deve girare con i
+// gestori del disegno successivo, quando la scheda attiva e' gia' quella giusta.
+type IngressoDallaHome =
+  | { tipo: 'menu'; menuId: string; label: string }
+  | { tipo: 'funzione'; label: string; action: string; params?: Record<string, string> }
+  | { tipo: 'azione'; action: string }
+  | { tipo: 'cdms'; viewName: string; title: string; filter?: string };
+
 const defaultTab: TabState = {
   key: 'tab_1',
   label: 'Sessione 1',
@@ -556,7 +570,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // (processResponseInner) but still need the tab's sid.
   const tabsRef = useRef<TabState[]>([defaultTab]);
   tabsRef.current = tabs;
-  const [activeTab, setActiveTab] = useState<string>('tab_1');
+  // Si entra sulla Home (SXADV-62); dopo un F5 il ripristino delle schede porta
+  // invece sulla prima sessione ricostruita.
+  const [activeTab, setActiveTab] = useState<string>(HOME_KEY);
+  const isHome = activeTab === HOME_KEY;
   // Per chi gira fuori dal render (la risposta di una richiesta): una pagina
   // nuova prende il fuoco solo se e' della scheda che si sta guardando.
   const activeTabRef = useRef(activeTab);
@@ -631,6 +648,48 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     return tab;
   }, []);
 
+  // La scheda di lavoro: l'ultima scheda di sessione su cui si e' stati. Chi apre
+  // qualcosa dalla Home lo apre li', come farebbe un clic sul menu da quella scheda.
+  const workTabRef = useRef<string>('tab_1');
+  useEffect(() => {
+    if (activeTab !== HOME_KEY && tabs.some((t) => t.key === activeTab)) workTabRef.current = activeTab;
+  }, [activeTab, tabs]);
+  const getWorkTab = useCallback(
+    (): TabState | undefined => tabsRef.current.find((t) => t.key === workTabRef.current) ?? tabsRef.current[0],
+    [],
+  );
+
+  // Un ingresso chiesto dalla Home: si passa alla scheda di lavoro e lo si esegue al
+  // disegno successivo (l'effetto e' piu' in basso, dopo i gestori che chiama).
+  const ingressoRef = useRef<{ ingresso: IngressoDallaHome; chiave: string } | null>(null);
+  const [ingressoNonce, setIngressoNonce] = useState(0);
+  // La scheda di lavoro puo' ricevere un ingresso dalla Home? Se sta ancora lavorando
+  // (un job, un report), stando sulla Home non lo si vede e il clic sembrerebbe morto:
+  // si porta l'utente li', dove c'e' la barra di avanzamento, e glielo si dice. La
+  // dashboard lo chiede PRIMA dei suoi controlli sul server (PreparaNaviga,
+  // ApriRecord), che altrimenti partirebbero per niente.
+  const schedaDiLavoroLibera = useCallback((): boolean => {
+    if (activeTabRef.current !== HOME_KEY) return true;
+    const tab = getWorkTab();
+    if (!tab) return false;
+    if (!tab.loading) return true;
+    setActiveTab(tab.key);
+    feedback.info(`"${tab.label}" sta ancora lavorando: quando ha finito, riprova.`);
+    return false;
+  }, [getWorkTab, feedback]);
+  const entraDallaHome = useCallback((ingresso: IngressoDallaHome): boolean => {
+    if (activeTabRef.current !== HOME_KEY) return false;
+    const tab = getWorkTab();
+    if (!tab || !schedaDiLavoroLibera()) return false;
+    // L'ingresso sostituisce la videata: una scheda ricostruita dopo un F5 e mai
+    // aperta non deve piu' ridisegnare quella vecchia quando ci si torna.
+    if (tab.restorePending) updateTabState(tab.key, { restorePending: false });
+    ingressoRef.current = { ingresso, chiave: tab.key };
+    setActiveTab(tab.key);
+    setIngressoNonce((n) => n + 1);
+    return true;
+  }, [getWorkTab, schedaDiLavoroLibera, updateTabState]);
+
   const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
     feedback.showServerMessages(errors, {
       // Refusing the prompt aborts the guarded action, so a breadcrumb-back
@@ -654,24 +713,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         } else {
           // No replay context (e.g. a dialog-driven action) — fall back to
           // re-posting on the active tab so the prompt isn't a dead end.
-          const tab = getActiveTabState();
+          // Dalla Home (che non e' una sessione) si risponde sulla scheda di lavoro.
+          const tab = getActiveTabState() ?? getWorkTab();
           if (tab) api.postAction('Post', { messages: token }, tab.formValues, tab.sid);
         }
       },
     });
-  }, [getActiveTabState, feedback]);
+  }, [getActiveTabState, getWorkTab, feedback]);
 
   // Changing Azienda/Sede di accesso wipes the whole server session pool
   // (CambioAziendaCommand: clearSession + sessions.clear()). The legacy client
   // mirrored that by tearing down every open tab and landing on the home page
   // (ui.js showMenu, lines 2606-2647). Reproduce it here: collapse the tab area
   // back to a single fresh session tab so no stale document/session survives,
-  // and the empty tab renders HomePanel. (SXADV-5542)
+  // and the Home tab is shown again. (SXADV-5542, SXADV-62)
   const resetToHome = useCallback(() => {
     tabCounter = 1;
     formValuesRef.current = { tab_1: {} };
     setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {}, formCaptions: {} }]);
-    setActiveTab('tab_1');
+    // Dopo il cambio si torna sulla Home, che si rilegge per il contesto nuovo.
+    workTabRef.current = 'tab_1';
+    setActiveTab(HOME_KEY);
   }, []);
 
   const changeContext = useCallback(
@@ -1137,7 +1199,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const handleMenuClick = useCallback(
     async (menuId: string, menuLabel: string) => {
       const tab = getActiveTabState();
-      if (!tab) return;
+      if (!tab) {
+        entraDallaHome({ tipo: 'menu', menuId, label: menuLabel });
+        return;
+      }
       if (tab.loading) return; // Block while a request is pending
 
       // Reset form values for the new screen
@@ -1172,15 +1237,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, makeConfirmReplay, feedback]
+    [getActiveTabState, entraDallaHome, processResponse, updateTabState, makeConfirmReplay, feedback]
   );
 
   // After an identity change (impersonate), reload the menu and refresh the
   // active tab's view. Lifted to component scope so ImpersonateModal can call it.
   const refreshAfterIdentityChange = useCallback(async () => {
     onReloadMenu();
-    const tab = getActiveTabState();
-    if (!tab) return;
+    // Dalla Home si rinfresca la scheda di lavoro: la videata dell'identita' di
+    // prima non deve restare li' ad aspettare.
+    const tab = getActiveTabState() ?? getWorkTab();
+    if (!tab || !tab.ui) return;
     try {
       const resp = await api.postAction('Refresh', {}, undefined, tab.sid);
       processResponse(tab.key, resp);
@@ -1189,7 +1256,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // View not accessible — clear the tab
       updateTabState(tab.key, { ui: undefined, toolbar: undefined, uiData: undefined });
     }
-  }, [onReloadMenu, getActiveTabState, processResponse, updateTabState]);
+  }, [onReloadMenu, getActiveTabState, getWorkTab, processResponse, updateTabState]);
 
   // Rende una scheda ricostruita dopo un ricaricamento della pagina. La Session
   // e' ancora quella di prima e conserva la sua videata corrente: `Refresh`
@@ -1427,10 +1494,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const openCdmsView = useCallback(
     (viewName: string, title: string, filter?: string) => {
       const tab = getActiveTabState();
-      if (!tab || tab.loading) return;
+      if (!tab) {
+        entraDallaHome({ tipo: 'cdms', viewName, title, filter });
+        return;
+      }
+      if (tab.loading) return;
       openCdmsViewInTab(tab, { viewName, title, filter });
     },
-    [getActiveTabState, openCdmsViewInTab],
+    [getActiveTabState, entraDallaHome, openCdmsViewInTab],
   );
 
   // Tabs holding the documentale pair, so re-entering the documentale activates
@@ -1450,14 +1521,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       setActiveTab(open.search);
       return;
     }
-    const active = getActiveTabState();
+    // Dalla Home la coppia riusa la scheda di lavoro, se e' ancora vuota.
+    const active = getActiveTabState() ?? getWorkTab();
     const searchTab = active && !active.ui && !active.loading ? active : addTab();
     const recentTab = addTab();
     cdmsSessionTabsRef.current = { search: searchTab.key, recent: recentTab.key };
     openCdmsViewInTab(searchTab, { viewName: 'cdmsRisorseQuery', title: 'Ricerca', action: 'QueryPage' });
     openCdmsViewInTab(recentTab, { viewName: 'cdmsRisorseList', title: 'Documenti recenti', orderBy: 'dataUltimaRevisione desc' });
     setActiveTab(searchTab.key);
-  }, [tabs, getActiveTabState, addTab, openCdmsViewInTab]);
+  }, [tabs, getActiveTabState, getWorkTab, addTab, openCdmsViewInTab]);
 
   // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
   const handleCdmsFolderClick = useCallback(
@@ -1497,12 +1569,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const label = findMenuLabel(menuItems, navigateTo);
       if (label) {
         handleMenuClick(navigateTo, label);
-      } else {
+      } else if (!entraDallaHome({ tipo: 'azione', action: navigateTo })) {
         // Fall back to generic action (server decides what to do)
         handleAction(navigateTo);
       }
     },
-    [menuItems, handleMenuClick, handleAction],
+    [menuItems, handleMenuClick, handleAction, entraDallaHome],
   );
 
   // Ingresso di primo livello che NON ha una voce di menu (Gestione Profili
@@ -1513,14 +1585,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const openFunctionByAction = useCallback(
     (label: string, action: string, params?: Record<string, string>): boolean => {
       const tab = getActiveTabState();
-      if (!tab || tab.loading) return false;
+      if (!tab) return entraDallaHome({ tipo: 'funzione', label, action, params });
+      if (tab.loading) return false;
       // La scheda cambia funzione: la voce di menu di prima non e' piu' quella
       // aperta, e il pulsante che la segnava non deve restare acceso.
       updateTabState(tab.key, { label, menuId: undefined, functionAction: action });
       handleAction(action, { ...params, newTask: '1' });
       return true;
     },
-    [getActiveTabState, updateTabState, handleAction],
+    [getActiveTabState, updateTabState, handleAction, entraDallaHome],
   );
 
   // SXADV-62: il clic su una riga di un widget apre il suo record nella scheda della
@@ -1539,6 +1612,24 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       openFunctionByAction(titolo, 'dashboard.Naviga', { idWidget: String(idWidget) }),
     [openFunctionByAction],
   );
+
+  // Esegue l'ingresso chiesto dalla Home (entraDallaHome), ora che la scheda di lavoro
+  // e' quella attiva e i gestori la vedono. Il riferimento si svuota prima di partire,
+  // quindi un ridisegno con gestori nuovi non lo ripete.
+  useEffect(() => {
+    const atteso = ingressoRef.current;
+    if (!atteso || activeTab === HOME_KEY) return;
+    ingressoRef.current = null;
+    // Se nel frattempo e' diventata attiva un'altra scheda, l'ingresso non e' piu' suo.
+    if (activeTab !== atteso.chiave) return;
+    const ingresso = atteso.ingresso;
+    switch (ingresso.tipo) {
+      case 'menu': void handleMenuClick(ingresso.menuId, ingresso.label); break;
+      case 'funzione': openFunctionByAction(ingresso.label, ingresso.action, ingresso.params); break;
+      case 'azione': void handleAction(ingresso.action); break;
+      case 'cdms': openCdmsView(ingresso.viewName, ingresso.title, ingresso.filter); break;
+    }
+  }, [ingressoNonce, activeTab, handleMenuClick, openFunctionByAction, handleAction, openCdmsView]);
 
   // Request notification permission once on mount
   useEffect(() => {
@@ -1637,6 +1728,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     } else if (action === 'remove') {
       const key = typeof targetKey === 'string' ? targetKey : '';
       const closed = tabsRef.current.find((t) => t.key === key);
+      // Si chiude la scheda di lavoro: la sostituisce quella che la chiusura
+      // renderebbe attiva (la successiva, o la precedente se era l'ultima), anche
+      // quando la si chiude stando sulla Home.
+      if (workTabRef.current === key) {
+        const prima = tabsRef.current;
+        const idx = prima.findIndex((t) => t.key === key);
+        const resto = prima.filter((t) => t.key !== key);
+        if (resto.length > 0) workTabRef.current = resto[Math.min(idx, resto.length - 1)].key;
+      }
       setTabs((prev) => {
         const idx = prev.findIndex((t) => t.key === key);
         const next = prev.filter((t) => t.key !== key);
@@ -1848,7 +1948,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       ro?.disconnect();
       window.removeEventListener('resize', measureCopyrightRoom);
     };
-  }, [measureCopyrightRoom, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth, immersive]);
+  }, [measureCopyrightRoom, isHome, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth, immersive]);
 
   const APPBAR_WIDTH = 48;
   // Collapsed, the sidebar is a rail of module glyphs: 48px, the width of the
@@ -2048,10 +2148,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       {/* Prominent busy overlay for the multi-second Azienda/Sede switch — an
           in-tree dimmed backdrop so it inherits the theme and can't be missed
           (the static toast rendered invisibly under the CSS-var theme). SXADV-5542 */}
+      {/* Niente scritta ne' sfondo scuro: un messaggio al centro dello schermo che
+          dura un attimo sembrava un errore (SXADV-5980). Resta l'ingranaggio che
+          gira, come chiede il collaudo, e uno strato trasparente che ferma i clic
+          finche' il cambio non e' finito (un secondo cambio a meta' del primo). */}
       {contextChanging && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'rgba(0,0,0,0.45)' }}>
-          <Spin size="large" />
-          <div style={{ color: '#fff', fontSize: 16, fontWeight: 500 }}>Cambio in corso, attendere…</div>
+        <div
+          role="status"
+          aria-label="Cambio di azienda o sede in corso"
+          style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'wait', background: 'transparent' }}
+        >
+          <SettingOutlined spin style={{ fontSize: 40, color: headerColor(loginInfo.bkColor) }} />
         </div>
       )}
       {/* Uscita dalla modalità immersiva: senza header spariscono anche utente,
@@ -2157,19 +2264,31 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             <img src="/entrasp/images/logos/logo_dx.png" alt="Sixtema" style={{ maxHeight: 58, maxWidth: '85%', minWidth: 0, objectFit: 'contain' }} />
           </div>
         )}
+        {/* La casetta sta accanto alla ricerca, dove l'occhio va gia' a cercare il
+            menu, e non nella barra verticale (Luca, 01/10, SXADV-62). Resta anche col
+            menu compresso e col documentale, dove la ricerca non c'e'. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: collapsed ? 'center' : undefined, padding: collapsed ? '8px 0' : '0 12px 8px' }}>
+          <Tooltip title="Torna alla Home" placement={collapsed ? 'right' : 'bottom'}>
+            <Button
+              aria-label="Torna alla Home"
+              aria-pressed={isHome}
+              type={isHome ? 'primary' : 'default'}
+              icon={<HomeOutlined />}
+              onClick={() => setActiveTab(HOME_KEY)}
+            />
+          </Tooltip>
+          {sidebarMode === 'menu' && !collapsed && (
+            <Input
+              placeholder="Cerca nel menu..."
+              prefix={<SearchOutlined />}
+              allowClear
+              value={menuFilter}
+              onChange={(e) => setMenuFilter(e.target.value)}
+            />
+          )}
+        </div>
         {sidebarMode === 'menu' ? (
           <>
-            {!collapsed && (
-              <div style={{ padding: '0 12px 8px' }}>
-                <Input
-                  placeholder="Cerca nel menu..."
-                  prefix={<SearchOutlined />}
-                  allowClear
-                  value={menuFilter}
-                  onChange={(e) => setMenuFilter(e.target.value)}
-                />
-              </div>
-            )}
             <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#eaeef5', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
               <Menu
                 key={menuNonce}
@@ -2382,12 +2501,36 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 <PlusOutlined />
               </Tooltip>
             }
-            items={tabs.map((t) => ({
-              key: t.key,
-              label: t.label,
-              closable: tabs.length > 1,
-            }))}
+            items={[
+              // La Home in testa: non si chiude e non e' una sessione (SXADV-62).
+              { key: HOME_KEY, label: <span><HomeOutlined /> Home</span>, closable: false },
+              ...tabs.map((t) => ({
+                key: t.key,
+                label: t.label,
+                closable: tabs.length > 1,
+              })),
+            ]}
           />
+          )}
+          {isHome && (
+            <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
+              {/* La chiave lega la Home al CONTESTO: cambiando azienda o sede si
+                  rimonta e rilegge la dashboard di quella giusta, e rinascono anche
+                  la finestra dei 30 s e il conto degli avvisi nuovi. Si rimonta
+                  anche a ogni ritorno sulla Home, quindi la dashboard e' sempre
+                  quella di adesso. */}
+              <HomePanel
+                key={`${loginInfo.customerKey || ''}|${loginInfo.sede || ''}|${loginInfo.login || ''}`}
+                loginInfo={loginInfo}
+                onBannerClick={handleBannerClick}
+                onApriDettaglio={handleApriDettaglio}
+                onNaviga={handleNaviga}
+                puoAprire={schedaDiLavoroLibera}
+              />
+              {loginInfo.copyright && copyrightFits && (
+                <div className="view-copyright">&copy; {loginInfo.copyright}</div>
+              )}
+            </div>
           )}
           {currentTab && (
             <ZoomScopeContext.Provider value={zoomScope}>
@@ -2495,20 +2638,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                   </>
                 ) : (
                   currentTab.loading ? null : (
-                    /* La chiave lega la Home al CONTESTO: cambiando azienda o sede,
-                       resetToHome ricrea la scheda con la stessa chiave e React
-                       riconcilia invece di rimontare — la dashboard e' per azienda, e
-                       restavano a video i widget di quella da cui si e' appena usciti.
-                       Con la chiave rinascono anche i riferimenti di HomePanel, che
-                       altrimenti si portano dietro la finestra dei 30 s e il conto
-                       degli avvisi nuovi della sessione precedente. */
-                    <HomePanel
-                      key={`${loginInfo.customerKey || ''}|${loginInfo.sede || ''}|${loginInfo.login || ''}`}
-                      loginInfo={loginInfo}
-                      onBannerClick={handleBannerClick}
-                      onApriDettaglio={handleApriDettaglio}
-                      onNaviga={handleNaviga}
-                    />
+                    /* Una scheda di sessione vuota non ripete la Home: la dashboard ha
+                       la sua scheda fissa (SXADV-62). */
+                    <Empty
+                      style={{ marginTop: 64 }}
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="Scegli una funzione dal menu"
+                    >
+                      <Button icon={<HomeOutlined />} onClick={() => setActiveTab(HOME_KEY)}>
+                        Vai alla Home
+                      </Button>
+                    </Empty>
                   )
                 )}
                 {/* Copyright: out of flow at the foot of the tab, and only when
