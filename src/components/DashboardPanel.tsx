@@ -154,69 +154,43 @@ interface Props {
 const SID = 'D1';
 
 /**
- * Il sid su cui gira il JOB di «Aggiorna ora»: uno per widget.
- *
- * <p>Una Session ha un solo turno di job. Tenendoli tutti su `D1`, aggiornare un
- * secondo widget mentre il primo lavora si sarebbe preso un rifiuto per un quarto
- * d'ora — prima i due andavano in parallelo, e la prova sul server vero l'ha visto
- * subito. Una sessione per widget rimette le cose come stavano, e per giunta lascia
- * ogni job da solo sulla sua Session. Sono Session vuote: non aprono nessuna vista e
- * non prendono nessuna connessione.
+ * «Aggiorna ora» non esegue piu' niente nella richiesta (SXADV-62 F2, 01/10): mette il
+ * widget in testa alla coda del giro, che aggiorna un widget alla volta in tutto il
+ * sistema (Luca: «non farei tanti aggiornamenti in parallelo»). Da qui si segue con
+ * `dashboard.Stato`, che non legge le righe ed e' leggero.
  */
-const sidJob = (idWidget: number) => `DJ${Math.trunc(idWidget)}`;
+/** Ogni quanto si guarda un widget in coda o in corso. */
+const PASSO_CODA_MS = 5000;
+/** Ogni quanto, con la Home a video, si guarda se il giro ha aggiornato qualcosa. */
+const PASSO_CONTROLLO_MS = 60000;
 
-/**
- * Oltre questo non si aspetta piu'. Il server molla una prenotazione dopo un quarto
- * d'ora; se a venti minuti il job risulta ancora vivo qualcosa non ha funzionato, e
- * continuare a chiedere non lo farebbe finire.
- */
-const ATTESA_MASSIMA_MS = 20 * 60000;
+/** Una riga di `dashboard.Stato`. */
+interface StatoWidget {
+  idWidget: number;
+  stato?: string;
+  ts?: string | null;
+  inCoda?: boolean;
+  /** RUN con una prenotazione fresca; assente = si guarda solo lo stato. */
+  inCorso?: boolean;
+  posizione?: number | null;
+  messaggio?: string | null;
+}
+interface RispostaStato {
+  esito?: string;
+  widget?: StatoWidget[];
+  giro?: { attivo?: boolean };
+}
 
-/**
- * Segue un comando che il server ha trasformato in JOB.
- *
- * <p>Rifare la ricerca di una lista pesante dura minuti, e una POST aperta cosi' a
- * lungo la chiude un proxy prima che il server abbia finito. Lato server la protezione
- * c'e' gia': passato il tempo di attesa la richiesta risponde `trackAsynchJob` e il
- * lavoro continua per conto suo. Il polling tocca a noi — e' la stessa cosa che fa
- * `Shell.pollProgress` per le ricerche lunghe.
- *
- * <p>Si smette quando la risposta non porta piu' `trackAsynchJob`: quello e' l'unico
- * segnale che il job e' DAVVERO finito. Fermarsi a `progress === 100` sarebbe troppo
- * presto — il server mette 100 appena il lavoro e' eseguito, ma l'esito lo deposita
- * subito dopo, e si rischierebbe di leggere una risposta ancora senza.
- *
- * @param vivo si richiama a ogni giro: se torna false il pannello non c'e' piu' e si
- *          smette di chiedere (il lavoro sul server finisce lo stesso e la prossima
- *          lettura lo trova fatto).
- * @returns la risposta finale, o null se si e' smesso di seguirlo.
- */
-async function seguiJob(
-  prima: Record<string, unknown>,
-  sid: string,
-  vivo: () => boolean
-): Promise<Record<string, unknown> | null> {
-  if (!prima.trackAsynchJob) return prima;
-  const scadenza = Date.now() + ATTESA_MASSIMA_MS;
-  let attesa = 500;
-  api.beginTrackedJob();
-  try {
-    for (;;) {
-      await new Promise((r) => setTimeout(r, attesa));
-      if (!vivo()) return null;
-      const resp = (await api.checkProgress(sid)) as unknown as Record<string, unknown>;
-      if (!resp.trackAsynchJob) return resp;
-      // Si smette di guardare, ma il lavoro sul server continua e si salva da se':
-      // quindi non e' un errore da finestra, ed e' sbagliato dire «riprova» (chi
-      // riprovasse subito si prenderebbe «si sta gia' aggiornando»).
-      if (Date.now() > scadenza) return { dashboardAggiorna: { esito: 'errore', motivo: 'TEMPO',
-        messaggio: 'L\'aggiornamento sta durando molto: smetto di seguirlo, ma va avanti.'
-          + ' Il risultato comparira\' da se\'.' } };
-      attesa = Math.min(attesa * 2, 5000);
-    }
-  } finally {
-    api.endTrackedJob();
-  }
+/** Un widget che aspetta il giro: in coda, o gia' in lavorazione. */
+interface InAttesa {
+  fase: 'coda' | 'corso';
+  posizione: number | null;
+  /** Il ts della fotografia quando lo si e' chiesto: quando cambia, e' arrivato. */
+  tsPrima: string | null;
+  /** Lo ha chiesto l'utente da qui (allora a fine lavoro gli si dice com'e' andata). */
+  chiesto: boolean;
+  /** Quando e' entrato in attesa: una risposta di Stato partita PRIMA non lo tocca. */
+  dal: number;
 }
 
 /** Che cosa dire all'utente per ogni stato della fotografia. */
@@ -423,8 +397,6 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   const [widget, setWidget] = useState<Widget[] | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
-  /** Quali widget stanno aggiornando adesso: e' roba del singolo, non del pannello. */
-  const [inCorso, setInCorso] = useState<Record<number, boolean>>({});
   /** Il widget aperto nel pannello «Modifica widget». */
   const [modifica, setModifica] = useState<Widget | null>(null);
   /** L'azienda corrente e quelle abilitate (SXADV-6000), come le dice dashboard.Get. */
@@ -441,7 +413,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
     };
   }, []);
 
-  const leggi = useCallback(async () => {
+  const leggi = useCallback(async (): Promise<Widget[] | null> => {
     // Due letture insieme capitano gia' oggi togliendo due widget di fila, e con
     // «Aggiorna ora» (G8) diventeranno la norma: senza numero di sequenza la risposta
     // piu' lenta rimette a schermo un widget appena tolto.
@@ -452,25 +424,28 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         string,
         unknown
       >;
-      if (!vivo.current || mia !== richiesta.current) return;
+      if (!vivo.current || mia !== richiesta.current) return null;
       const errors = resp.errors as ErrorItem[] | undefined;
       if (errors && errors.length > 0) {
         feedback.showServerMessages(errors);
         setErrore('La dashboard non si e\' letta.');
-        return;
+        return null;
       }
       setErrore(null);
-      setWidget((resp.widget as Widget[]) || []);
+      const letti = (resp.widget as Widget[]) || [];
+      setWidget(letti);
       setAziendaCorrente(typeof resp.aziendaCorrente === 'string' ? resp.aziendaCorrente : null);
       setAziendeAbilitate(Array.isArray(resp.aziendeAbilitate)
         ? (resp.aziendeAbilitate as AziendaAbilitata[])
         : []);
+      return letti;
     } catch (e) {
       // Niente finestre per un pannello che non c'e' piu': l'utente e' passato agli
       // avvisi e si vedrebbe comparire «Errore Server» per qualcosa che non guarda.
-      if (!vivo.current || mia !== richiesta.current) return;
+      if (!vivo.current || mia !== richiesta.current) return null;
       feedback.failure(e);
       setErrore('La dashboard non si e\' letta.');
+      return null;
     } finally {
       if (vivo.current && mia === richiesta.current) setCaricando(false);
     }
@@ -483,65 +458,189 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
     void leggi();
   }, [leggi, ricarica]);
 
+  /**
+   * I widget che aspettano il giro. Sta nel pannello e non sul server perche' serve solo
+   * a dire «in coda» e a sapere quando rileggere; il server resta la fonte (C4: dopo un
+   * F5 la coda si ricostruisce da `dashboard.Stato`).
+   */
+  const [attesa, setAttesa] = useState<Record<number, InAttesa>>({});
+  const attesaRef = useRef(attesa);
+  attesaRef.current = attesa;
+  /**
+   * Ogni cambio dell'attesa passa da qui: il riferimento si aggiorna SUBITO, non al
+   * prossimo disegno, cosi' una risposta di Stato che arriva prima del ridisegno non
+   * riscrive l'attesa con una copia vecchia (terza revisione, 01/10).
+   */
+  const cambiaAttesa = useCallback(
+    (fn: (p: Record<number, InAttesa>) => Record<number, InAttesa>) => {
+      const n = fn(attesaRef.current);
+      attesaRef.current = n;
+      setAttesa(n);
+    },
+    [],
+  );
+  /** Il giro c'e'? null finche' non lo si e' chiesto. */
+  const [giroAttivo, setGiroAttivo] = useState<boolean | null>(null);
+  const widgetRef = useRef(widget);
+  widgetRef.current = widget;
+
   const aggiorna = async (w: Widget) => {
-    if (inCorso[w.idWidget]) return;
-    setInCorso((p) => ({ ...p, [w.idWidget]: true }));
+    if (attesaRef.current[w.idWidget]) return;
+    const tsPrima = w.fotografia?.ts ?? null;
+    // Subito, prima della risposta: un secondo clic non deve partire.
+    // Finche' il server non ha risposto l'attesa non si tocca (dal = infinito): una Stato
+    // partita dopo il clic ma prima che la richiesta sia scritta la darebbe per finita.
+    cambiaAttesa((p) => ({
+      ...p,
+      [w.idWidget]: { fase: 'coda', posizione: null, tsPrima, chiesto: true, dal: Number.MAX_SAFE_INTEGER },
+    }));
+    let restaInAttesa = false;
     try {
-      const sid = sidJob(w.idWidget);
-      const avvio = (await api.postAction2('dashboard.Aggiorna', {
-        sid,
+      const resp = (await api.postAction2('dashboard.Aggiorna', {
+        sid: SID,
         idWidget: String(w.idWidget),
       })) as unknown as Record<string, unknown>;
-      // Oltre i 25 secondi il server risponde «sto lavorando» e l'esito arriva col
-      // polling: nella forma e' la stessa risposta, quindi da qui in giu' non cambia
-      // niente.
-      const resp = await seguiJob(avvio, sid, () => vivo.current);
-      // Il pannello puo' essersi smontato nei due minuti dell'aggiornamento: non gli si
-      // apre una finestra addosso a chi nel frattempo sta guardando altro.
-      if (!resp || !vivo.current) return;
+      if (!vivo.current) return;
       const esito = (resp.dashboardAggiorna || {}) as Record<string, unknown>;
-      if (esito.esito !== 'ok') {
-        const errors = resp.errors as ErrorItem[] | undefined;
-        const motivo = String(esito.motivo || '');
-        if (errors && errors.length > 0) feedback.showServerMessages(errors);
-        else if (motivo === 'TROPPO_PRESTO' || motivo === 'IN_CORSO' || motivo === 'ALTRO_IN_CORSO'
-          || motivo === 'TEMPO')
-          // Un freno da un minuto non merita una finestra da chiudere.
-          feedback.info(String(esito.messaggio || 'Riprova fra poco.'));
-        else feedback.error(String(esito.messaggio || 'L\'aggiornamento non e riuscito.'));
+      if (esito.esito === 'in_coda' || esito.esito === 'in_corso') {
+        restaInAttesa = true;
+        const posizione = typeof esito.posizione === 'number' ? esito.posizione : null;
+        // Da qui la richiesta e' scritta: conta solo una Stato partita dopo.
+        const dal = Date.now();
+        cambiaAttesa((p) => ({
+          ...p,
+          [w.idWidget]: { fase: esito.esito === 'in_corso' ? 'corso' : 'coda', posizione, tsPrima, chiesto: true, dal },
+        }));
         return;
       }
-      const v = (esito.variazioni || {}) as Variazioni;
-      feedback.info(
-        v.criteriDiversi
-          ? `"${w.titolo || 'Widget'}" aggiornato. I criteri sono cambiati dall'ultima`
-            + ' volta (una data che si aggiorna da sola), quindi le righe non si possono'
-            + ' confrontare con quelle di prima.'
-          : v.totale
-            ? `"${w.titolo || 'Widget'}" aggiornato: ${descriviVariazioni(v)}.`
-            : `"${w.titolo || 'Widget'}" aggiornato: nessuna variazione.`
-      );
-      // Si rilegge tutto: le righe arrivano gia' con le variazioni segnate sopra, e
-      // cosi' quello che si vede e' esattamente quello che c'e' salvato.
-      await leggi();
-      // E si porta la vista sulla prima variazione: la tabella del widget scorre in
-      // orizzontale, e una cella cambiata in una colonna fuori schermo e' un'evidenza
-      // che non evidenzia niente — chi preme «Aggiorna ora» legge solo il riepilogo e
-      // deve andarsela a cercare.
-      if (v.totale && !v.criteriDiversi) mostraPrimaVariazione(w.idWidget);
+      const errors = resp.errors as ErrorItem[] | undefined;
+      const motivo = String(esito.motivo || '');
+      if (errors && errors.length > 0) feedback.showServerMessages(errors);
+      else if (motivo === 'TROPPO_PRESTO')
+        // Un freno da un minuto non merita una finestra da chiudere.
+        feedback.info(String(esito.messaggio || 'Riprova fra poco.'));
+      else feedback.error(String(esito.messaggio || 'L\'aggiornamento non e\' riuscito.'));
     } catch (e) {
-      // Il polling puo' durare minuti: se nel frattempo l'utente e' andato altrove, una
-      // JSONProgress caduta gli aprirebbe «Errore Server» sopra la maschera che sta
-      // compilando. Stesso riguardo che ha leggi() (revisione indipendente, 22/09).
       if (vivo.current) feedback.failure(e);
     } finally {
-      setInCorso((p) => {
-        const q = { ...p };
-        delete q[w.idWidget];
-        return q;
-      });
+      if (!restaInAttesa)
+        cambiaAttesa((p) => {
+          const q = { ...p };
+          delete q[w.idWidget];
+          return q;
+        });
     }
   };
+
+  /**
+   * Arrivato l'aggiornamento chiesto da qui: si dice com'e' andata, con le variazioni
+   * che il server ha gia' contato, e si porta la vista sulla prima.
+   */
+  const annuncia = useCallback((id: number, dopo: Widget[] | null) => {
+    const w = (dopo || []).find((x) => x.idWidget === id);
+    if (!w) return;
+    const nome = `"${w.titolo || 'Widget'}"`;
+    const foto = w.fotografia;
+    if (foto?.stato === 'ERR' || foto?.stato === 'NAC') {
+      feedback.info(`${nome}: ${foto.messaggio || STATI[foto.stato]}`);
+      return;
+    }
+    const v = (foto?.variazioni || {}) as Variazioni;
+    feedback.info(
+      v.criteriDiversi
+        ? `${nome} aggiornato. I criteri sono cambiati dall'ultima volta (una data che si`
+          + ' aggiorna da sola), quindi le righe non si possono confrontare con quelle di prima.'
+        : v.totale
+          ? `${nome} aggiornato: ${descriviVariazioni(v)}.`
+          : `${nome} aggiornato: nessuna variazione.`
+    );
+    if (v.totale && !v.criteriDiversi) mostraPrimaVariazione(id);
+  }, [feedback]);
+
+  /**
+   * Una lettura di `dashboard.Stato`, e che cosa farne: aggiorna la coda (anche con i
+   * widget messi in coda da un'altra scheda o prima di un F5, C4) e rilegge la
+   * dashboard se il giro ha cambiato qualcosa.
+   */
+  const controlla = useCallback(async () => {
+    // Una scheda del browser nascosta non chiede niente: tenerla viva a colpi di Stato
+    // terrebbe aperta la sessione e i widget nel giro per sempre (revisione, 01/10).
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    const partenza = Date.now();
+    let resp: RispostaStato;
+    try {
+      resp = (await api.postAction2('dashboard.Stato', { sid: SID })) as unknown as RispostaStato;
+    } catch {
+      return;   // un controllo saltato non merita una finestra: il prossimo ci riprova
+    }
+    if (!vivo.current || !resp || resp.esito !== 'ok') return;
+    setGiroAttivo(resp.giro?.attivo === true);
+    const prima = widgetRef.current || [];
+    const arrivati: number[] = [];
+    let cambiato = false;
+    const nuova: Record<number, InAttesa> = { ...attesaRef.current };
+    const visti = new Set<number>();
+    for (const s of resp.widget || []) {
+      visti.add(s.idWidget);
+      const w = prima.find((x) => x.idWidget === s.idWidget);
+      const tsVisto = w?.fotografia?.ts ?? null;
+      const a = nuova[s.idWidget];
+      // Una RUN appesa (nodo caduto) non e' un lavoro in corso: il server lo dice con
+      // inCorso, e il widget deve poter essere chiesto di nuovo (revisione, 01/10).
+      const inCorso = s.inCorso ?? s.stato === 'RUN';
+      const lavora = s.inCoda || inCorso;
+      if (lavora) {
+        nuova[s.idWidget] = {
+          fase: inCorso ? 'corso' : 'coda',
+          posizione: typeof s.posizione === 'number' ? s.posizione : null,
+          tsPrima: a ? a.tsPrima : tsVisto,
+          chiesto: a ? a.chiesto : false,
+          dal: a ? a.dal : partenza,
+        };
+      } else if (a && a.dal < partenza) {
+        delete nuova[s.idWidget];
+        if (a.chiesto) arrivati.push(s.idWidget);
+        cambiato = true;
+      }
+      // Solo per un widget che ha una fotografia letta: uno illeggibile non ce l'ha, e
+      // il confronto lo darebbe «cambiato» a ogni controllo.
+      if (w?.fotografia && (s.ts ?? null) !== tsVisto && !lavora) cambiato = true;
+    }
+    // Un widget tolto (qui o da un'altra scheda) non resta ad aspettare per sempre.
+    for (const id of Object.keys(nuova).map(Number))
+      if (!visti.has(id) && nuova[id].dal < partenza) delete nuova[id];
+    cambiaAttesa(() => nuova);
+    if (cambiato) {
+      const dopo = await leggi();
+      if (vivo.current) for (const id of arrivati) annuncia(id, dopo);
+    }
+  }, [leggi, annuncia, cambiaAttesa]);
+
+  const inAttesa = Object.keys(attesa).length > 0;
+  // Controllo leggero ogni 60 s (C3), e uno subito appena la dashboard e' letta (C4).
+  // Il pannello vive solo nella Home: fuori dalla Home non parte niente.
+  const letta = widget !== null;
+  useEffect(() => {
+    if (!letta) return;
+    void controlla();
+    const t = window.setInterval(() => void controlla(), PASSO_CONTROLLO_MS);
+    // Tornando sulla scheda del browser si guarda subito, invece di aspettare il minuto.
+    const visibile = () => {
+      if (document.visibilityState === 'visible') void controlla();
+    };
+    document.addEventListener('visibilitychange', visibile);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener('visibilitychange', visibile);
+    };
+  }, [letta, controlla]);
+  // Ogni 5 s solo mentre qualcosa e' in coda o in corso, e solo se il giro c'e': senza
+  // giro la coda non si muove, e chiedere ogni 5 s non la farebbe muovere (C5).
+  useEffect(() => {
+    if (!inAttesa || giroAttivo === false) return;
+    const t = window.setInterval(() => void controlla(), PASSO_CODA_MS);
+    return () => window.clearInterval(t);
+  }, [inAttesa, giroAttivo, controlla]);
 
   /**
    * Dopo il salvataggio si rilegge (titolo, forma e risultato provvisorio si vedono
@@ -677,9 +776,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                   <Button
                     type="text"
                     size="small"
-                    icon={<ReloadOutlined spin={!!inCorso[w.idWidget]} />}
+                    // Con il giro spento la coda non si muove: una rotella che gira mentirebbe (C5).
+                    icon={<ReloadOutlined spin={!!attesa[w.idWidget] && giroAttivo !== false} />}
                     aria-label="Aggiorna ora"
-                    disabled={!!inCorso[w.idWidget]}
+                    disabled={!!attesa[w.idWidget]}
                     onClick={() => void aggiorna(w)}
                   />
                 </Tooltip>
@@ -723,10 +823,22 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             ) : (
               <span>mai aggiornato</span>
             )}
-            {/* «ogni 30 minuti» e' quello che l'utente ha CHIESTO, non quello che
-                succede: l'aggiornamento periodico non c'e' ancora. Dirlo come una
-                previsione, e segnare quando e' saltata, e' l'unico modo onesto. */}
-            {w.intervalloMin ? <span>· previsto {ogni(w.intervalloMin)}</span> : null}
+            {/* L'intervallo lo rispetta il giro automatico (SXADV-62 F2), che serve un
+                widget alla volta: con la coda lunga puo' arrivare dopo, e «in ritardo»
+                lo dice. */}
+            {w.intervalloMin ? <span>· {ogni(w.intervalloMin)}</span> : null}
+            {attesa[w.idWidget] ? (
+              <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                ·{' '}
+                {attesa[w.idWidget].fase === 'corso'
+                  ? 'aggiornamento in corso'
+                  : giroAttivo === false
+                    ? 'in coda, ma l\'aggiornamento automatico non è attivo su questo server'
+                    : (attesa[w.idWidget].posizione ?? 0) > 1
+                      ? `in coda: ${numero((attesa[w.idWidget].posizione as number) - 1)} prima di te`
+                      : 'in coda'}
+              </Typography.Text>
+            ) : null}
             {inRitardo(foto.prossimoAgg) && foto.ts ? (
               <Typography.Text type="warning" style={{ fontSize: 11.5 }}>
                 · in ritardo
@@ -783,7 +895,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             </Typography.Text>
           )}
 
-          {foto.stato === 'OK' ? null : (
+          {/* RUN qui non si scrive: se un aggiornamento e' davvero in corso lo dice la riga
+              sopra, che segue dashboard.Stato (inCorso). Una RUN appesa, scritta da qui,
+              direbbe «in corso» per sempre (R8). */}
+          {foto.stato === 'OK' || foto.stato === 'RUN' ? null : (
             <>
               <Typography.Text type="secondary">
                 {STATI[foto.stato || ''] || 'In attesa di dati.'}
