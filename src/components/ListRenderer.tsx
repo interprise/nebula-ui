@@ -16,6 +16,7 @@ import { oncePerEvent } from './rowActivation';
 import { rememberRow, recallRow, findRememberedRow } from './rowSelectionMemory';
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
+import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import {
   nomiInOrdine,
   ordinamentoVisualizzato,
@@ -166,6 +167,30 @@ function headerLabelMinWidth(text: string): number {
   return Math.ceil(headerMeasureCtx.measureText(text).width) + HEADER_LABEL_PAD + HEADER_LABEL_SLACK;
 }
 
+/** Larghezza a schermo del testo di una cella (peso normale, corpo della
+ *  griglia). Serve alla modalità una-riga, che allarga le colonne al contenuto
+ *  (SXADV-6012); stesso canvas e stessa cache di corpo dell'intestazione. */
+let cellMeasureFont: { size: number; font: string } | null = null;
+function cellTextWidth(text: string): number {
+  if (!text) return 0;
+  if (headerMeasureCtx === undefined) {
+    headerMeasureCtx = document.createElement('canvas').getContext('2d');
+  }
+  if (!headerMeasureCtx) return Math.round(text.length * 6.3);
+  const size = gridFontSizePx();
+  if (!cellMeasureFont || cellMeasureFont.size !== size) {
+    cellMeasureFont = {
+      size,
+      font: `400 ${size}px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`,
+    };
+  }
+  headerMeasureCtx.font = cellMeasureFont.font;
+  return headerMeasureCtx.measureText(text).width;
+}
+
+/** La catenella NavigateView in coda alla cella: icona più margine. */
+const CELL_NAV_WIDTH = 18;
+
 /* Grid vertical density (SXADV-5742) --------------------------------------
  * A record that wraps costs main row + one continuation row, so every pixel
  * here is paid TWICE per record — which is why lists of wrapped records felt
@@ -279,7 +304,7 @@ const CellNavIcon: React.FC<{
 /** Parametri che le colonne passano ai propri renderer di cella. `colIdx` e'
  *  l'indice con cui la riga indicizza i suoi extra (`_nav_`, `_display_`, ...);
  *  `asHtml` dice se il valore va scritto come markup. */
-type ValueCellParams = ICellRendererParams & { colIdx?: number; asHtml?: boolean };
+type ValueCellParams = ICellRendererParams & { colIdx?: number; asHtml?: boolean; joinBreaks?: boolean };
 
 /** Accoda alla cella la catenella NavigateView, se il server l'ha emessa per
  *  questa riga. Tutti i renderer di valore ci passano attraverso: il legacy la
@@ -316,7 +341,12 @@ const HtmlCellRenderer = (params: ValueCellParams) => {
   return withCellNav(
     params.asHtml === false
       ? <span>{serverText(text)}</span>
-      : <span dangerouslySetInnerHTML={{ __html: serverHtml(text, HTML_POLICY.cell) }} />,
+      : <span dangerouslySetInnerHTML={{
+          // In modalità una-riga gli a capo diventano un separatore: la cella
+          // non va a capo, e senza separatore CAP e città sparirebbero oltre
+          // il bordo (SXADV-6012).
+          __html: serverHtml(params.joinBreaks ? joinLineBreaks(text) : text, HTML_POLICY.cell),
+        }} />,
     params,
   );
 };
@@ -817,6 +847,23 @@ function isContinuationRow(row: UIRow): boolean {
   return row.cells.length > 0 && row.cells[0].elementType === ELTYPE_DUMMY;
 }
 
+/** I valori delle righe principali (niente separatori di gruppo né bande) che
+ *  la cella scrive come markup: controllo `Html`, o valore che porta markup
+ *  composto dal server. Restano fuori le colonne modificabili, come per
+ *  `markupColumns`: su quelle la modalità una-riga non unisce gli a capo, e
+ *  offrirla per loro sarebbe un pulsante che non cambia niente. */
+function* mainRowMarkupValues(rows: readonly UIRow[]): Generator<unknown> {
+  for (const r of rows) {
+    if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
+    for (const cell of r.cells) {
+      const ctrl = cell.control;
+      if (!ctrl || ctrl.editable) continue;
+      const v = ctrl.displayValue ?? ctrl.value;
+      if (typeof v === 'string' && (ctrl.type === 'html' || looksLikeServerHtml(v))) yield v;
+    }
+  }
+}
+
 interface ListRendererProps {
   ui: UITree;
   onAction: (action: string, params?: Record<string, string>) => void;
@@ -878,10 +925,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      prime colonne bloccate e nelle righe senza a-capo. La misura la aggiorna la
      griglia (`measureColsOverflow`). */
   const [colsOverflow, setColsOverflow] = useState(false);
+  /* Terzo caso (SXADV-6012): poche colonne che entrano, ma record alti perché
+     una cella va a capo con un `<br/>` del server — Indirizzo e Contatti di
+     Clienti, Fornitori e Anagrafica Unica. Si legge dai DATI della pagina. */
+  const hasBands = !!(ui.continuationHeaders && ui.continuationHeaders.length > 0);
+  const pageWraps = useMemo(() => {
+    if (hasBands) return false;
+    return pageHasLineBreaks(mainRowMarkupValues(ui.rows ?? []));
+  }, [ui.rows, hasBands]);
   const canFlatten = canOfferOneLine({
     gridId,
-    hasContinuationBands: !!(ui.continuationHeaders && ui.continuationHeaders.length > 0),
+    hasContinuationBands: hasBands,
     columnsOverflow: colsOverflow,
+    recordsWrap: pageWraps,
     oneLineOn: !!gridId && isOneLine(gridId),
   });
   // Come per `adaptivePageSize`: il valore arriva nell'header su un render FULL
@@ -1046,6 +1102,25 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       });
     }
 
+    /* Una-riga su una lista senza bande (SXADV-6012): gli a capo diventano un
+       separatore e le colonne di testo si allargano al contenuto della pagina,
+       cosi' niente resta tagliato e la lista scorre in orizzontale con le prime
+       colonne bloccate. Con le bande (Iscritti) la resa resta quella di prima:
+       li' il record si distende gia' sulle colonne nate dalle bande. */
+    const flatText = oneLine && !(ui.continuationHeaders && ui.continuationHeaders.length > 0);
+    const contentWidthOf = (idx: number, asHtml: boolean): number => {
+      let max = 0;
+      for (const r of uiRows) {
+        if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
+        const ctrl = r.cells[idx]?.control;
+        const v = ctrl ? ctrl.displayValue ?? ctrl.value : undefined;
+        if (v == null || v === '') continue;
+        const w = cellTextWidth(oneLinePlainText(String(v), asHtml));
+        if (w > max) max = w;
+      }
+      return max;
+    };
+
     // Secondary (continuation) header labels sit under the primary header at
     // the same column positions (mapped by cumulative colspan units, the same
     // model used at render time). The base width calc only looks at the primary
@@ -1150,6 +1225,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           perUnit: ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0,
           secondaryMinWidth: secondaryMinWidth.get(idx),
         });
+        // Al contenuto, in una-riga: solo il testo (non i controlli propri, le
+        // caselle Si/No e le colonne modificate in griglia, che hanno la loro
+        // misura), mai piu' stretta del dichiarato.
+        const fitsContent = flatText && !!colCtrl && !isCustom && !customType
+          && !isBooleanType(colCtrlType) && !editableColumns.has(idx);
+        const columnWidth = fitsContent
+          ? fitWidthToContent(effectiveWidth, contentWidthOf(idx, isHtml) + (hasNav ? CELL_NAV_WIDTH : 0))
+          : effectiveWidth;
 
         // Editable column support
         const colMeta = editableColumns.get(idx);
@@ -1256,13 +1339,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // dimension (see effectiveWidth) and remain resizable by the user.
           // The colspan-as-flex-unit-count is recovered from ui.headers in
           // computeUnitOffsets for continuation-row cell alignment.
-          width: effectiveWidth,
+          width: columnWidth,
           minWidth: colMinWidth,
           resizable: true,
           cellRenderer: resolvedCellRenderer,
           // `colIdx` serve a OGNI renderer di valore per ritrovare gli extra
           // che la riga porta sotto quell'indice (catenella, displayValue).
-          cellRendererParams: { colMeta, colIdx: idx, dynPropKey, asHtml: isHtml },
+          cellRendererParams: { colMeta, colIdx: idx, dynPropKey, asHtml: isHtml, joinBreaks: flatText && isHtml },
           // Cella di solo testo senza renderer: le entita' del valore (l'indentazione
           // `&#160;` della Struttura di bilancio) diventano caratteri, come quando il
           // legacy scriveva la cella come markup (SXADV-5794).
