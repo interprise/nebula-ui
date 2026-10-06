@@ -1868,19 +1868,50 @@ body[style*="cursor: wait"] * {
    I widget si leggono dalla fotografia salvata: qui non c'e' niente che vada a
    interrogare una vista. I colori vengono dai token, non scritti a mano.
    --------------------------------------------------------------------------- */
+/* SXADV-62 F2, disposizione: la griglia e' di react-grid-layout (12 colonne, righe da
+   24 px); qui solo la barra sopra e il riquadro che riempie la sua cella. */
 .dash-widgets {
-  display: grid;
-  /* min(): sotto i 380 px utili auto-fill terrebbe la colonna a 380 e la
-     pagina scorrerebbe in orizzontale. */
-  grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
-  gap: 12px;
-  align-items: start;
+  min-width: 0;
 }
-/* «Segna tutte come viste»: una riga sua sopra la griglia dei widget. */
-.dash-visto-tutte {
-  grid-column: 1 / -1;
+.dash-barra {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dash-barra-aiuto {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+.dash-griglia {
+  min-width: 0;
+}
+.dash-cella > .dash-widget {
+  height: 100%;
+  box-sizing: border-box;
+  /* un riquadro piu' piccolo del suo contenuto scorre: tagliare nasconderebbe dati */
+  overflow: auto;
+}
+.dash-cella-disponi > .dash-widget {
+  outline: 1px dashed var(--app-border);
+}
+.dash-cella-disponi:focus-visible > .dash-widget {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+}
+.dash-cella-disponi .dash-widget-head {
+  cursor: move;
+}
+/* nella modalita' la maniglia dell'angolo si vede sempre, non solo al passaggio */
+.dash-cella-disponi > .react-resizable-handle {
+  opacity: 1;
+}
+.dash-colonna {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .dash-widget-variazioni .dash-visto {
   height: auto;
@@ -1922,7 +1953,9 @@ body[style*="cursor: wait"] * {
    quelle, e stringerle renderebbe le celle illeggibili. */
 .dash-widget-tabella {
   overflow: auto;
-  max-height: 320px;
+  /* riempie l'altezza del riquadro e scorre li' dentro (disposizione, C1) */
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px solid var(--app-border);
   border-radius: 4px;
 }

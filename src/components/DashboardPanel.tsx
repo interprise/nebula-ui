@@ -12,6 +12,7 @@ import {
   type Trasformazione,
 } from './dashboard/risultato';
 import ModificaWidget from './dashboard/ModificaWidget';
+import GrigliaWidget, { type PostoSalvato } from './dashboard/GrigliaWidget';
 import { ordinaRighe, permuta } from './dashboard/ordineColonne';
 
 /** Una colonna della lista fotografata: l'intestazione che il widget mostra. */
@@ -745,6 +746,30 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   }, [widget]);
 
   /**
+   * Salva la disposizione della modalita' «Disposizione» (dashboard.Disposizione): se il
+   * server la rifiuta lo dice e la modalita' resta aperta; se la prende, si rilegge.
+   */
+  const salvaDisposizione = async (posti: PostoSalvato[]): Promise<boolean> => {
+    try {
+      const resp = (await api.postAction2('dashboard.Disposizione', {
+        sid: SID,
+        disposizione: JSON.stringify(posti),
+      })) as unknown as Record<string, unknown>;
+      if (resp.esito !== 'ok') {
+        rifiuto(resp, 'La disposizione non si e\' potuta salvare.');
+        return false;
+      }
+    } catch (e) {
+      if (vivo.current) feedback.failure(e);
+      return false;
+    }
+    // Si chiude la modalita' solo con la disposizione nuova in mano: chiudendola prima la
+    // griglia tornerebbe un attimo a quella vecchia.
+    if (vivo.current) await leggi();
+    return true;
+  };
+
+  /**
    * «Segna come viste» (un widget) e «Segna tutte come viste» (C4, C5): le evidenze
    * spariscono subito, rileggendo la dashboard.
    */
@@ -852,16 +877,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   const conEvidenze = widget.filter(
     (w) => (w.fotografia?.variazioni?.totale || 0) > 0 || !!w.fotografia?.variazioni?.criteriDiversi,
   );
-  return (
-    <div className="dash-widgets" aria-busy={caricando}>
-      {conEvidenze.length > 0 ? (
-        <div className="dash-visto-tutte">
-          <Button size="small" icon={<EyeOutlined />} onClick={() => void segnaViste(widget)}>
-            Segna tutte come viste
-          </Button>
-        </div>
-      ) : null}
-      {widget.map((w) => {
+  const articoli = new Map<number, React.ReactElement>();
+  for (const w of widget) {
         // Un widget senza fotografia non deve portare giu' la pagina: GetCommand
         // costruisce la cornice di un widget illeggibile dentro un try che inghiotte
         // l'eccezione, quindi quella chiave puo' mancare. Qui moriva la Home intera —
@@ -880,7 +897,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         // Con lo schema cambiato le celle non corrispondono piu' alle intestazioni, e
         // riordinarle le confonderebbe ancora di piu'.
         const ordine = foto.schemaCambiato ? null : w.ordineColonne;
-        return (
+        articoli.set(w.idWidget, (
         <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
           <header className="dash-widget-head">
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
@@ -1230,8 +1247,21 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             </Typography.Text>
           ) : null}
         </article>
-        );
-      })}
+    ));
+  }
+
+  return (
+    <div className="dash-widgets" aria-busy={caricando}>
+      <GrigliaWidget
+        widget={widget}
+        articoli={articoli}
+        onSalva={salvaDisposizione}
+        extra={conEvidenze.length > 0 ? (
+          <Button size="small" icon={<EyeOutlined />} onClick={() => void segnaViste(widget)}>
+            Segna tutte come viste
+          </Button>
+        ) : null}
+      />
       <ModificaWidget
         widget={modifica}
         aziende={aziendeAbilitate}
