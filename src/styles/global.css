@@ -1876,6 +1876,17 @@ body[style*="cursor: wait"] * {
   gap: 12px;
   align-items: start;
 }
+/* «Segna tutte come viste»: una riga sua sopra la griglia dei widget. */
+.dash-visto-tutte {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+.dash-widget-variazioni .dash-visto {
+  height: auto;
+  padding: 0 2px;
+  font-size: inherit;
+}
 .dash-widget {
   display: flex;
   flex-direction: column;

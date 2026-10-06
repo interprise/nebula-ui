@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { ReloadOutlined, CloseOutlined, EditOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
@@ -58,6 +58,12 @@ interface Fotografia {
   /** Le righe che nell'ultimo aggiornamento sono sparite dall'elenco. */
   uscite?: Riga[];
   variazioni?: Variazioni;
+  /**
+   * Il `ts` della fotografia che questa persona ha visto l'ultima volta (F2 pezzo 2), o
+   * null. Con un `visto` le evidenze sono rispetto a quello, non all'aggiornamento
+   * precedente.
+   */
+  visto?: string | null;
   parziale?: boolean;
   schemaCambiato?: boolean;
 }
@@ -112,6 +118,23 @@ export interface AziendaAbilitata {
   descrizione?: string;
 }
 
+/**
+ * Le fotografie che la Home mostra e che non sono ancora il «visto» di chi guarda, tolte
+ * quelle gia' segnate da sole con quel `ts` (la risposta dice il visto solo alla rilettura).
+ */
+const daSegnare = (lista: Widget[] | null, segnate: Map<number, Fotografia>) =>
+  (lista || [])
+    .filter((w) => !!w.fotografia?.ts && w.fotografia.ts !== w.fotografia.visto
+      && segnate.get(w.idWidget)?.ts !== w.fotografia.ts)
+    .map((w) => ({ idWidget: w.idWidget, ts: w.fotografia.ts as string }));
+
+/** «Segna come viste» nel riquadro delle variazioni di un widget (contratto VISTO C4). */
+const SegnaVisteBottone: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <Button type="link" size="small" className="dash-visto" onClick={onClick}>
+    Segna come viste
+  </Button>
+);
+
 /** Il widget prende i risultati da piu' aziende (o da un'altra)? */
 const suPiuAziende = (w: Widget) => !!w.ambito && !!w.ambito.modo && w.ambito.modo !== 'corrente';
 
@@ -163,6 +186,11 @@ const SID = 'D1';
 const PASSO_CODA_MS = 5000;
 /** Ogni quanto, con la Home a video, si guarda se il giro ha aggiornato qualcosa. */
 const PASSO_CONTROLLO_MS = 60000;
+/**
+ * Dopo quanto tempo di Home visibile quello che mostra conta come visto (piano F1 §3.4,
+ * contratto VISTO C1): abbastanza da non segnare una Home attraversata per sbaglio.
+ */
+const ATTESA_VISTO_MS = 5000;
 
 /** Una riga di `dashboard.Stato`. */
 interface StatoWidget {
@@ -404,6 +432,19 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   const [aziendeAbilitate, setAziendeAbilitate] = useState<AziendaAbilitata[]>([]);
   /** Quale lettura e' l'ultima chiesta: le risposte in ritardo si scartano. */
   const richiesta = useRef(0);
+  /**
+   * Le fotografie segnate come viste da sole (C1), come erano a schermo: le evidenze
+   * restano finche' la Home e' aperta, anche se un'altra rilettura (un altro widget
+   * aggiornato) le riporta senza. Per idWidget; valgono finche' il `ts` e' quello.
+   */
+  const segnateDaSole = useRef(new Map<number, Fotografia>());
+  /**
+   * Cresce a ogni «Segna come viste» col pulsante: un segno da solo partito prima non
+   * deve rimettere in `segnateDaSole` le evidenze che il pulsante ha appena tolto.
+   */
+  const generazioneVisto = useRef(0);
+  /** Un «Segna come viste» col pulsante e' in volo: il doppio clic non ne manda un altro. */
+  const segnaInVolo = useRef(false);
   /** Il pannello e' ancora a video? Si smonta passando agli avvisi. */
   const vivo = useRef(true);
   useEffect(() => {
@@ -432,7 +473,26 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         return null;
       }
       setErrore(null);
-      const letti = (resp.widget as Widget[]) || [];
+      const letti = ((resp.widget as Widget[]) || []).map((w) => {
+        const prima = segnateDaSole.current.get(w.idWidget);
+        if (!prima) return w;
+        if (!w.fotografia || prima.ts !== w.fotografia.ts) {
+          segnateDaSole.current.delete(w.idWidget);
+          return w;
+        }
+        // Solo le evidenze: stato, messaggio e il resto vengono dalla risposta, se no un
+        // aggiornamento fallito (stesso ts, stato ERR) resterebbe nascosto.
+        return {
+          ...w,
+          fotografia: {
+            ...w.fotografia,
+            righe: prima.righe,
+            uscite: prima.uscite,
+            variazioni: prima.variazioni,
+            visto: prima.visto,
+          },
+        };
+      });
       setWidget(letti);
       setAziendaCorrente(typeof resp.aziendaCorrente === 'string' ? resp.aziendaCorrente : null);
       setAziendeAbilitate(Array.isArray(resp.aziendeAbilitate)
@@ -643,6 +703,82 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   }, [inAttesa, giroAttivo, controlla]);
 
   /**
+   * Il «visto» da solo (contratto VISTO C1-C3): 5 s di fila di Home visibile, e quello
+   * che mostra diventa il visto. Le evidenze restano a schermo: si rilegge solo quando
+   * arriva altro. Un errore non si dice: e' un segno, non un'operazione dell'utente.
+   */
+  useEffect(() => {
+    if (daSegnare(widget, segnateDaSole.current).length === 0) return;
+    let t: number | undefined;
+    const arma = () => {
+      window.clearTimeout(t);
+      t = undefined;
+      if (document.visibilityState === 'hidden') return;
+      t = window.setTimeout(() => {
+        if (segnaInVolo.current) return;
+        const generazione = generazioneVisto.current;
+        const lista = widgetRef.current || [];
+        const viste = daSegnare(lista, segnateDaSole.current);
+        if (viste.length === 0) return;
+        for (const w of lista)
+          if (viste.some((v) => v.idWidget === w.idWidget))
+            segnateDaSole.current.set(w.idWidget, w.fotografia);
+        api.postAction2('dashboard.SegnaViste', { sid: SID, viste: JSON.stringify(viste) })
+          .then((resp) => {
+            const segnate = (resp as unknown as { segnate?: number[] }).segnate || [];
+            for (const v of viste)
+              if (generazione !== generazioneVisto.current
+                || !segnate.some((id) => Number(id) === v.idWidget))
+                segnateDaSole.current.delete(v.idWidget);
+          })
+          .catch(() => {
+            for (const v of viste) segnateDaSole.current.delete(v.idWidget);
+          });
+      }, ATTESA_VISTO_MS);
+    };
+    arma();
+    document.addEventListener('visibilitychange', arma);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('visibilitychange', arma);
+    };
+  }, [widget]);
+
+  /**
+   * «Segna come viste» (un widget) e «Segna tutte come viste» (C4, C5): le evidenze
+   * spariscono subito, rileggendo la dashboard.
+   */
+  const segnaViste = async (lista: Widget[]) => {
+    const viste = lista
+      .filter((w) => !!w.fotografia?.ts)
+      .map((w) => ({ idWidget: w.idWidget, ts: w.fotografia.ts as string }));
+    if (viste.length === 0 || segnaInVolo.current) return;
+    segnaInVolo.current = true;
+    generazioneVisto.current += 1;
+    for (const v of viste) segnateDaSole.current.delete(v.idWidget);
+    try {
+      let resp: Record<string, unknown> = {};
+      // Un segno partito da solo nello stesso istante puo' far fallire il primo
+      // salvataggio (stessa riga inserita due volte): il secondo tentativo la trova.
+      for (let tentativo = 0; tentativo < 2; tentativo++) {
+        resp = (await api.postAction2('dashboard.SegnaViste', {
+          sid: SID,
+          viste: JSON.stringify(viste),
+        })) as unknown as Record<string, unknown>;
+        if (resp.esito === 'ok' || resp.motivo !== 'SALVATAGGIO') break;
+      }
+      if (resp.esito !== 'ok' && vivo.current)
+        rifiuto(resp, 'Le variazioni non si sono potute segnare come viste.');
+    } catch (e) {
+      if (vivo.current) feedback.failure(e);
+    } finally {
+      segnaInVolo.current = false;
+    }
+    for (const v of viste) segnateDaSole.current.delete(v.idWidget);
+    if (vivo.current) void leggi();
+  };
+
+  /**
    * Dopo il salvataggio si rilegge (titolo, forma e risultato provvisorio si vedono
    * subito) e si lancia «Aggiorna ora»: il numero esatto — su tutta la ricerca, non
    * sulle righe salvate — lo calcola solo un aggiornamento. Se il server lo rifiuta
@@ -713,8 +849,18 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
       />
     );
 
+  const conEvidenze = widget.filter(
+    (w) => (w.fotografia?.variazioni?.totale || 0) > 0 || !!w.fotografia?.variazioni?.criteriDiversi,
+  );
   return (
     <div className="dash-widgets" aria-busy={caricando}>
+      {conEvidenze.length > 0 ? (
+        <div className="dash-visto-tutte">
+          <Button size="small" icon={<EyeOutlined />} onClick={() => void segnaViste(widget)}>
+            Segna tutte come viste
+          </Button>
+        </div>
+      ) : null}
       {widget.map((w) => {
         // Un widget senza fotografia non deve portare giu' la pagina: GetCommand
         // costruisce la cornice di un widget illeggibile dentro un try che inghiotte
@@ -1038,14 +1184,15 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
                 I criteri sono cambiati dall&apos;ultima volta (una data che si aggiorna da
                 sola): le righe non si sono potute confrontare con quelle di prima.
-              </Typography.Text>
+              </Typography.Text>{' '}
+              <SegnaVisteBottone onClick={() => void segnaViste([w])} />
             </div>
           ) : null}
           {(foto.variazioni?.totale || 0) > 0 ? (
             <div className="dash-widget-variazioni">
               <span className="chiave chiave-nuova" aria-hidden="true" />{' '}
               {descriviVariazioni(foto.variazioni || {})}{' '}
-              dall&apos;ultimo aggiornamento
+              {foto.visto ? 'da quando l\'hai guardato' : 'dall\'ultimo aggiornamento'}
               {/* Il conteggio e' sulla fotografia intera, la tabella ne mostra al
                   massimo 200: dire 37 e mostrarne 3 senza spiegarlo e' una bugia
                   involontaria. */}
@@ -1054,7 +1201,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                 : null}
               {foto.parziale
                 ? `, confronto sulle prime ${numero((foto.righeInFotografia || 0))} di ${numero(totale || 0)}`
-                : null}
+                : null}{' '}
+              <SegnaVisteBottone onClick={() => void segnaViste([w])} />
               {(foto.uscite || []).length > 0 ? (
                 <details>
                   <summary>
