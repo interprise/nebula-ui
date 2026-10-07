@@ -1,13 +1,14 @@
 import React from 'react';
 import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { App, Button } from 'antd';
-import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
+import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, PlusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { panelTableUnits } from './editPanelLayout';
+import type { RowToolbarAction } from './rowToolbar';
 
 /**
  * Bottom edit panel for listEdit lists. The grid stays read-only; selecting a
@@ -55,7 +56,16 @@ interface EditPanelProps {
   onNavigate?: (delta: number) => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  /** Salva / Salva+ / Nuovo sulla riga: la toolbar della pagina replicata sul
+   *  view state della riga (SXADV-6010, `rowToolbarActions`). */
+  rowActions?: RowToolbarAction[];
 }
+
+const ROW_ACTION_ICONS: Record<RowToolbarAction['key'], React.ReactNode> = {
+  save: <SaveOutlined />,
+  saveNew: <PlusCircleOutlined />,
+  new: <PlusOutlined />,
+};
 
 // Skip the "Sel." selector column (and the DUMMY placeholder that stands in for
 // it on continuation lines) so the panel matches the grid, which hides it too.
@@ -212,7 +222,7 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext,
+  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const { modal } = App.useApp();
@@ -246,8 +256,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
   const doDelete = () => {
     modal.confirm({
-      title: 'Eliminare la riga?',
-      okText: 'Elimina',
+      title: 'Cancellare la riga?',
+      okText: 'Cancella',
       okButtonProps: { danger: true },
       cancelText: 'Annulla',
       // Delete on the selected record, through the view's own delete command
@@ -302,9 +312,19 @@ const EditPanel: React.FC<EditPanelProps> = ({
             </span>
           )}
           <span className="edit-panel-head-actions">
+            {/* La toolbar della pagina, sulla riga: stesse etichette e icone
+                di quella in alto, ma il navpath e' quello della riga
+                (SXADV-6010). L'Annulla non c'e': annullare una sola riga CORE
+                non lo sa ancora fare (SXADV-6045). */}
+            {(rowActions ?? []).map((a) => (
+              <Button key={a.key} size="small" icon={ROW_ACTION_ICONS[a.key]} disabled={a.disabled}
+                onClick={() => onAction(a.action, a.params)}>
+                {a.label}
+              </Button>
+            ))}
             {canDelete && (
-              <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={doDelete}>
-                Elimina
+              <Button size="small" icon={<DeleteOutlined />} onClick={doDelete}>
+                Cancella
               </Button>
             )}
             <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose}>

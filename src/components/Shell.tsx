@@ -68,7 +68,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1109,7 +1109,24 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (resp.currField) update.currField = resp.currField;
       // La riga che l'Add ha creato la nomina il server con currField: la lista
       // la legge insieme al flag (SXADV-6011).
-      if (pendingAddRef.current) pendingAddFieldRef.current = resp.currField ?? null;
+      if (pendingAddRef.current) {
+        // Un Add (o un Salva+) finito in errore la riga non l'ha creata: se il
+        // flag restasse armato la lista aprirebbe il pannello sulla riga di
+        // ripiego (la prima nuova), lontano dall'errore. Davanti a una domanda
+        // del server il flag si sospende e torna quando la richiesta viene
+        // rigiocata con la risposta (SXADV-6010).
+        const types = (resp.errors ?? []).map((e) => e.type);
+        if (types.includes('ERROR')) {
+          pendingAddRef.current = false;
+          pendingAddFieldRef.current = null;
+        } else if (types.includes('CONFIRMATION') || types.includes('YESNOCANCEL')) {
+          pendingAddRef.current = false;
+          pendingAddFieldRef.current = null;
+          pendingAddOnReplayRef.current = true;
+        } else {
+          pendingAddFieldRef.current = resp.currField ?? null;
+        }
+      }
       // Tree+detail: the response turned out to be the pane's own view, so the
       // tab keeps the tree and TreeRenderer picks the detail up from here. This
       // runs last so the detail carries the per-record extras (attachmentsInfo,
@@ -1182,6 +1199,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       let messages = '';
       const replay: ConfirmReplay = (token) => {
         messages += token;
+        if (pendingAddOnReplayRef.current) {
+          pendingAddOnReplayRef.current = false;
+          pendingAddRef.current = true;
+          pendingAddFieldRef.current = null;
+        }
         document.body.style.cursor = 'wait';
         updateTabState(tabKey, { loading: true, progressPct: undefined });
         request({ messages })
@@ -1426,6 +1448,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // barra di navigazione record): senza armare anche quello il pannello
       // restava sul record appena salvato invece di spostarsi su quello nuovo
       // (SXADV-5735 p).
+      pendingAddOnReplayRef.current = false;
       if (action === 'Add' || action === 'SaveAndNew') {
         pendingAddRef.current = true;
         pendingAddFieldRef.current = null;
@@ -1704,6 +1727,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // currField della risposta arrivata mentre l'Add era armato: dice quale riga
   // e' quella nuova (SXADV-6011).
   const pendingAddFieldRef = useRef<string | null>(null);
+  // Add sospeso da una domanda del server (conferma): torna armato quando la
+  // richiesta viene rigiocata (SXADV-6010).
+  const pendingAddOnReplayRef = useRef(false);
   const consumePendingAdd = useCallback((): PendingAdd => {
     const was = pendingAddRef.current;
     const currField = pendingAddFieldRef.current;
@@ -2634,6 +2660,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     <EditRowContext.Provider value={handleEditRow}>
                       <FlushEditsContext.Provider value={flushFieldEdits}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
+                      <PageToolbarContext.Provider value={currentTab.toolbar}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
                           <ViewRenderer
                             ui={shownUi ?? currentTab.ui}
@@ -2643,6 +2670,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                             onEditRow={handleEditRow}
                           />
                         </DataVersionContext.Provider>
+                      </PageToolbarContext.Provider>
                       </PendingAddContext.Provider>
                       </FlushEditsContext.Provider>
                     </EditRowContext.Provider>

@@ -21,6 +21,7 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
+import { rowToolbarActions } from './rowToolbar';
 import { viewstateIdOf } from './listEditPosting';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
@@ -750,6 +751,11 @@ export const FlushEditsContext = React.createContext<((navpath: string) => void)
 export type PendingAdd = false | { currField: string | null };
 export const PendingAddContext = React.createContext<(() => PendingAdd) | undefined>(undefined);
 
+// La toolbar della PAGINA (tab.toolbar, come l'ha mandata il server): il
+// pannello di riga ne replica Salva / Salva+ sulla riga, con gli stessi permessi
+// e lo stesso comando di salvataggio (SXADV-6010).
+export const PageToolbarContext = React.createContext<readonly unknown[] | undefined>(undefined);
+
 // Propagates the "fill available vertical space" signal down to embedded
 // lists. Set by tab content so nested grids use internal scroll instead of
 // AG Grid's autoHeight.
@@ -1140,6 +1146,22 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     [records, selectedPath],
   );
 
+  // Salva / Salva+ / Nuovo del pannello: la toolbar della pagina sulla riga
+  // selezionata (SXADV-6010).
+  const pageToolbar = React.useContext(PageToolbarContext);
+  const rowActions = React.useMemo(
+    () => (selectedPath
+      ? rowToolbarActions({
+        pageToolbar,
+        addCommand: ui.gridActions?.addCommand,
+        embedded: !!ui.gridActions,
+        listPath: ui.gridActions?.path || ui.path,
+        rowPath: selectedPath,
+      })
+      : []),
+    [pageToolbar, ui.gridActions, ui.path, selectedPath],
+  );
+
   // Selezione appesa nel vuoto: se la riga selezionata non e' piu' fra quelle
   // della lista (cancellata, oppure sparita per un Refresh/una ricerca), si
   // azzera anche il navpath di riga — altrimenti resterebbe puntato a un record
@@ -1245,6 +1267,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
+          rowActions={rowActions}
         />
         </DataVersionContext.Provider>
       )}
