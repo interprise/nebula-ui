@@ -744,7 +744,11 @@ export const FlushEditsContext = React.createContext<((navpath: string) => void)
 // a multiEdit list — see CORE ToolViewState.isInEditPath), so ListRenderer only
 // auto-opens the edit panel right after a real Add, never on an ordinary
 // load/refresh that happens to touch the same row.
-export const PendingAddContext = React.createContext<(() => boolean) | undefined>(undefined);
+//
+// Read-and-clear: `false` when no Add is armed, otherwise the `currField` of the
+// response that arrived while it was, which names the new row (SXADV-6011).
+export type PendingAdd = false | { currField: string | null };
+export const PendingAddContext = React.createContext<(() => PendingAdd) | undefined>(undefined);
 
 // Propagates the "fill available vertical space" signal down to embedded
 // lists. Set by tab content so nested grids use internal scroll instead of

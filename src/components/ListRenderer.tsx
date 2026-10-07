@@ -7,7 +7,8 @@ import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, Expand
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
-import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
+import { addedRowPath } from './addedRow';
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -879,7 +880,7 @@ interface ListRendererProps {
    *  Gates auto-opening the panel on the server's newly-added edit-path row —
    *  without it, a multiEdit list (where virtually every row is "in edit path")
    *  would auto-open the panel on row 1 of every ordinary load/refresh. */
-  pendingAdd?: () => boolean;
+  pendingAdd?: () => PendingAdd;
   /** Grid inside a form/tab rather than a page of its own. It gets a MEASURED
    *  pixel height (see fillCapHeight) — the layout-table ancestors block CSS
    *  flex-fill — and scrolls internally; a top-level list just takes flex:1. */
@@ -2656,13 +2657,28 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // usciva subito, e il pannello restava sul record precedente mentre la lista
   // mostrava il nuovo (SXADV-5860.1). Non impediva niente che pendingAdd non
   // impedisca gia': senza un Add appena partito qui non si entra comunque.
+  //
+  // QUALE riga lo dice il currField della risposta all'Add, non "la prima riga in
+  // modifica": in una multiEdit lo sono tutte e vinceva sempre la riga 1, cosi'
+  // il pannello restava li' mentre la lista mostrava la riga nuova vuota
+  // (SXADV-6011). serverEditingPath resta il ripiego quando currField non nomina
+  // una riga della lista.
   const pendingAddSeenRef = useRef(false);
+  const pendingAddFieldRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isListEdit || !serverEditingPath) { pendingAddSeenRef.current = false; return; }
     if (!pendingAddSeenRef.current) {
-      if (!pendingAdd?.()) return;
+      const add = pendingAdd?.();
+      if (!add) return;
       pendingAddSeenRef.current = true;
+      pendingAddFieldRef.current = add.currField;
     }
+    const rowPaths: string[] = [];
+    for (const r of rowData) {
+      const p = r._selectorPath as string | undefined;
+      if (p && !r._isContinuationRow) rowPaths.push(p);
+    }
+    const target = addedRowPath(rowPaths, pendingAddFieldRef.current, serverEditingPath) ?? serverEditingPath;
     let raf = 0;
     let tries = 0;
     const attempt = () => {
@@ -2673,7 +2689,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       }
       let rowIndex: number | null = null;
       api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
-        if (rowIndex == null && n.data?._selectorPath === serverEditingPath && n.rowIndex != null) {
+        if (rowIndex == null && n.data?._selectorPath === target && n.rowIndex != null) {
           rowIndex = n.rowIndex;
         }
       });
@@ -2681,11 +2697,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (tries++ < 10) raf = requestAnimationFrame(attempt);
         return;
       }
-      editingRowPath.current = serverEditingPath;
+      editingRowPath.current = target;
       pendingAddSeenRef.current = false;
-      markSelected(serverEditingPath);
+      markSelected(target);
       api.ensureIndexVisible(rowIndex, 'middle');
-      onSelectRecord?.(serverEditingPath);
+      onSelectRecord?.(target);
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);

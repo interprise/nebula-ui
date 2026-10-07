@@ -68,7 +68,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PaneToolbarContext } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1107,6 +1107,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         }
       }
       if (resp.currField) update.currField = resp.currField;
+      // La riga che l'Add ha creato la nomina il server con currField: la lista
+      // la legge insieme al flag (SXADV-6011).
+      if (pendingAddRef.current) pendingAddFieldRef.current = resp.currField ?? null;
       // Tree+detail: the response turned out to be the pane's own view, so the
       // tab keeps the tree and TreeRenderer picks the detail up from here. This
       // runs last so the detail carries the per-record extras (attachmentsInfo,
@@ -1423,7 +1426,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // barra di navigazione record): senza armare anche quello il pannello
       // restava sul record appena salvato invece di spostarsi su quello nuovo
       // (SXADV-5735 p).
-      if (action === 'Add' || action === 'SaveAndNew') pendingAddRef.current = true;
+      if (action === 'Add' || action === 'SaveAndNew') {
+        pendingAddRef.current = true;
+        pendingAddFieldRef.current = null;
+      }
 
       document.body.style.cursor = 'wait';
       // Istantanea, non il riferimento vivo: chi manda la richiesta puo' voler
@@ -1695,10 +1701,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // views with a customAddCommand override won't get the auto-open, matching
   // their pre-existing behaviour (not a regression).
   const pendingAddRef = useRef(false);
-  const consumePendingAdd = useCallback(() => {
+  // currField della risposta arrivata mentre l'Add era armato: dice quale riga
+  // e' quella nuova (SXADV-6011).
+  const pendingAddFieldRef = useRef<string | null>(null);
+  const consumePendingAdd = useCallback((): PendingAdd => {
     const was = pendingAddRef.current;
+    const currField = pendingAddFieldRef.current;
     pendingAddRef.current = false;
-    return was;
+    pendingAddFieldRef.current = null;
+    return was ? { currField } : false;
   }, []);
 
   // Tetto alle sessioni contemporanee (run property `session.limit`; 0 =
