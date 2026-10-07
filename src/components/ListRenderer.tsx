@@ -1958,18 +1958,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     [onGridChange, selectorBasePath]
   );
 
-  // Initialize grid formValues on mount / data change for multiEdit
-  const initGridFormValues = useCallback(() => {
-    if (!isMultiEdit || !onGridChange || !ui.columns) return;
-    const api = gridApiRef.current;
-    if (!api) return;
-    ui.columns.forEach((col, idx) => {
-      if (col.control?.editable && col.control?.name) {
-        pushColumnValues(idx, col.control as Record<string, unknown>);
-      }
-    });
-  }, [isMultiEdit, onGridChange, ui.columns, pushColumnValues]);
-
   // Toggle a record-selection checkbox (multiEdit boolean column). setDataValue
   // updates the cell and fires onCellValueChanged → handleCellValueChanged, which
   // re-pushes the whole column to formValues (multi-row post). Works on a column
@@ -2948,7 +2936,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           defaultColDef={WRAPPING_HEADER_COLDEF}
           rowData={rowData}
           components={cellEditorComponents}
-          onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); initGridFormValues(); measureColsOverflow(); }}
+          onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); measureColsOverflow(); }}
           onGridSizeChanged={measureColsOverflow}
           onDisplayedColumnsChanged={measureColsOverflow}
           onColumnResized={(e) => { if (e.finished) measureColsOverflow(); }}

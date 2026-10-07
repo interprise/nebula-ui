@@ -1,4 +1,5 @@
 import type { ServerResponse, AttachmentMeta } from '../types/ui';
+import { withoutPositionalArrays } from './positionalValues';
 
 const CMD_URL = '/entrasp/controller';
 const CMD2_URL = '/entrasp/controller2';
@@ -171,7 +172,10 @@ export async function postAction(
   formValues?: Record<string, string | string[]>,
   sid: string = 'S1'
 ): Promise<ServerResponse> {
-  return post(CMD_URL, { action, sid, ...params }, formValues);
+  // Gli array di colonna non partono con una richiesta puntata su una riga
+  // della loro lista: il server li leggerebbe come valori di quella riga.
+  const values = formValues && withoutPositionalArrays(formValues, params.navpath);
+  return post(CMD_URL, { action, sid, ...params }, values);
 }
 
 export async function postAction2(
