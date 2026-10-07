@@ -48,6 +48,8 @@ interface Variazioni {
 interface Fotografia {
   stato?: string;
   ts?: string | null;
+  /** L'ultimo tentativo, anche fallito: cambia quando il giro ci riprova. */
+  tsTentativo?: string | null;
   /** Quando l'aggiornamento era previsto: se e' passato, la fotografia e' in ritardo. */
   prossimoAgg?: string | null;
   messaggio?: string | null;
@@ -65,6 +67,10 @@ interface Fotografia {
    * precedente.
    */
   visto?: string | null;
+  /** Perche' l'ultimo aggiornamento e' fallito (VIEW, MENU, SEZIONE, CRITERI, RICERCA…). */
+  motivo?: string | null;
+  /** La lista d'origine e' cambiata: il widget non si aggiorna piu' da solo (pezzo 3). */
+  definitivo?: boolean;
   parziale?: boolean;
   schemaCambiato?: boolean;
 }
@@ -77,6 +83,8 @@ interface Widget {
   viewName?: string;
   errore?: string | null;
   sospeso?: boolean;
+  /** Chi guarda ne e' l'autore e puo' cambiarne la definizione (F2 §10.1). */
+  modificabile?: boolean;
   descrizione?: string | null;
   filtriLeggibili?: boolean;
   colonne?: Colonna[];
@@ -198,6 +206,7 @@ interface StatoWidget {
   idWidget: number;
   stato?: string;
   ts?: string | null;
+  tsTentativo?: string | null;
   inCoda?: boolean;
   /** RUN con una prenotazione fresca; assente = si guarda solo lo stato. */
   inCorso?: boolean;
@@ -302,6 +311,24 @@ const quando = (iso?: string | null) => {
   return stessoGiorno
     ? `alle ${ora}`
     : `il ${d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })} alle ${ora}`;
+};
+
+/**
+ * Quando il giro riprova dopo un errore transitorio: «riprovo alle 14:30», o «domani alle
+ * 09:15» (l'attesa arriva al massimo a un giorno). Null se non si sa.
+ */
+const riprovo = (prossimo?: string | null) => {
+  if (!prossimo) return null;
+  const d = new Date(prossimo);
+  if (Number.isNaN(d.getTime())) return null;
+  // Gia' passato: il giro e' in ritardo, un orario passato direbbe il falso.
+  if (d.getTime() <= Date.now()) return 'riprovo a breve';
+  const ora = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  const oggi = new Date();
+  const domani = new Date(oggi.getFullYear(), oggi.getMonth(), oggi.getDate() + 1);
+  if (d.toDateString() === oggi.toDateString()) return `riprovo alle ${ora}`;
+  if (d.toDateString() === domani.toDateString()) return `riprovo domani alle ${ora}`;
+  return `riprovo il ${d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })} alle ${ora}`;
 };
 
 /** L'aggiornamento era previsto e non e' arrivato: finche' non c'e' lo scheduler, capita. */
@@ -665,7 +692,18 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
       }
       // Solo per un widget che ha una fotografia letta: uno illeggibile non ce l'ha, e
       // il confronto lo darebbe «cambiato» a ogni controllo.
-      if (w?.fotografia && (s.ts ?? null) !== tsVisto && !lavora) cambiato = true;
+      const fv = w?.fotografia;
+      // Un widget illeggibile (ERR senza tentativo, costruito da Get senza leggere la
+      // fotografia) non si confronta: Stato legge la riga vera, e ts, stato e tentativo
+      // sarebbero diversi a ogni controllo, cioe' una rilettura al minuto per sempre.
+      const illeggibile = !!fv && fv.stato === 'ERR' && !fv.tsTentativo;
+      if (fv && !illeggibile && (s.ts ?? null) !== tsVisto && !lavora) cambiato = true;
+      // Un tentativo fallito del giro non cambia ts (l'ultima fotografia buona resta): si
+      // vede dallo stato e dal tentativo.
+      if (fv && !lavora && !illeggibile
+        && ((s.stato ?? null) !== (fv.stato ?? null)
+          || (fv.tsTentativo && (s.tsTentativo ?? null) !== fv.tsTentativo)))
+        cambiato = true;
     }
     // Un widget tolto (qui o da un'altra scheda) non resta ad aspettare per sempre.
     for (const id of Object.keys(nuova).map(Number))
@@ -989,7 +1027,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             {/* L'intervallo lo rispetta il giro automatico (SXADV-62 F2), che serve un
                 widget alla volta: con la coda lunga puo' arrivare dopo, e «in ritardo»
                 lo dice. */}
-            {w.intervalloMin ? <span>· {ogni(w.intervalloMin)}</span> : null}
+            {w.intervalloMin && !foto.definitivo ? <span>· {ogni(w.intervalloMin)}</span> : null}
             {attesa[w.idWidget] ? (
               <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
                 ·{' '}
@@ -1002,7 +1040,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                       : 'in coda'}
               </Typography.Text>
             ) : null}
-            {inRitardo(foto.prossimoAgg) && foto.ts ? (
+            {inRitardo(foto.prossimoAgg) && foto.ts && !foto.definitivo ? (
               <Typography.Text type="warning" style={{ fontSize: 11.5 }}>
                 · in ritardo
               </Typography.Text>
@@ -1061,10 +1099,48 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
           {/* RUN qui non si scrive: se un aggiornamento e' davvero in corso lo dice la riga
               sopra, che segue dashboard.Stato (inCorso). Una RUN appesa, scritta da qui,
               direbbe «in corso» per sempre (R8). */}
-          {foto.stato === 'OK' || foto.stato === 'RUN' ? null : (
+          {foto.definitivo ? (
+            // La lista d'origine e' cambiata (pezzo 3): riprovare da solo non servirebbe, e
+            // il giro non lo fa piu'. Si dice in chiaro e si offre che cosa fare.
+            <div className="dash-widget-definitivo" role="alert">
+              <Typography.Text type="danger">
+                La lista d&apos;origine e&apos; cambiata: questo widget non si aggiorna piu&apos;
+                da solo.
+              </Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                {w.modificabile ? '«Modifica» cambia come si mostra, non la ricerca: ' : ''}
+                se la lista non c&apos;e&apos; piu&apos;, toglilo e aggiungilo di nuovo dalla lista.
+              </Typography.Text>
+              {foto.messaggio ? (
+                <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                  {foto.messaggio}
+                </Typography.Text>
+              ) : null}
+              <Space size={4} wrap>
+                {w.modificabile ? (
+                  <Button size="small" icon={<EditOutlined />} onClick={() => setModifica(w)}>
+                    Modifica
+                  </Button>
+                ) : null}
+                <Popconfirm
+                  title="Togliere questo widget?"
+                  description="La dashboard non lo mostrera' piu'. I dati non si toccano."
+                  okText="Togli"
+                  okButtonProps={{ danger: true }}
+                  cancelText="Annulla"
+                  onConfirm={() => rimuovi(w)}
+                >
+                  <Button size="small" danger icon={<CloseOutlined />}>
+                    Rimuovi
+                  </Button>
+                </Popconfirm>
+              </Space>
+            </div>
+          ) : foto.stato === 'OK' || foto.stato === 'RUN' ? null : (
             <>
               <Typography.Text type="secondary">
                 {STATI[foto.stato || ''] || 'In attesa di dati.'}
+                {foto.stato === 'ERR' && riprovo(foto.prossimoAgg) ? ` ${riprovo(foto.prossimoAgg)}.` : null}
               </Typography.Text>
               {/* Il testo tecnico si LEGGE — chi sta davanti a un widget rotto deve
                   poter dire al telefono che cosa c'e' scritto — ma in piccolo e su una

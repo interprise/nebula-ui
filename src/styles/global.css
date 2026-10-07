@@ -1908,6 +1908,16 @@ body[style*="cursor: wait"] * {
 .dash-cella-disponi > .react-resizable-handle {
   opacity: 1;
 }
+/* SXADV-62 F2 pezzo 3: la lista d'origine e' cambiata, il widget non si aggiorna piu' */
+.dash-widget-definitivo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--ant-color-error-border, #ffccc7);
+  border-radius: 6px;
+  background: var(--ant-color-error-bg, #fff2f0);
+}
 .dash-colonna {
   display: flex;
   flex-direction: column;
