@@ -32,6 +32,8 @@ export interface WidgetDaModificare {
   /** Da quali aziende vengono i risultati adesso, e se la lista dipende dall'azienda. */
   ambito?: { modo?: string; codici?: string[]; possibile?: boolean } | null;
   colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null }>;
+  /** Chi lo vede nel catalogo e se arriva da solo (CONDIVISIONE H2). */
+  condivisione?: { ambito?: string; mandato?: boolean } | null;
 }
 
 interface Props {
@@ -42,6 +44,9 @@ interface Props {
   onClose: () => void;
   /** Il salvataggio e' andato: chi apre il pannello rilegge e aggiorna. */
   onSalvato: (idWidget: number, titolo: string) => void;
+  /** Chi guarda puo' condividere (privilegio dashboard.condividi), e le sedi dell'azienda. */
+  puoCondividere?: boolean;
+  sedi?: Array<{ codice: string; descrizione?: string | null }>;
 }
 
 /** Lo stato del pannello: un campo per scelta, la trasformazione si compone da qui. */
@@ -64,6 +69,9 @@ interface Bozza {
   ambito: 'corrente' | 'scelte' | 'tutte';
   aziendeScelte: string[];
   intervallo: number;
+  /** Condivisione: privato | azienda | sede:<codice>, e se arriva da solo nelle Home. */
+  condivisione: string;
+  mandato: boolean;
 }
 
 const AGGREGATI = [
@@ -105,6 +113,8 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
         : 'corrente',
     aziendeScelte: Array.isArray(w.opzioni?.aziende?.codici) ? [...w.opzioni.aziende.codici] : [],
     intervallo: w.intervalloMin || 60,
+    condivisione: w.condivisione?.ambito || 'privato',
+    mandato: !!w.condivisione?.mandato,
   };
 };
 
@@ -168,7 +178,9 @@ const motivoNoBarre = (b: Bozza) => (b.gruppo ? null : 'serve un raggruppamento'
  * (`dashboard.Save`) non tocca la fotografia: il numero esatto arriva con
  * l'aggiornamento che chi apre il pannello lancia subito dopo.
  */
-const ModificaWidget: React.FC<Props> = ({ widget, aziende, sid, onClose, onSalvato }) => {
+const ModificaWidget: React.FC<Props> = ({
+  widget, aziende, sid, onClose, onSalvato, puoCondividere, sedi,
+}) => {
   const feedback = useFeedback();
   const [bozza, setBozza] = useState<Bozza | null>(null);
   const [anteprima, setAnteprima] = useState<Risultato | null>(null);
@@ -334,6 +346,24 @@ const ModificaWidget: React.FC<Props> = ({ widget, aziende, sid, onClose, onSalv
     setSalvando(true);
     setErroreSalva(null);
     try {
+      // La condivisione si salva a parte (dashboard.Condividi), solo se e' cambiata, e PRIMA
+      // della definizione: un rifiuto non lascia salvato a meta' (CONDIVISIONE U3).
+      const prima = widget.condivisione?.ambito || 'privato';
+      const mandato = bozza.condivisione !== 'privato' && bozza.mandato;
+      if (puoCondividere
+        && (bozza.condivisione !== prima || mandato !== !!widget.condivisione?.mandato)) {
+        const c = (await api.postAction2('dashboard.Condividi', {
+          sid,
+          idWidget: String(id),
+          ambito: bozza.condivisione,
+          mandato: mandato ? '1' : '0',
+        })) as unknown as Record<string, unknown>;
+        if (c.esito !== 'ok') {
+          if (aperto.current === id)
+            setErroreSalva(String(c.messaggio || 'La condivisione non e\' stata salvata.'));
+          return;
+        }
+      }
       const resp = (await api.postAction2('dashboard.Save', {
         sid,
         idWidget: String(id),
@@ -596,6 +626,44 @@ const ModificaWidget: React.FC<Props> = ({ widget, aziende, sid, onClose, onSalv
               />
             ) : null}
           </Form.Item>
+
+          {puoCondividere ? (
+            // Chi lo vede nel catalogo, e se arriva da solo nelle Home (CONDIVISIONE U3).
+            <Form.Item
+              label="Condivisione"
+              extra="Chi lo riceve vede la stessa definizione, con i numeri calcolati coi suoi permessi."
+            >
+              <Select
+                value={bozza.condivisione}
+                onChange={(v: string) => cambia({ condivisione: v })}
+                options={[
+                  { value: 'privato', label: 'Privato' },
+                  { value: 'azienda', label: 'Tutta l\'azienda' },
+                  ...(sedi || []).map((s) => ({
+                    value: `sede:${s.codice}`,
+                    label: `Sede ${s.codice}${s.descrizione ? ` — ${s.descrizione}` : ''}`,
+                  })),
+                  // una sede salvata che non c'e' piu' fra quelle dell'azienda: si dice, non
+                  // si mostra il valore grezzo
+                  ...(bozza.condivisione.startsWith('sede:')
+                    && !(sedi || []).some((x) => `sede:${x.codice}` === bozza.condivisione)
+                    ? [{ value: bozza.condivisione,
+                      label: `Sede ${bozza.condivisione.slice(5)} (non piu' fra le sedi)` }]
+                    : []),
+                ]}
+                aria-label="Condivisione"
+              />
+              {bozza.condivisione !== 'privato' ? (
+                <Checkbox
+                  checked={bozza.mandato}
+                  onChange={(e) => cambia({ mandato: e.target.checked })}
+                  style={{ marginTop: 8 }}
+                >
+                  Mandalo nelle Home
+                </Checkbox>
+              ) : null}
+            </Form.Item>
+          ) : null}
 
           <Form.Item label="Aggiorna ogni">
             <Select

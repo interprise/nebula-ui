@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, PlusOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
@@ -13,6 +13,7 @@ import {
 } from './dashboard/risultato';
 import ModificaWidget from './dashboard/ModificaWidget';
 import GrigliaWidget, { type PostoSalvato } from './dashboard/GrigliaWidget';
+import CatalogoWidget from './dashboard/CatalogoWidget';
 import { ordinaRighe, permuta } from './dashboard/ordineColonne';
 
 /** Una colonna della lista fotografata: l'intestazione che il widget mostra. */
@@ -85,6 +86,10 @@ interface Widget {
   sospeso?: boolean;
   /** Chi guarda ne e' l'autore e puo' cambiarne la definizione (F2 §10.1). */
   modificabile?: boolean;
+  /** Chi l'ha creato. */
+  autore?: string | null;
+  /** Chi lo vede nel catalogo e se arriva da solo (CONDIVISIONE H2). */
+  condivisione?: { ambito?: string; mandato?: boolean } | null;
   descrizione?: string | null;
   filtriLeggibili?: boolean;
   colonne?: Colonna[];
@@ -143,6 +148,20 @@ const SegnaVisteBottone: React.FC<{ onClick: () => void }> = ({ onClick }) => (
     Segna come viste
   </Button>
 );
+
+/** «Tutta l'azienda», «la sede 044 — …», e se arriva da solo nelle Home. */
+const descriviCondivisione = (
+  c: { ambito?: string; mandato?: boolean },
+  sedi: Array<{ codice: string; descrizione?: string | null }>,
+) => {
+  let chi = 'tutta l\'azienda';
+  if ((c.ambito || '').startsWith('sede:')) {
+    const cod = (c.ambito || '').slice(5);
+    const d = sedi.find((x) => x.codice === cod)?.descrizione;
+    chi = `la sede ${cod}${d ? ` — ${d}` : ''}`;
+  }
+  return `Condiviso con ${chi}${c.mandato ? ', mandato nelle loro Home' : ', nel catalogo'}`;
+};
 
 /** Il widget prende i risultati da piu' aziende (o da un'altra)? */
 const suPiuAziende = (w: Widget) => !!w.ambito && !!w.ambito.modo && w.ambito.modo !== 'corrente';
@@ -458,6 +477,11 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   /** L'azienda corrente e quelle abilitate (SXADV-6000), come le dice dashboard.Get. */
   const [aziendaCorrente, setAziendaCorrente] = useState<string | null>(null);
   const [aziendeAbilitate, setAziendeAbilitate] = useState<AziendaAbilitata[]>([]);
+  /** Condivisione (CONDIVISIONE H1): chi guarda puo' condividere, e le sedi dell'azienda. */
+  const [puoCondividere, setPuoCondividere] = useState(false);
+  const [sedi, setSedi] = useState<Array<{ codice: string; descrizione?: string | null }>>([]);
+  /** Il catalogo «Aggiungi widget» e' aperto. */
+  const [catalogo, setCatalogo] = useState(false);
   /** Quale lettura e' l'ultima chiesta: le risposte in ritardo si scartano. */
   const richiesta = useRef(0);
   /**
@@ -526,6 +550,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
       setAziendeAbilitate(Array.isArray(resp.aziendeAbilitate)
         ? (resp.aziendeAbilitate as AziendaAbilitata[])
         : []);
+      setPuoCondividere(resp.puoCondividere === true);
+      setSedi(Array.isArray(resp.sedi) ? (resp.sedi as Array<{ codice: string }>) : []);
       return letti;
     } catch (e) {
       // Niente finestre per un pannello che non c'e' piu': l'utente e' passato agli
@@ -898,8 +924,28 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
       </Empty>
     );
 
+  const apriCatalogo = (
+    <Button size="small" icon={<PlusOutlined />} onClick={() => setCatalogo(true)}>
+      Aggiungi widget
+    </Button>
+  );
+  const pannelloCatalogo = (
+    <CatalogoWidget
+      aperto={catalogo}
+      sid={SID}
+      onClose={() => setCatalogo(false)}
+      onAggiunto={(titolo) => {
+        feedback.info(`"${titolo}" aggiunto alla tua Home: i dati arrivano col prossimo aggiornamento.`);
+        void leggi();
+      }}
+    />
+  );
+
   if (!widget || widget.length === 0)
     return (
+      <>
+      <div className="dash-barra">{apriCatalogo}</div>
+      {pannelloCatalogo}
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description={
@@ -910,6 +956,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         }
         style={{ padding: '40px 0' }}
       />
+      </>
     );
 
   const conEvidenze = widget.filter(
@@ -941,6 +988,14 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
               {w.titolo}
             </Typography.Text>
+            {/* Ricevuto da altri, o proprio e condiviso (CONDIVISIONE U4). */}
+            {!w.modificabile && w.autore ? (
+              <Tag className="dash-widget-condiviso">da {w.autore}</Tag>
+            ) : w.modificabile && w.condivisione?.ambito && w.condivisione.ambito !== 'privato' ? (
+              <Tooltip title={descriviCondivisione(w.condivisione, sedi)}>
+                <Tag className="dash-widget-condiviso">condiviso</Tag>
+              </Tooltip>
+            ) : null}
             {suPiuAziende(w) ? (
               <Tooltip
                 title={(w.ambito?.codici || [])
@@ -985,15 +1040,18 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                   />
                 </Tooltip>
               )}
-              <Tooltip title="Modifica">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  aria-label="Modifica"
-                  onClick={() => setModifica(w)}
-                />
-              </Tooltip>
+              {/* Solo all'autore: la definizione e' una, la cambia chi l'ha creata (U2). */}
+              {w.modificabile ? (
+                <Tooltip title="Modifica">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    aria-label="Modifica"
+                    onClick={() => setModifica(w)}
+                  />
+                </Tooltip>
+              ) : null}
               {/* Niente suggerimento su questo tasto: resta aperto sotto il puntatore,
                   e quando la finestrella di conferma non ha spazio a destra antd la apre
                   proprio li' sopra — il tasto «Togli» si becca il clic del suggerimento
@@ -1332,18 +1390,26 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         widget={widget}
         articoli={articoli}
         onSalva={salvaDisposizione}
-        extra={conEvidenze.length > 0 ? (
-          <Button size="small" icon={<EyeOutlined />} onClick={() => void segnaViste(widget)}>
-            Segna tutte come viste
-          </Button>
-        ) : null}
+        extra={(
+          <>
+            {apriCatalogo}
+            {conEvidenze.length > 0 ? (
+              <Button size="small" icon={<EyeOutlined />} onClick={() => void segnaViste(widget)}>
+                Segna tutte come viste
+              </Button>
+            ) : null}
+          </>
+        )}
       />
+      {pannelloCatalogo}
       <ModificaWidget
         widget={modifica}
         aziende={aziendeAbilitate}
         sid={SID}
         onClose={() => setModifica(null)}
         onSalvato={(id, titolo) => void salvato(id, titolo)}
+        puoCondividere={puoCondividere}
+        sedi={sedi}
       />
     </div>
   );

@@ -1918,6 +1918,25 @@ body[style*="cursor: wait"] * {
   border-radius: 6px;
   background: var(--ant-color-error-bg, #fff2f0);
 }
+/* SXADV-62 F2 condivisione: il catalogo «Aggiungi widget» */
+.dash-catalogo-gruppo + .dash-catalogo-gruppo {
+  margin-top: 16px;
+}
+.dash-catalogo-voce {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+.dash-catalogo-testa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .dash-colonna {
   display: flex;
   flex-direction: column;
