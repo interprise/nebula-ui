@@ -1,7 +1,7 @@
 import React from 'react';
 import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { App, Button } from 'antd';
-import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, PlusCircleOutlined, PlusOutlined } from '@ant-design/icons';
+import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, PlusCircleOutlined, PlusOutlined, UndoOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
@@ -56,14 +56,22 @@ interface EditPanelProps {
   onNavigate?: (delta: number) => void;
   hasPrev?: boolean;
   hasNext?: boolean;
-  /** Salva / Salva+ / Nuovo sulla riga: la toolbar della pagina replicata sul
-   *  view state della riga (SXADV-6010, `rowToolbarActions`). */
+  /** Salva / Salva+ / Annulla / Nuovo sulla riga: la toolbar della pagina
+   *  replicata sul view state della riga (SXADV-6010/6045, `rowToolbarActions`). */
   rowActions?: RowToolbarAction[];
+  /** La riga del pannello sta per essere tolta (Cancella, o Annulla di una riga
+   *  nuova): chi tiene la lista sceglie su quale riga restare quando arriva la
+   *  risposta (SXADV-6045, `pathAfterRemoval`). Senza, il Cancella chiude.
+   *  Restituisce false se una rimozione e' gia' in volo: il secondo clic va
+   *  ignorato, perche' col percorso posizionale colpirebbe la riga scivolata
+   *  al posto di quella tolta. */
+  onRemoved?: (path: string) => boolean;
 }
 
 const ROW_ACTION_ICONS: Record<RowToolbarAction['key'], React.ReactNode> = {
   save: <SaveOutlined />,
   saveNew: <PlusCircleOutlined />,
+  cancel: <UndoOutlined />,
   new: <PlusOutlined />,
 };
 
@@ -222,7 +230,7 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions,
+  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions, onRemoved,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const { modal } = App.useApp();
@@ -287,13 +295,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
         // Delete del framework: un customDeleteCommand puo' fare tutt'altro —
         // RegAnaliticaEliminaDettaglio azzera un campo e la riga resta dov'e'.
         if (command === 'Delete') params._removeRow = path;
+        if (onRemoved && !onRemoved(path)) return;
         onAction(command, params);
-        // Il record non c'e' piu': si chiude il pannello (che azzera anche il
-        // navpath di riga usato dai post successivi). I percorsi di riga sono
-        // POSIZIONALI, quindi dopo la cancellazione lo stesso percorso indica
-        // il record che ha preso il posto di quello cancellato: lasciando il
-        // pannello aperto continuerebbe a mostrare una riga, ma un'altra.
-        onClose();
+        // Il pannello resta aperto, per cancellare piu' righe di seguito
+        // (SXADV-6045): i percorsi di riga sono POSIZIONALI, quindi dopo la
+        // cancellazione lo stesso percorso indica la riga che ha preso il posto
+        // di quella cancellata, e il pannello passa a lei (o alla precedente se
+        // era l'ultima). La sceglie la lista quando arriva la risposta.
+        if (!onRemoved) onClose();
       },
     });
   };
@@ -302,7 +311,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
     <PathContext.Provider value={path}>
       <div className="edit-panel" ref={panelRef}>
         <div className="edit-panel-head">
-          <span className="edit-panel-title">Modifica riga</span>
+          <span className="edit-panel-title">Gestione riga</span>
           {onNavigate && (
             <span className="edit-panel-head-actions">
               <Button type="text" size="small" icon={<UpOutlined />} disabled={!hasPrev}
@@ -314,11 +323,15 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <span className="edit-panel-head-actions">
             {/* La toolbar della pagina, sulla riga: stesse etichette e icone
                 di quella in alto, ma il navpath e' quello della riga
-                (SXADV-6010). L'Annulla non c'e': annullare una sola riga CORE
-                non lo sa ancora fare (SXADV-6045). */}
+                (SXADV-6010). L'Annulla disfa la sola riga (CancelRowCommand,
+                SXADV-6045): una riga nuova sparisce, e il pannello passa alla
+                precedente come dopo un Cancella. */}
             {(rowActions ?? []).map((a) => (
               <Button key={a.key} size="small" icon={ROW_ACTION_ICONS[a.key]} disabled={a.disabled}
-                onClick={() => onAction(a.action, a.params)}>
+                onClick={() => {
+                  if (a.key === 'cancel' && path && onRemoved && !onRemoved(path)) return;
+                  onAction(a.action, a.params);
+                }}>
                 {a.label}
               </Button>
             ))}

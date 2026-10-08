@@ -1449,10 +1449,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // restava sul record appena salvato invece di spostarsi su quello nuovo
       // (SXADV-5735 p).
       pendingAddOnReplayRef.current = false;
-      if (action === 'Add' || action === 'SaveAndNew') {
-        pendingAddRef.current = true;
-        pendingAddFieldRef.current = null;
-      }
+      // Si arma all'ARRIVO della risposta, non all'invio: un Post di ricalcolo
+      // partito un attimo prima (l'importo digitato, che perde il fuoco sul
+      // clic di Salva+) risponde mentre questa richiesta e' in volo, e con il
+      // flag gia' armato veniva preso per la risposta all'Add: il pannello si
+      // fissava sulla riga salvata invece di passare a quella nuova (SXADV-6045).
+      const armsAdd = action === 'Add' || action === 'SaveAndNew';
 
       document.body.style.cursor = 'wait';
       // Istantanea, non il riferimento vivo: chi manda la richiesta puo' voler
@@ -1468,6 +1470,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         api.postAction(action, { ...serverParams, ...extra }, fv, tab.sid));
       try {
         const resp = await api.postAction(action, serverParams, fv, tab.sid);
+        if (armsAdd) {
+          pendingAddRef.current = true;
+          pendingAddFieldRef.current = null;
+        }
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });

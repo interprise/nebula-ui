@@ -1,9 +1,11 @@
-// I bottoni Salva / Salva+ / Nuovo del pannello di riga (SXADV-6010): la
+// I bottoni Salva / Salva+ / Annulla / Nuovo del pannello di riga (SXADV-6010,
+// Annulla SXADV-6045): la
 // toolbar della pagina replicata sulla riga. I permessi e il comando di
 // salvataggio vengono dalla toolbar che il server ha appena mandato per la
 // pagina; il navpath e' quello della riga, cosi' il comando lavora sul suo view
 // state e il pannello ci resta sopra.
-// Contratto: docs/features/20261007_SXADV-6010_toolbar_di_riga.md
+// Contratto: docs/features/20261007_SXADV-6010_toolbar_di_riga.md e
+// docs/features/20261008_SXADV-6045_gestione_riga.md
 
 import type { ToolbarItem } from '../types/ui';
 
@@ -24,7 +26,7 @@ export interface RowToolbarInput {
 }
 
 export interface RowToolbarAction {
-  key: 'save' | 'saveNew' | 'new';
+  key: 'save' | 'saveNew' | 'cancel' | 'new';
   label: string;
   icon: string;
   action: string;
@@ -73,7 +75,36 @@ export function rowToolbarActions(input: RowToolbarInput): RowToolbarAction[] {
     if (add) {
       out.push({ key: 'saveNew', label: 'Salva+', icon: 'database_add.png', action: 'SaveAndNew', params: { navpath: rowPath }, disabled });
     }
+    // Sempre acceso: l'Annulla in alto e' spento quando la Session non ha
+    // modifiche, ma la riga puo' avere valori digitati e non ancora spediti, e
+    // cosa c'e' da annullare lo sa il server (CancelRowCommand).
+    if (pageItem(pageToolbar, (id) => id.startsWith('cancel'))) {
+      out.push({ key: 'cancel', label: 'Annulla', icon: 'undo', action: 'CancelRow', params: { navpath: rowPath }, disabled: false });
+    }
   }
   if (add) out.push({ key: 'new', label: 'Nuovo', icon: 'add.png', action: add.action, params: add.params, disabled: false });
   return out;
+}
+
+/** Quale riga mostra il pannello dopo che `removedPath` e' stata tolta (Cancella,
+ *  o Annulla di una riga nuova). `paths` sono le righe della lista dopo la
+ *  risposta. I percorsi sono posizionali (`<prefisso>.<n>`): se la posizione
+ *  esiste ancora ci e' scivolata la riga successiva (o la riga non e' stata
+ *  tolta), altrimenti si va alla precedente; null = il pannello si chiude. */
+export function pathAfterRemoval(removedPath: string, paths: readonly string[]): string | null {
+  if (paths.includes(removedPath)) return removedPath;
+  const m = /^(.*\.)(\d+)$/.exec(removedPath);
+  if (!m) return null;
+  const [, prefix, idx] = m;
+  const removed = Number(idx);
+  let best: string | null = null;
+  let bestIdx = -1;
+  for (const p of paths) {
+    if (!p.startsWith(prefix)) continue;
+    const rest = p.slice(prefix.length);
+    if (!/^\d+$/.test(rest)) continue;
+    const n = Number(rest);
+    if (n < removed && n > bestIdx) { best = p; bestIdx = n; }
+  }
+  return best;
 }

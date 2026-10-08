@@ -21,7 +21,7 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
-import { rowToolbarActions } from './rowToolbar';
+import { rowToolbarActions, pathAfterRemoval } from './rowToolbar';
 import { viewstateIdOf } from './listEditPosting';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
@@ -1101,6 +1101,8 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // Il percorso vive anche in una ref perche' serve nella chiusura dello
   // smontaggio, dove lo stato non e' piu' leggibile.
   const selectedPathRef = React.useRef<string | null>(null);
+  // Riga tolta dal pannello, in attesa della risposta (SXADV-6045, vedi onRemoved).
+  const pendingRemovalRef = React.useRef<{ path: string; paths: readonly string[]; at: number } | null>(null);
   const flushRef = React.useRef<(() => void) | undefined>(undefined);
   const flushSelected = React.useCallback((path: string | null) => {
     if (path) flushEdits?.(path);
@@ -1127,6 +1129,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     // digitato su di lui: la chiave dei valori non dice la riga, il navpath si.
     const prev = selectedPathRef.current;
     if (prev && prev !== path) flushSelected(prev);
+    pendingRemovalRef.current = null;
     selectedPathRef.current = path;
     setHidden(false);
     setSelectedPath(path);
@@ -1162,6 +1165,29 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     [pageToolbar, ui.gridActions, ui.path, selectedPath],
   );
 
+  // Riga tolta dal pannello (Cancella, o Annulla di una riga nuova): il
+  // pannello resta aperto e, quando arrivano le righe nuove, passa a quella
+  // che ha preso il posto della riga tolta o alla precedente (SXADV-6045).
+  // Si ricordano anche le righe di PRIMA, per riconoscere la risposta
+  // (pendingRemovalRef, dichiarata in alto con selectedPathRef).
+  const onRemoved = React.useCallback((path: string) => {
+    // Una rimozione la cui risposta non e' mai arrivata (rete, domanda del
+    // server lasciata senza risposta) non blocca per sempre i clic successivi.
+    const pending = pendingRemovalRef.current;
+    if (pending && Date.now() - pending.at < 15000) return false;
+    pendingRemovalRef.current = { path, paths: recordPaths, at: Date.now() };
+    return true;
+  }, [recordPaths]);
+  React.useEffect(() => {
+    const pending = pendingRemovalRef.current;
+    if (!pending || pending.paths === recordPaths) return;
+    pendingRemovalRef.current = null;
+    const next = pathAfterRemoval(pending.path, recordPaths);
+    selectedPathRef.current = next;
+    setSelectedPath(next);
+    setEditRow?.(next);
+  }, [recordPaths, setEditRow]);
+
   // Selezione appesa nel vuoto: se la riga selezionata non e' piu' fra quelle
   // della lista (cancellata, oppure sparita per un Refresh/una ricerca), si
   // azzera anche il navpath di riga — altrimenti resterebbe puntato a un record
@@ -1169,7 +1195,12 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // manderebbero al server. Rete di sicurezza: la cancellazione dal pannello
   // chiude gia' il pannello da sola.
   React.useEffect(() => {
-    if (selectedPath && records.length > 0 && !recordPaths.includes(selectedPath)) {
+    if (pendingRemovalRef.current) return;
+    // Dalla ref, non dallo stato: l'effetto qui sopra puo' aver appena scelto
+    // la riga dopo una rimozione, e lo stato di questo giro e' ancora quello
+    // vecchio.
+    const sel = selectedPathRef.current;
+    if (sel && records.length > 0 && !recordPaths.includes(sel)) {
       setSelectedPath(null);
       setEditRow?.(null);
     }
@@ -1183,6 +1214,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     const next = idx >= 0 ? recordPaths[idx + delta] : undefined;
     if (!next) return;
     if (cur) flushSelected(cur);
+    pendingRemovalRef.current = null;
     selectedPathRef.current = next;
     setEditRow?.(next);
     setSelectedPath(next);
@@ -1268,6 +1300,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
           rowActions={rowActions}
+          onRemoved={onRemoved}
         />
         </DataVersionContext.Provider>
       )}

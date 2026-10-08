@@ -85,11 +85,13 @@ const EXPECT_SAVE_NEW: RowToolbarAction = {
 // ======================================================================================
 
 describe('rowToolbarActions — caso reale (Prima Nota, Reg. contabili)', () => {
-  it('toolbar PN + addCommand della lista: Salva, Salva+, Nuovo in questo ordine', () => {
+  // SXADV-6045: la toolbar PN ha la voce cancel, quindi c'e' anche l'Annulla di riga.
+  it('toolbar PN + addCommand della lista: Salva, Salva+, Annulla, Nuovo in questo ordine', () => {
     const r = run({ addCommand: 'Add', listPath: LIST });
     expect(r).toEqual([
       EXPECT_SAVE,
       EXPECT_SAVE_NEW,
+      { key: 'cancel', label: 'Annulla', icon: 'undo', action: 'CancelRow', params: { navpath: ROW }, disabled: false },
       { key: 'new', label: 'Nuovo', icon: 'add.png', action: 'Add', params: { navpath: LIST }, disabled: false },
     ]);
   });
@@ -106,14 +108,16 @@ describe('rowToolbarActions — caso reale (Prima Nota, Reg. contabili)', () => 
     expect(sn?.params.navpath).not.toBe('S1-0.0');
   });
 
-  it('nessuna voce Annulla ne Cancella nel risultato', () => {
+  // SXADV-6045: l'Annulla di riga ora c'e'; il Cancella resta fuori.
+  it('nessuna voce Cancella nel risultato', () => {
     const r = run({ addCommand: 'Add', listPath: LIST });
-    expect(keys(r).every((k) => k === 'save' || k === 'saveNew' || k === 'new')).toBe(true);
-    expect(r).toHaveLength(3);
+    expect(keys(r).every((k) => k === 'save' || k === 'saveNew' || k === 'cancel' || k === 'new')).toBe(true);
+    expect(r).toHaveLength(4);
   });
 
-  it('toolbar PN senza addCommand: newRecord disabilitato e senza handler -> solo Salva', () => {
-    expect(run({})).toEqual([EXPECT_SAVE]);
+  it('toolbar PN senza addCommand: newRecord disabilitato e senza handler -> Salva (e Annulla, SXADV-6045)', () => {
+    expect(keys(run({}))).toEqual(['save', 'cancel']);
+    expect(run({})[0]).toEqual(EXPECT_SAVE);
   });
 });
 
@@ -476,7 +480,7 @@ describe('rowToolbarActions — ordine, etichette, icone, purezza', () => {
   it('ordine Salva, Salva+, Nuovo qualunque sia l ordine nella toolbar della pagina', () => {
     const nr = { id: 'newRecordS1-9', text: 'Nuovo', icon: 'add.png', handler: "doAction2.createCallback('Add', 'S1-9')", disabled: false };
     const r = run({ pageToolbar: [nr, DELETE, SAVE_NEW, CANCEL, SAVE] });
-    expect(keys(r)).toEqual(['save', 'saveNew', 'new']);
+    expect(keys(r)).toEqual(['save', 'saveNew', 'cancel', 'new']); // SXADV-6045
   });
 
   it('etichette e icone del contratto, non quelle delle voci della pagina', () => {
@@ -574,7 +578,8 @@ describe('rowToolbarActions — lista incorporata (embedded)', () => {
     expect(n?.params).toEqual({ navpath: 'S1-0' });
   });
 
-  it('embedded=true sulla toolbar reale PN senza addCommand -> solo Salva', () => {
-    expect(run({ embedded: true })).toEqual([EXPECT_SAVE]);
+  it('embedded=true sulla toolbar reale PN senza addCommand -> Salva (e Annulla, SXADV-6045)', () => {
+    expect(keys(run({ embedded: true }))).toEqual(['save', 'cancel']);
+    expect(run({ embedded: true })[0]).toEqual(EXPECT_SAVE);
   });
 });
