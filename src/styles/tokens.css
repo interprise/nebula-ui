@@ -50,6 +50,11 @@
   --app-warning: #faad14;
   --app-error: #ff4d4f;
 
+  /* La riga su cui lavora il pannello "Gestione riga" e i campi modificabili
+   * del pannello (SXADV-6048.1): un giallo piu' scuro di quello degli avvisi
+   * in testata (Alert warning di antd, #fffbe6), cosi' non si confondono. */
+  --app-row-editing-bg: #fff1b8;
+
   /* Avvisi in basso a destra (INFO / NOTIFICATION): fondo azzurro chiaro e
    * bordo di un azzurro piu' scuro. Bianchi sul bianco della maschera non si
    * notavano (SXADV-5814.2 a/b). */
@@ -209,4 +214,5 @@
   --app-action-chip-border: rgba(255, 255, 255, 0.2);
   --app-text: rgba(255, 255, 255, 0.85);
   --app-text-subdued: rgba(255, 255, 255, 0.55);
+  --app-row-editing-bg: #5c4a00;
 }

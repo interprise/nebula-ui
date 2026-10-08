@@ -23,6 +23,8 @@ import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
 import { rowToolbarActions, pathAfterRemoval } from './rowToolbar';
 import { viewstateIdOf } from './listEditPosting';
+import { bareFieldName, echoText, type RowEcho } from './rowEcho';
+import type { FieldCaption } from '../controls/types';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 import { solvePromptBand, type LeadingPrompt } from './promptBand';
@@ -738,6 +740,22 @@ export const EditRowContext = React.createContext<((navpath: string | null) => v
 // la riga, quindi tenerli in mappa vuol dire riscriverli sul record dopo.
 export const FlushEditsContext = React.createContext<((navpath: string) => void) | undefined>(undefined);
 
+// Provided once by Shell: il campo (nome a filo) e' stato scritto e non e'
+// ancora partito con una richiesta. La riga in gestione ne tiene l'eco finche'
+// il server non la rimanda (SXADV-6048).
+export const FieldDirtyContext = React.createContext<((name: string) => boolean) | undefined>(undefined);
+
+/** I controlli di un albero di righe, per nome a filo. */
+function controlsByName(rows: readonly UIRow[] | undefined, out = new Map<string, UIControl>()): Map<string, UIControl> {
+  for (const row of rows ?? []) {
+    for (const cell of row.cells ?? []) {
+      if (cell.control?.name) out.set(cell.control.name, cell.control);
+      if (cell.rows) controlsByName(cell.rows, out);
+    }
+  }
+  return out;
+}
+
 // "Was the Nuovo/Add toolbar action just dispatched?" — read-and-clear function
 // provided by Shell (pendingAddRef). Lets a listEdit/multiEdit list distinguish
 // "server just marked a row as the edit path because it was added" from "this
@@ -1087,6 +1105,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // which doesn't thread onEditRow through. Shell provides it once at the top.
   const setEditRow = React.useContext(EditRowContext);
   const flushEdits = React.useContext(FlushEditsContext);
+  const isFieldDirty = React.useContext(FieldDirtyContext);
   const [hidden, setHidden] = React.useState(false);
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<ListRecord[]>([]);
@@ -1265,12 +1284,45 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     [hydratedPanel],
   );
 
+  // Eco nella griglia di quello che si scrive nel pannello (SXADV-6048): la
+  // riga in gestione mostra subito il digitato. Una voce resta finche' non
+  // arrivano righe dal server dopo che il campo e' partito (FieldDirtyContext,
+  // vedi ListRenderer): da li' la riga la rimanda il server - anche
+  // annullata, dopo un Annulla di riga.
+  const [rowEcho, setRowEcho] = React.useState<{ path: string; echo: RowEcho } | null>(null);
+  const panelControls = React.useMemo(() => controlsByName(hydratedPanel?.rows), [hydratedPanel]);
+  const onPanelChange = React.useCallback((name: string, value: unknown, caption?: FieldCaption) => {
+    (onChange as (n: string, v: unknown, c?: FieldCaption) => void)(name, value, caption);
+    const path = selectedPathRef.current;
+    if (!path) return;
+    const text = echoText(panelControls.get(name), value, caption);
+    const bare = bareFieldName(name, viewstateIdOf(path));
+    // Una voce nuova per ogni modifica: ListRenderer riconosce per identita'
+    // quelle a cui il server ha gia' risposto. Un campo che non si riflette
+    // (casella, combo senza didascalia) toglie la voce che aveva: torna la
+    // cella del server.
+    setRowEcho((prev) => {
+      const echo = { ...(prev && prev.path === path ? prev.echo : {}) };
+      if (text === undefined) {
+        if (!(bare in echo)) return prev;
+        delete echo[bare];
+      } else {
+        echo[bare] = { wire: name, text };
+      }
+      return { path, echo };
+    });
+  }, [onChange, panelControls]);
+
   // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
   // stays fully visible above it. Only wrap in the flex split when the panel
   // actually shows — otherwise render the grid alone so its height context is
   // unchanged. `panelShown` tells the grid to re-measure the height it fills, so
   // it gives up exactly the panel's space and takes it back when the panel closes.
   const showPanel = isListEdit && !hidden && !!hydratedPanel && panelIsEditable;
+  // La riga in gestione (sfondo giallo) e la sua eco valgono solo a pannello
+  // aperto. L'eco passa comunque intera: ListRenderer deve vedere anche le voci
+  // non in vista, per segnarle quando il server risponde.
+  const editingPath = showPanel ? selectedPath : null;
   return (
     <>
       <ListRenderer
@@ -1284,6 +1336,9 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         pendingAdd={isListEdit ? consumePendingAdd : undefined}
         embedded={props.embedded}
         panelShown={showPanel}
+        editingPath={isListEdit ? editingPath : null}
+        rowEcho={isListEdit ? rowEcho : null}
+        isEchoLive={isFieldDirty}
       />
       {showPanel && hydratedPanel && (
         <DataVersionContext.Provider value={panelDataVersion}>
@@ -1293,7 +1348,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           formShape={panelTemplate?.formShape}
           rowPath={selectedPath ?? undefined}
           canDelete={selectedCanDelete}
-          onChange={onChange}
+          onChange={onPanelChange}
           onAction={onAction}
           onClose={() => { flushSelected(selectedPath); setHidden(true); setEditRow?.(null); }}
           onNavigate={navigateRecord}

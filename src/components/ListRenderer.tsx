@@ -1,7 +1,8 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
 import { serverHtml, serverText, HTML_POLICY } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
-import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, themeAlpine } from 'ag-grid-community';
+import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, type IRowNode, themeAlpine } from 'ag-grid-community';
+import { applyRowEcho, pruneEcho, type EchoEntry, type RowEcho } from './rowEcho';
 import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
 import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
@@ -888,9 +889,17 @@ interface ListRendererProps {
   /** Whether the bottom edit panel is currently visible — re-measure the fill
    *  height when it appears/disappears (the grid grows to reclaim its space). */
   panelShown?: boolean;
+  /** listEdit: la riga su cui lavora il pannello aperto - sfondo giallo su
+   *  tutte le sue bande (SXADV-6048.1). */
+  editingPath?: string | null;
+  /** listEdit: l'eco del pannello sulla riga in gestione (SXADV-6048.2). */
+  rowEcho?: { path: string; echo: RowEcho } | null;
+  /** Il campo (nome a filo) non e' ancora partito con una richiesta. All'arrivo
+   *  di righe nuove dal server le voci dell'eco gia' partite smettono di valere. */
+  isEchoLive?: (wire: string) => boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown, editingPath, rowEcho, isEchoLive }) => {
   // A grid inside a tab does not repeat the tab's own label (the documents
   // "Righe fattura" case — see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
@@ -2241,10 +2250,108 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // righe a tutta larghezza rimontano i loro controlli. La regola legge la ref,
   // quindi vale al momento in cui AG Grid disegna la riga; una regola falsa
   // toglie la classe, cosi' non resta su una riga che ha cambiato record.
+  // La riga in gestione nel pannello, letta dalla regola di classe (SXADV-6048.1).
+  const editingPathRef = useRef<string | null>(null);
   const selectedRowClassRules = useMemo(() => ({
     'record-group-selected': (params: { data?: Record<string, unknown> }) =>
       selectedPathRef.current != null && params.data?._selectorPath === selectedPathRef.current,
+    'record-row-editing': (params: { data?: Record<string, unknown> }) =>
+      editingPathRef.current != null && params.data?._selectorPath === editingPathRef.current,
   }), []);
+
+  // La riga in gestione nel pannello (SXADV-6048.1): come la riga corrente,
+  // subito sulle righe gia' disegnate e con la regola di classe sulle altre.
+  useEffect(() => {
+    editingPathRef.current = editingPath ?? null;
+    applyClassByPath(editingPath ?? null, 'record-row-editing');
+  }, [editingPath, applyClassByPath, rowData]);
+
+  // L'eco del pannello sulla riga in gestione (SXADV-6048.2). Si scrivono
+  // solo le celle dell'eco, sul SOLO nodo della riga, ricordando il valore del
+  // server di ciascuna: togliendo l'eco si rimette quel valore, e solo dove la
+  // cella porta ancora il testo dell'eco (una spunta di selezione multiEdit
+  // scritta nel frattempo sullo stesso oggetto resta).
+  //
+  // Una voce vale finche' non arrivano righe dal server (`ui.rows` nuove) DOPO
+  // che il campo e' partito: allora la riga del server la contiene gia', o
+  // l'ha annullata. Non basta "non ancora partito": un campo con ricalcolo
+  // (sottoconto, importi) parte nello stesso istante in cui lo si sceglie. Le
+  // voci si segnano anche quando l'eco non e' in vista (pannello chiuso, altra
+  // riga selezionata), altrimenti tornerebbero vecchie alla riapertura.
+  const rowEchoRef = useRef(rowEcho);
+  const echoLiveRef = useRef(isEchoLive);
+  const echoAppliedRef = useRef<{ node: IRowNode; originals: Record<string, unknown>; texts: Record<string, unknown> } | null>(null);
+  const echoAnsweredRef = useRef(new WeakSet<EchoEntry>());
+  useEffect(() => {
+    rowEchoRef.current = rowEcho;
+    echoLiveRef.current = isEchoLive;
+  }, [rowEcho, isEchoLive]);
+  const syncRowEcho = useCallback(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    const prev = echoAppliedRef.current;
+    echoAppliedRef.current = null;
+    // I dati di un nodo senza l'eco messa qui: il valore del server dove la
+    // cella porta ancora il testo dell'eco.
+    const withoutEcho = (node: IRowNode): Record<string, unknown> => {
+      const data = node.data as Record<string, unknown>;
+      if (!prev || prev.node !== node) return data;
+      let out: Record<string, unknown> | null = null;
+      for (const [k, v] of Object.entries(prev.originals)) {
+        if (data[k] !== prev.texts[k]) continue;
+        out ??= { ...data };
+        out[k] = v;
+      }
+      return out ?? data;
+    };
+    const want = rowEchoRef.current;
+    // Anche fuori dal pannello (riga appena lasciata, pannello chiuso): finche'
+    // il server non risponde la riga tiene il digitato invece di tornare per un
+    // attimo al valore vecchio.
+    const echo = want
+      ? Object.fromEntries(Object.entries(want.echo).filter(([, e]) => !echoAnsweredRef.current.has(e)))
+      : {};
+    let target: IRowNode | undefined;
+    if (want && Object.keys(echo).length > 0) {
+      api.forEachNode((n) => {
+        const d = n.data as Record<string, unknown> | undefined;
+        if (!target && d && d._selectorPath === want.path && !d._isContinuationRow && !d._isBreakRow) target = n;
+      });
+    }
+    // Il nodo che portava l'eco e non la porta piu': si rimettono i valori
+    // del server, se e' ancora nella griglia (righe nuove = nodi nuovi).
+    if (prev && prev.node !== target && prev.node.id != null && api.getRowNode(prev.node.id) === prev.node) {
+      const restored = withoutEcho(prev.node);
+      if (restored !== prev.node.data) prev.node.updateData(restored);
+    }
+    if (!target) return;
+    const base = withoutEcho(target);
+    const patched = applyRowEcho(base, echo, ui.columns);
+    if (patched !== target.data) target.updateData(patched);
+    if (patched === base) return;
+    const originals: Record<string, unknown> = {};
+    const texts: Record<string, unknown> = {};
+    for (const k of Object.keys(patched)) {
+      if (patched[k] !== base[k]) { originals[k] = base[k]; texts[k] = patched[k]; }
+    }
+    echoAppliedRef.current = { node: target, originals, texts };
+  }, [ui.columns]);
+  useEffect(() => { syncRowEcho(); }, [rowEcho, isEchoLive, editingPath, syncRowEcho]);
+  // Righe nuove dal server: le voci gia' partite hanno avuto risposta.
+  useEffect(() => {
+    const want = rowEchoRef.current;
+    const live = echoLiveRef.current;
+    if (want) {
+      const unsent = live ? pruneEcho(want.echo, live) : null;
+      for (const [name, entry] of Object.entries(want.echo)) {
+        if (!unsent || unsent[name] !== entry) echoAnsweredRef.current.add(entry);
+      }
+    }
+    syncRowEcho();
+  }, [ui.rows, syncRowEcho]);
+  // AG Grid prende il rowData nuovo anche dopo questo giro: si riapplica sui
+  // nodi nuovi quando li ha.
+  const onRowDataUpdated = useCallback(() => syncRowEcho(), [syncRowEcho]);
 
   // Track which row is currently in edit mode for listEdit views
   const editingRowPath = useRef<string | null>(null);
@@ -2935,6 +3042,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           columnDefs={columnDefs}
           defaultColDef={WRAPPING_HEADER_COLDEF}
           rowData={rowData}
+          onRowDataUpdated={onRowDataUpdated}
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); measureColsOverflow(); }}
           onGridSizeChanged={measureColsOverflow}

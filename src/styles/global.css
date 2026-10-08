@@ -1431,6 +1431,13 @@ tr.breakRow td {
   background-color: var(--ag-selected-row-background-color) !important;
 }
 
+/* La riga su cui lavora il pannello "Gestione riga" (SXADV-6048.1), tutte le
+   sue bande. Dopo selezione e passaggio del mouse: a pannello aperto vince il
+   giallo. */
+.ag-row.record-row-editing {
+  background-color: var(--app-row-editing-bg) !important;
+}
+
 /* ============================================================
    Legacy list state classes — ported from entrasp GRIGIO/style.css.
    Applied per-cell from the ViewItem contentClass (?cssClass ->
@@ -1854,6 +1861,20 @@ body[style*="cursor: wait"] * {
   text-overflow: ellipsis;
 }
 .edit-panel-td { padding: 2px 4px; vertical-align: top; }
+/* I campi modificabili del pannello hanno lo stesso giallo della riga in
+   gestione (SXADV-6048.1): si vede su quale record si sta agendo. */
+.edit-panel-body .ant-input:not(.ant-input-disabled),
+.edit-panel-body .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled),
+.edit-panel-body .ant-input-number:not(.ant-input-number-disabled),
+.edit-panel-body .ant-picker:not(.ant-picker-disabled),
+.edit-panel-body .ant-select:not(.ant-select-disabled),
+.edit-panel-body .ant-select:not(.ant-select-disabled) .ant-select-selector {
+  background-color: var(--app-row-editing-bg);
+}
+.edit-panel-body .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled) .ant-input,
+.edit-panel-body .ant-input-number:not(.ant-input-number-disabled) .ant-input-number-input {
+  background-color: transparent;
+}
 
 /* Combo chevron is the click target that opens the list (open-on-arrow, not
    open-on-body). The Select's own cursor is `text` for the search input, so the

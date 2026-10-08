@@ -68,7 +68,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, FieldDirtyContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -1689,6 +1689,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     }
   }, [loginInfo.banners, handleBannerClick]);
 
+  // Il campo e' stato scritto e non e' ancora partito con nessuna richiesta:
+  // la riga in gestione ne tiene l'eco finche' il server non la rimanda
+  // (SXADV-6048).
+  const isFieldDirty = useCallback((name: string) => dirtyFieldsRef.current.has(name), []);
+
   // Manda al server le modifiche digitate nel pannello di riga e ancora non
   // spedite, indicando la riga a cui appartengono. Lo chiama il pannello quando
   // cambia record o quando si chiude: prima non succedeva niente fino al Salva,
@@ -2665,6 +2670,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     )}
                     <EditRowContext.Provider value={handleEditRow}>
                       <FlushEditsContext.Provider value={flushFieldEdits}>
+                      <FieldDirtyContext.Provider value={isFieldDirty}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
                       <PageToolbarContext.Provider value={currentTab.toolbar}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
@@ -2678,6 +2684,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                         </DataVersionContext.Provider>
                       </PageToolbarContext.Provider>
                       </PendingAddContext.Provider>
+                      </FieldDirtyContext.Provider>
                       </FlushEditsContext.Provider>
                     </EditRowContext.Provider>
                   </>
