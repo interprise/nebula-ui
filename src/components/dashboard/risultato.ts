@@ -30,6 +30,11 @@ export interface Risultato {
   via?: string;
   /** La trasformazione e' cambiata dopo l'ultimo aggiornamento: ricalcolata al volo. */
   provvisorio?: boolean;
+  /**
+   * I gruppi tolti dal calcolo (SALESCENDE E4), nell'ordine della trasformazione;
+   * `etichetta` null quando quel gruppo oggi nei dati non c'e'.
+   */
+  esclusi?: { k?: string; etichetta?: string | null; righe?: number }[];
 }
 
 export interface Trasformazione {
@@ -40,16 +45,50 @@ export interface Trasformazione {
   outAgg?: string;
   topN?: number;
   resto?: string;
+  /** Le CHIAVI (`k`) dei gruppi da togliere dal calcolo, non i testi (SALESCENDE E1). */
+  escludi?: string[];
 }
 
+/** Che notizia e' un numero che sale o scende (SALESCENDE S1). */
+export type Tono = 'bene' | 'attenzione' | 'neutro';
+
 export interface Opzioni {
-  /** Il numero che sale e' una buona notizia o da tenere d'occhio. */
-  sale?: 'bene' | 'male';
+  /**
+   * Il numero che sale e' una buona notizia, da tenere d'occhio o indifferente;
+   * `male` e' il nome di prima di `attenzione`.
+   */
+  sale?: Tono | 'male' | '';
+  /** Lo stesso per la discesa; assente = l'opposto di `sale`. */
+  scende?: Tono | 'male' | '';
   /** La vista che apre il clic su una riga (SXADV-62, 27/09); assente = quella della lista. */
   vistaDettaglio?: string;
   /** Da quali aziende vengono i risultati (SXADV-6000); assente = l'azienda corrente. */
   aziende?: { modo?: 'corrente' | 'scelte' | 'tutte'; codici?: string[] };
 }
+
+const tono = (v: unknown): Tono | null =>
+  v === 'bene' || v === 'attenzione' || v === 'neutro' ? v : v === 'male' ? 'attenzione' : null;
+
+const opposto = (t: Tono): Tono => (t === 'bene' ? 'attenzione' : t === 'attenzione' ? 'bene' : 'neutro');
+
+/**
+ * Sale e scende risolti (SALESCENDE S2): `sale` assente e' neutro, come la Home li ha
+ * sempre mostrati; `scende` assente e' l'opposto di `sale`. Cosi' i widget salvati prima
+ * non cambiano aspetto.
+ */
+export const toniDi = (o: Opzioni | null | undefined): { sale: Tono; scende: Tono } => {
+  const sale = tono(o?.sale) ?? 'neutro';
+  return { sale, scende: tono(o?.scende) ?? opposto(sale) };
+};
+
+export const oppostoDi = opposto;
+
+/** Il tono di un delta: sale se positivo, scende se negativo, neutro se nullo o zero. */
+export const tonoDelta = (d: number | null, o: Opzioni | null | undefined): Tono => {
+  if (d === null || d === 0) return 'neutro';
+  const t = toniDi(o);
+  return d > 0 ? t.sale : t.scende;
+};
 
 /** Raggruppamento sempre, anche a quattro cifre: vedi NUMERO in DashboardPanel. */
 const formato = (decimali: number) => {

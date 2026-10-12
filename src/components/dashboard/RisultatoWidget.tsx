@@ -7,6 +7,7 @@ import {
   conSegno,
   conteggio,
   scrivi,
+  tonoDelta,
   type Opzioni,
   type Risultato,
   type Trasformazione,
@@ -94,9 +95,8 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
   const parziale = r.completo === false;
   // Il colore segue la scelta dell'utente e non e' mai l'unico segno: la freccia e il
   // testo col segno dicono la stessa cosa a chi il colore non lo distingue.
-  let tono = 'neutro';
-  if (d !== null && d !== 0 && opzioni?.sale)
-    tono = (d > 0) === (opzioni.sale === 'bene') ? 'bene' : 'male';
+  const tono = tonoDelta(d, opzioni);
+  const classeTono = tono === 'attenzione' ? 'male' : tono;
   return (
     <div className="dash-numero" data-forma="kpi">
       <div className="dash-numero-valore">
@@ -107,7 +107,7 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
         {parziale && n !== null ? <span className="dash-numero-parziale"> (parziale)</span> : null}
       </div>
       {d !== null ? (
-        <div className={`dash-numero-delta dash-tono-${tono}`}>
+        <div className={`dash-numero-delta dash-tono-${classeTono}`} data-tono={tono}>
           {d > 0 ? (
             <ArrowUpOutlined aria-label="sale" />
           ) : d < 0 ? (
@@ -178,6 +178,20 @@ const Barre: React.FC<Props> = ({ risultato: r, trasformazione }) => {
   );
 };
 
+/** «senza: Sede 000»: i gruppi tolti dal calcolo si dichiarano (SALESCENDE E7). */
+const Esclusi: React.FC<{ r: Risultato }> = ({ r }) => {
+  const esclusi = r.esclusi || [];
+  if (esclusi.length === 0) return null;
+  const nomi = esclusi.map((e) =>
+    e.etichetta ? e.etichetta : e.k ? e.k : '(vuoto)'
+  );
+  return (
+    <Typography.Text type="secondary" className="dash-esclusi">
+      senza: {nomi.join(', ')}
+    </Typography.Text>
+  );
+};
+
 /**
  * Il risultato nella forma scelta, oppure null quando il widget deve mostrare la lista
  * (forma «lista», nessun risultato). Un risultato in errore lo dice e lascia la lista:
@@ -191,7 +205,11 @@ export const RisultatoVista: React.FC<Props> = (p) => {
         Il calcolo non si applica: {r.errore} Sotto, la lista.
       </Typography.Text>
     );
-  if (forma === 'kpi') return <Numero {...p} />;
-  if (forma === 'bar') return <Barre {...p} />;
-  return null;
+  if (forma !== 'kpi' && forma !== 'bar') return null;
+  return (
+    <>
+      <Esclusi r={r} />
+      {forma === 'kpi' ? <Numero {...p} /> : <Barre {...p} />}
+    </>
+  );
 };

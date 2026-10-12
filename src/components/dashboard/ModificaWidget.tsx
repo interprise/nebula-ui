@@ -17,7 +17,20 @@ import * as api from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
 import type { ErrorItem } from '../../types/ui';
 import { RisultatoVista } from './RisultatoWidget';
-import type { Opzioni, Risultato, Trasformazione } from './risultato';
+import { oppostoDi, toniDi } from './risultato';
+import type { Opzioni, Risultato, Tono, Trasformazione } from './risultato';
+
+/** Un gruppo che l'anteprima offre da escludere (`dashboard.Preview`, SALESCENDE E6). */
+interface Candidato {
+  k?: string;
+  etichetta?: string;
+}
+
+const TONI: { value: Tono; label: string }[] = [
+  { value: 'bene', label: 'una buona notizia' },
+  { value: 'attenzione', label: 'da tenere d\'occhio' },
+  { value: 'neutro', label: 'indifferente' },
+];
 
 /** Quello del widget che il pannello legge e riscrive. */
 export interface WidgetDaModificare {
@@ -62,7 +75,10 @@ interface Bozza {
   outAgg: string;
   topN: number;
   resto: string;
-  sale: '' | 'bene' | 'male';
+  sale: Tono;
+  scende: Tono;
+  /** Le chiavi dei gruppi tolti dal calcolo (SALESCENDE E8). */
+  escludi: string[];
   /** La vista che apre il clic su una riga; vuota = quella della lista. */
   vistaDettaglio: string;
   /** SXADV-6000: da quali aziende prendere i risultati. */
@@ -105,7 +121,8 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     outAgg: t.outAgg || 'count',
     topN: t.topN || 10,
     resto: t.resto || 'altri',
-    sale: w.opzioni?.sale || '',
+    ...toniDi(w.opzioni),
+    escludi: Array.isArray(t.escludi) ? t.escludi.filter((k) => typeof k === 'string') : [],
     vistaDettaglio: typeof w.opzioni?.vistaDettaglio === 'string' ? w.opzioni.vistaDettaglio : '',
     ambito:
       w.opzioni?.aziende?.modo === 'scelte' || w.opzioni?.aziende?.modo === 'tutte'
@@ -133,6 +150,7 @@ const trasformazioneDa = (b: Bozza): Trasformazione | null => {
   if (b.gruppo && b.conFiltro)
     t.having = { op: b.op, value: b.valore === null ? '' : b.valore };
   if (b.forma === 'kpi' && b.gruppo) t.outAgg = b.outAgg;
+  if (b.gruppo && b.escludi.length) t.escludi = [...b.escludi];
   if (b.forma === 'bar') {
     t.topN = b.topN;
     t.resto = b.resto;
@@ -153,9 +171,13 @@ const opzioniDa = (
 ): string => {
   const o: Opzioni = { ...(prima || {}) };
   delete o.sale;
+  delete o.scende;
   delete o.vistaDettaglio;
   delete o.aziende;
-  if (b.forma === 'kpi' && b.sale) o.sale = b.sale;
+  if (b.forma === 'kpi') {
+    o.sale = b.sale;
+    o.scende = b.scende;
+  }
   const vista = b.vistaDettaglio.trim();
   if (vista) o.vistaDettaglio = vista;
   // Su una lista che non dipende dall'azienda l'ambito non si manda: il server lo
@@ -184,6 +206,8 @@ const ModificaWidget: React.FC<Props> = ({
   const feedback = useFeedback();
   const [bozza, setBozza] = useState<Bozza | null>(null);
   const [anteprima, setAnteprima] = useState<Risultato | null>(null);
+  /** I gruppi dell'ultima anteprima fra cui scegliere quelli da escludere (E6). */
+  const [candidati, setCandidati] = useState<Candidato[]>([]);
   const [erroreAnteprima, setErroreAnteprima] = useState<string | null>(null);
   const [calcolando, setCalcolando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -198,6 +222,7 @@ const ModificaWidget: React.FC<Props> = ({
     richiesta.current++;
     setBozza(widget ? daWidget(widget) : null);
     setAnteprima(null);
+    setCandidati([]);
     setErroreAnteprima(null);
     setErroreSalva(null);
     setSalvando(false);
@@ -226,6 +251,10 @@ const ModificaWidget: React.FC<Props> = ({
           if (mia !== richiesta.current || aperto.current !== id) continue;
           if (resp.esito === 'ok' && resp.risultato) {
             setAnteprima(resp.risultato as Risultato);
+            // Una risposta senza candidati (filtro sui gruppi a meta') non cancella quelli
+            // che ci sono: il raggruppamento e' lo stesso, li azzera solo un cambio di gruppo.
+            if (Array.isArray(resp.candidati) && resp.candidati.length)
+              setCandidati(resp.candidati as Candidato[]);
             setErroreAnteprima(null);
           } else {
             const errors = resp.errors as ErrorItem[] | undefined;
@@ -281,6 +310,27 @@ const ModificaWidget: React.FC<Props> = ({
     null;
 
   const trasformazione = bozza ? trasformazioneDa(bozza) : null;
+  // Le scelte per «Escludi i gruppi»: i candidati dell'anteprima, piu' i gruppi gia'
+  // esclusi che fra i candidati non ci sono (col testo noto, o la chiave).
+  const opzioniEscludi = useMemo(() => {
+    const out: { value: string; label: string }[] = [];
+    const visti = new Set<string>();
+    const nome = (k: string, etichetta?: string | null) =>
+      etichetta ? etichetta : k ? k : '(vuoto)';
+    for (const c of candidati) {
+      const k = typeof c.k === 'string' ? c.k : '';
+      if (visti.has(k)) continue;
+      visti.add(k);
+      out.push({ value: k, label: nome(k, c.etichetta) });
+    }
+    for (const k of bozza?.escludi || []) {
+      if (visti.has(k)) continue;
+      visti.add(k);
+      const noto = (anteprima?.esclusi || []).find((e) => e.k === k);
+      out.push({ value: k, label: nome(k, noto?.etichetta) });
+    }
+    return out;
+  }, [candidati, bozza?.escludi, anteprima]);
   const chiaveAnteprima = bozza ? `${bozza.forma}|${JSON.stringify(trasformazione)}` : '';
 
   // L'anteprima si chiede con un attimo di attesa: chi scrive un valore non deve far
@@ -311,15 +361,24 @@ const ModificaWidget: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chiaveAnteprima, widget, sid]);
 
-  const cambia = (p: Partial<Bozza>) =>
+  const cambia = (p: Partial<Bozza>) => {
+    // I candidati sono valori della colonna di prima: non si offrono sul gruppo nuovo.
+    if (p.gruppo !== undefined && p.gruppo !== bozza?.gruppo) setCandidati([]);
     setBozza((b) => {
       if (!b) return b;
       const n = { ...b, ...p };
+      // Cambiare «sale» porta «scende» all'opposto; dopo, «scende» si sceglie da se'.
+      if (p.sale !== undefined && p.scende === undefined) n.scende = oppostoDi(p.sale);
+      // Le chiavi escluse sono valori della colonna di raggruppamento: cambiata quella,
+      // non vogliono piu' dire niente.
+      if (p.gruppo !== undefined && p.gruppo !== b.gruppo && p.escludi === undefined)
+        n.escludi = [];
       // Le barre senza raggruppamento non esistono: se si toglie il gruppo si torna al
       // numero invece di lasciare una scelta che il server rifiuterebbe.
       if (n.forma === 'bar' && !n.gruppo) n.forma = 'kpi';
       return n;
     });
+  };
 
   /** Gli esempi riempiono i campi e basta: salvare resta una scelta. */
   const esempio = (quale: 'rosso' | 'totale' | 'barre') => {
@@ -523,6 +582,23 @@ const ModificaWidget: React.FC<Props> = ({
                   </Space.Compact>
                 </Form.Item>
               ) : null}
+              {bozza.gruppo ? (
+                <Form.Item
+                  label="Escludi i gruppi"
+                  extra="Si tolgono dal calcolo e il widget lo dice. Si sceglie fra i gruppi dell'anteprima."
+                >
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    value={bozza.escludi}
+                    onChange={(v: string[]) => cambia({ escludi: v })}
+                    options={opzioniEscludi}
+                    placeholder="nessuno"
+                    optionFilterProp="label"
+                    aria-label="Escludi i gruppi"
+                  />
+                </Form.Item>
+              ) : null}
               {bozza.forma === 'kpi' && bozza.gruppo ? (
                 <Form.Item label="Numero finale">
                   <Select
@@ -561,17 +637,30 @@ const ModificaWidget: React.FC<Props> = ({
                 </Form.Item>
               ) : null}
               {bozza.forma === 'kpi' ? (
-                <Form.Item label="Se il numero sale è">
-                  <Radio.Group
-                    value={bozza.sale}
-                    onChange={(e) => cambia({ sale: e.target.value })}
-                    aria-label="Se il numero sale"
-                  >
-                    <Radio value="bene">una buona notizia</Radio>
-                    <Radio value="male">da tenere d&apos;occhio</Radio>
-                    <Radio value="">indifferente</Radio>
-                  </Radio.Group>
-                </Form.Item>
+                <>
+                  <Form.Item label="Se il numero sale è">
+                    <Radio.Group
+                      value={bozza.sale}
+                      onChange={(e) => cambia({ sale: e.target.value })}
+                      aria-label="Se il numero sale"
+                    >
+                      {TONI.map((t) => (
+                        <Radio key={t.value} value={t.value}>{t.label}</Radio>
+                      ))}
+                    </Radio.Group>
+                  </Form.Item>
+                  <Form.Item label="Se il numero scende è">
+                    <Radio.Group
+                      value={bozza.scende}
+                      onChange={(e) => cambia({ scende: e.target.value })}
+                      aria-label="Se il numero scende"
+                    >
+                      {TONI.map((t) => (
+                        <Radio key={t.value} value={t.value}>{t.label}</Radio>
+                      ))}
+                    </Radio.Group>
+                  </Form.Item>
+                </>
               ) : null}
             </>
           )}
@@ -689,7 +778,7 @@ const ModificaWidget: React.FC<Props> = ({
                   risultato={anteprima}
                   forma={bozza.forma}
                   trasformazione={trasformazione}
-                  opzioni={bozza.sale ? { sale: bozza.sale } : null}
+                  opzioni={{ sale: bozza.sale, scende: bozza.scende }}
                 />
               ) : null}
             </section>
