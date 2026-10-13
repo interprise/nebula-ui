@@ -1031,6 +1031,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           }
         } else {
           update.ui = resp.ui;
+          // Una resa completa non viene da un template: la chiave e il
+          // manifesto della videata di prima non descrivono piu' quello che
+          // c'e' a schermo. Rimasti li', una scheda ripristinata da F5 come
+          // dettaglio e poi riaperta dal menu su un albero mandava ancora
+          // `templateKey=...Detail:2` dal pannello, e il Salva tornava con
+          // "Sessione non valida" invece di rinominare il nodo.
+          update.templateKey = undefined;
+          update.bindings = undefined;
+          update.scopePaths = undefined;
           // Initialize form values from all controls in the UI tree
           const newFormValues = extractFormValues(resp.ui);
           formValuesRef.current[tabKey] = newFormValues;
