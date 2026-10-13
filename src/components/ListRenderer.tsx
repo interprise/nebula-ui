@@ -15,7 +15,11 @@ import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
-import { rememberRow, recallRow, findRememberedRow } from './rowSelectionMemory';
+import {
+  rememberRow, recallRow, findRememberedRow,
+  armReturn, armedReturn, disarmReturn, lastRecordPath, ROW_RETURN_ATTR,
+} from './rowSelectionMemory';
+import { focusNewPage } from '../services/focusRestore';
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
@@ -971,6 +975,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // Stable key for persisting the selected row across the remount that occurs
   // when navigating into a detail and back (item 5455.1C).
   const selKey = `${sid ?? ''}|${ui.viewName ?? ui.path ?? ''}`;
+  // Ritorno armato dall'uscita verso un dettaglio: finche' c'e', il cursore lo
+  // mette la lista sulla riga e non focusNewPage in testata (SXADV-5927).
+  const returnArmed = !isListEdit && !!armedReturn(selKey);
 
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
@@ -997,6 +1004,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
     return null;
   })();
+  // Il rigo aggiunto col Nuovo sta sull'ultima pagina (SXADV-5927).
+  const newRowOnThisPage = !pageInfo || pageInfo.currentPage >= pageInfo.totalPages;
   // An embedded detail grid with more than one server page gets an interactive
   // pager wired to DetailPage (slim, updates just this grid). Top-level lists
   // keep paging in their toolbar, so this is embedded-only.
@@ -2392,7 +2401,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       return;
     }
     // Non-editable lists: the selector navigates to the detail as before.
-    if (command) onAction(command, { navpath: path });
+    if (command) {
+      // Al ritorno il fuoco va su questa riga (SXADV-5927).
+      if (!isListEdit) armReturn(selKey, 'row');
+      onAction(command, { navpath: path });
+    }
   }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, selKey]);
 
   // Lo stesso clic su una banda di continuazione arriva sia qui sia a
@@ -2817,8 +2830,31 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // mano alla griglia: da li' lo scorrimento e' suo.
   useEffect(() => {
     if (isListEdit) return; // edit mode handled by the effect above
+    const armed = armedReturn(selKey);
     const stored = recallRow(selKey);
-    if (!stored) return;
+    // Il fuoco sulla riga si da' al ritorno armato dall'uscita verso il
+    // dettaglio (SXADV-5927); un ridisegno qualsiasi della lista evidenzia e
+    // riallinea come prima, ma non sposta il cursore. Il ritorno resta armato
+    // per tutta la finestra di riallineamento: prendendo il fuoco l'area dei tab
+    // si allarga, AG Grid ridisegna le righe e la riga focalizzata sparisce dal
+    // DOM, quindi il fuoco si rimette finche' la finestra dura (anche attraverso
+    // un rowData nuovo, che fa ripartire questo effetto).
+    let focused = false;
+    const giveUp = () => {
+      if (!armed) return;
+      disarmReturn(selKey);
+      gridContainerRef.current?.removeAttribute(ROW_RETURN_ATTR);
+      // La lista non ha trovato la riga (cancellata nel dettaglio, su un'altra
+      // pagina...): il cursore torna a chi lo dava prima, altrimenti resterebbe
+      // sul <body> e il primo TAB andrebbe sulla barra dell'app (SXADV-5803).
+      const active = document.activeElement;
+      if (!focused && (!active || active === document.body)) focusNewPage();
+    };
+    // Il Nuovo accoda il rigo in fondo alla collezione: e' l'ultimo della
+    // lista solo sull'ultima pagina e senza un ordinamento fatto nel browser.
+    const newRowIsLast = (api: GridApi) =>
+      newRowOnThisPage && !api.getColumnState().some((c) => c.sort);
+    if (!stored && armed !== 'new') { giveUp(); return; }
     let raf = 0;
     let tries = 0;
     let since = 0;
@@ -2836,6 +2872,25 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const r = el.getBoundingClientRect();
       return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
     };
+    // Il fuoco va sulla riga solo se non e' gia' altrove: sul <body> (perso nel
+    // ridisegno) o dentro la griglia. Chi e' su un campo della testata ci resta.
+    const focusRow = (api: GridApi, rowIndex: number) => {
+      const active = document.activeElement;
+      if (active && active !== document.body && !container?.contains(active)) return;
+      const viewport = getGridViewport();
+      const rowEl = viewport?.querySelector<HTMLElement>(`.ag-center-cols-container .ag-row[row-index="${rowIndex}"]`);
+      if (!rowEl || rowEl.contains(active)) return;
+      // Liste non modificabili: suppressCellFocus, il fuoco lo prende la riga.
+      // Le multiEdit hanno il fuoco di cella: non sulla casella di selezione,
+      // dove uno spazio cambierebbe la scelta.
+      const cells = Array.from(rowEl.querySelectorAll<HTMLElement>('.ag-cell[tabindex]'));
+      const cell = cells.find((c) => !c.querySelector('input[type="checkbox"]')) ?? cells[0];
+      const colId = cell?.getAttribute('col-id') ?? api.getAllDisplayedColumns()[0]?.getColId();
+      if (colId) api.setFocusedCell(rowIndex, colId);
+      // setFocusedCell segna la riga ma non sposta il fuoco del browser.
+      (cell ?? rowEl).focus({ preventScroll: true });
+      focused = true;
+    };
     const attempt = () => {
       const api = gridApiRef.current;
       if (!api || api.isDestroyed()) {
@@ -2850,31 +2905,44 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             nodes.push({ path: p, rowIndex: n.rowIndex, id: n.id });
           }
         });
-        const match = findRememberedRow(stored, nodes.map((n) => n.path), !!embedded);
+        if (armed === 'new' && !newRowIsLast(api)) { giveUp(); return; }
+        const match = armed === 'new'
+          ? lastRecordPath(nodes)
+          : findRememberedRow(stored ?? '', nodes.map((n) => n.path), !!embedded);
         if (!match) {
           if (tries++ < 10) raf = requestAnimationFrame(attempt);
+          else giveUp();
           return;
         }
         // La lista rinata con un viewstate nuovo (5957.2) da' alla riga un
         // percorso nuovo: da qui in poi vale quello.
         if (match !== stored) rememberRow(selKey, match);
         markSelected(match);
-        if (alignedPathRef.current === match) return;
+        if (alignedPathRef.current === match && !armed) return;
         alignedPathRef.current = match;
         target = nodes.find((n) => n.path === match) ?? null;
-        if (!target) return;
+        if (!target) { giveUp(); return; }
         since = performance.now();
       }
-      if (userTookOver) return;
-      if (!inView(target.id)) api.ensureIndexVisible(target.rowIndex, 'middle');
+      if (userTookOver) { giveUp(); return; }
+      if (armed === 'new') {
+        // Il rigo nuovo e' in fondo, con le sue bande sotto: la griglia va
+        // scorsa fino in fondo, non con la riga a meta' (SXADV-5927).
+        const viewport = getGridViewport();
+        if (viewport && viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      } else if (!inView(target.id)) api.ensureIndexVisible(target.rowIndex, 'middle');
+      if (armed && inView(target.id)) focusRow(api, target.rowIndex);
       if (performance.now() - since < ALIGN_WINDOW_MS) raf = requestAnimationFrame(attempt);
+      else giveUp();
     };
     raf = requestAnimationFrame(attempt);
     return () => {
       cancelAnimationFrame(raf);
       USER_SCROLL_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport]);
+  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage]);
 
   // The server emits gridActions for embedded lists only. `ui.footer` (the
   // legacy below-the-grid Add) is deliberately no longer rendered — its command
@@ -2920,7 +2988,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               <Button
                 size="small"
                 icon={<PlusOutlined />}
-                onClick={() => onAction(gridActions.addCommand!, gridPath ? { navpath: gridPath } : undefined)}
+                onClick={() => {
+                  // Il Nuovo di una lista non listEdit apre il dettaglio del
+                  // rigo nuovo: al ritorno il fuoco va sull'ultima riga, quella
+                  // appena aggiunta (SXADV-5927). Le listEdit aggiungono nel
+                  // pannello e restano sulla pagina.
+                  if (!isListEdit) armReturn(selKey, 'new');
+                  onAction(gridActions.addCommand!, gridPath ? { navpath: gridPath } : undefined);
+                }}
               >
                 {gridActions.addLabel || 'Nuovo'}
               </Button>
@@ -3014,6 +3089,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
       <div
         ref={gridContainerRef}
+        {...(returnArmed ? { [ROW_RETURN_ATTR]: '' } : {})}
         style={(() => {
           // Top-level list page: fill the route container (has a definite height).
           if (!embedded) {

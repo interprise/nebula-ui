@@ -71,6 +71,8 @@ const body = new FintoHTMLElement();
 const view = {
   contains: (n: unknown) => campi.includes(n as FintoHTMLElement),
   querySelectorAll: () => campi.filter((c) => c instanceof FintoInput),
+  // SXADV-5927: nessuna lista con un ritorno di riga armato.
+  querySelector: () => null,
 };
 const doc: Record<string, unknown> & { activeElement: unknown } = {
   activeElement: body,

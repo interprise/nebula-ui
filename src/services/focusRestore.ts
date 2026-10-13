@@ -16,6 +16,8 @@
  *   - scrollIntoView({block:'nearest'}) keeps the focused field visible
  *     without scrolling if it was already in view.
  */
+import { ROW_RETURN_ATTR } from './rowReturn';
+
 let pending: { fallbackId: string | null } | null = null;
 
 /** Il fuoco e' "sospeso": su <body>, o sul pannello di un popup antd
@@ -154,6 +156,9 @@ export function focusNewPage(currField?: string | null): void {
     const view = document.querySelector('.tab-content .view-container');
     const active = document.activeElement;
     if (dialogOpen() || (active && active !== document.body && view?.contains(active))) return;
+    // Ritorno su una lista da un suo dettaglio: il fuoco lo mette la lista sulla
+    // riga da cui si era usciti (SXADV-5927).
+    if (view?.querySelector(`[${ROW_RETURN_ATTR}]`)) return;
     const byServer = currField ? document.getElementById(currField) : null;
     const target = isUsableField(byServer)
       ? byServer

@@ -1,3 +1,5 @@
+import { disarmAllReturns } from '../services/rowReturn';
+
 /** La riga da cui si e' usciti verso un dettaglio, per lista (chiave = sid +
  *  vista). Sta fuori dal componente perche' ListRenderer si rimonta entrando
  *  nel dettaglio e tornando: al ritorno la riga torna evidenziata e a vista
@@ -15,6 +17,22 @@ export function recallRow(key: string): string | undefined {
 
 export function forgetAllRows(): void {
   rememberedByList.clear();
+  disarmAllReturns();
+}
+
+// L'uscita armata verso un dettaglio sta nei servizi (la disarma anche l'API
+// a un ingresso di primo livello); qui si riesporta accanto alla riga ricordata.
+export { armReturn, armedReturn, disarmReturn, ROW_RETURN_ATTR } from '../services/rowReturn';
+export type { ReturnMode } from '../services/rowReturn';
+
+/** La riga di dati piu' in basso: e' quella appena aggiunta col Nuovo, che CORE
+ *  accoda alla collezione. */
+export function lastRecordPath(nodes: readonly { path: string; rowIndex: number }[]): string | null {
+  let last: { path: string; rowIndex: number } | null = null;
+  for (const n of nodes) {
+    if (!last || n.rowIndex > last.rowIndex) last = n;
+  }
+  return last ? last.path : null;
 }
 
 /** `S1-21.1` -> sid `S1`, riga `1`; il viewstate (21) resta fuori. */

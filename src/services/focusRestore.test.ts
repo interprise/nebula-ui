@@ -168,6 +168,9 @@ describe('focusNewPage: il cursore sulla pagina nuova (SXADV-5969.1)', () => {
   const view = {
     contains: (n: unknown) => campi.includes(n as FintoInput),
     querySelectorAll: () => campi,
+    // SXADV-5927: focusNewPage chiede alla vista se una lista ha un ritorno di
+    // riga armato; qui nessuna lo ha.
+    querySelector: () => null,
   };
   const body = new FintoHTMLElement();
   const doc: Record<string, unknown> & { activeElement: unknown } = {

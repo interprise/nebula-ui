@@ -1,5 +1,6 @@
 import type { ServerResponse, AttachmentMeta } from '../types/ui';
 import { withoutPositionalArrays } from './positionalValues';
+import { disarmAllReturns } from './rowReturn';
 
 const CMD_URL = '/entrasp/controller';
 const CMD2_URL = '/entrasp/controller2';
@@ -158,6 +159,8 @@ export async function executeMenuItem(
   // user answered an "unsaved changes" confirmation — see SXADV-5470.1).
   extra: Record<string, string> = {}
 ): Promise<ServerResponse> {
+  // Ingresso di primo livello: nessuna lista aspetta piu' il suo ritorno.
+  disarmAllReturns();
   return post(CMD_URL, {
     action: 'ExecuteMenuItem',
     menuId,
@@ -175,6 +178,8 @@ export async function postAction(
   // Gli array di colonna non partono con una richiesta puntata su una riga
   // della loro lista: il server li leggerebbe come valori di quella riga.
   const values = formValues && withoutPositionalArrays(formValues, params.navpath);
+  // Ingresso di primo livello senza voce di menu (SXADV-5783): come sopra.
+  if (params.newTask === '1') disarmAllReturns();
   return post(CMD_URL, { action, sid, ...params }, values);
 }
 
