@@ -873,7 +873,7 @@ interface ListRendererProps {
   onGridChange?: (name: string, values: string[]) => void;
   onEditRow?: (navpath: string | null) => void;
   /** listEdit: a record row was selected — the bottom edit panel renders it. */
-  onSelectRecord?: (navpath: string) => void;
+  onSelectRecord?: (navpath: string, opts?: { fromAdd?: boolean }) => void;
   /** listEdit: report the ordered record paths (main rows) so the panel can
    *  navigate prev/next between records. */
   onRecordPaths?: (records: ListRecord[]) => void;
@@ -2796,7 +2796,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       pendingAddSeenRef.current = false;
       markSelected(target);
       api.ensureIndexVisible(rowIndex, 'middle');
-      onSelectRecord?.(target);
+      // Riga appena creata: il cursore va nel pannello (SXADV-6052.1).
+      onSelectRecord?.(target, { fromAdd: true });
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);

@@ -1143,7 +1143,14 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     return m;
   }, [records]);
 
-  const onSelectRecord = React.useCallback((path: string) => {
+  // Cresce a ogni apertura del pannello da un Nuovo: EditPanel ci mette il
+  // cursore sul primo campo (SXADV-6052.1). Torna a 0 appena il cursore e'
+  // arrivato, a un clic su una riga e alla chiusura: un pannello che si
+  // rimonta dopo (Chiudi e clic, risposta che lo smonta un attimo) non deve
+  // portare via il cursore a chi sta scrivendo.
+  const [focusRequest, setFocusRequest] = React.useState(0);
+  const onPanelFocused = React.useCallback(() => setFocusRequest(0), []);
+  const onSelectRecord = React.useCallback((path: string, opts?: { fromAdd?: boolean }) => {
     // Prima di lasciare il record precedente, spedisci quello che si e'
     // digitato su di lui: la chiave dei valori non dice la riga, il navpath si.
     const prev = selectedPathRef.current;
@@ -1152,6 +1159,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     selectedPathRef.current = path;
     setHidden(false);
     setSelectedPath(path);
+    setFocusRequest((n) => (opts?.fromAdd ? n + 1 : 0));
     // Set the tab's edit navpath so Save/reload post with navpath = this row —
     // without it the server has no edit path and drops the row's field edits
     // (Shell.handleAction injects editNavpathRef as navpath when omitted).
@@ -1350,12 +1358,14 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           canDelete={selectedCanDelete}
           onChange={onPanelChange}
           onAction={onAction}
-          onClose={() => { flushSelected(selectedPath); setHidden(true); setEditRow?.(null); }}
+          onClose={() => { flushSelected(selectedPath); setHidden(true); setEditRow?.(null); setFocusRequest(0); }}
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}
           rowActions={rowActions}
           onRemoved={onRemoved}
+          focusRequest={focusRequest}
+          onFocused={onPanelFocused}
         />
         </DataVersionContext.Provider>
       )}

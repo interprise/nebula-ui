@@ -29,3 +29,29 @@ export function routesToTreePane(
     // lo porta anche una vista idratata).
     ui.viewName === treeUi.navigateView;
 }
+
+/** La scheda albero con il dettaglio da mettere nel pannello di destra.
+ *  `keepsEdit`: la risposta lascia il pannello in modifica sullo STESSO view
+ *  state (un Nuovo o un Salva+ di riga andato a buon fine), quindi non serve
+ *  rientrarci (SXADV-6052). */
+export function paneDetail(treeUi: UITree, detail: UITree, keepsEdit: boolean): UITree {
+  // La scheda viene dalla risposta precedente, che dopo un Nuovo porta ancora
+  // il segno: ereditato, il Salva successivo non rientrerebbe in modifica.
+  const { _detailKeepsEdit: _inherited, ...tree } = treeUi as unknown as Record<string, unknown>;
+  void _inherited;
+  return {
+    ...tree,
+    _detailResponse: detail,
+    ...(keepsEdit ? { _detailKeepsEdit: true } : {}),
+  } as unknown as UITree;
+}
+
+/** Il pannello deve rientrare in modifica con un LocateAndNavigate? Si', salvo
+ *  dopo un Nuovo di riga: quel giro rifaceva il dettaglio su view state NUOVI,
+ *  quindi la pagina si riscriveva due volte, la riga nuova nominata dal
+ *  currField dell'Add non esisteva piu' (al secondo Nuovo il pannello si
+ *  chiudeva) e il server restava con l'edit path sul view state vecchio, dove
+ *  finiva il digitato (SXADV-6052). Il rientro serve dopo il Salva (b50afcf). */
+export function paneReentersEdit(ui: UITree): boolean {
+  return (ui as unknown as Record<string, unknown>)._detailKeepsEdit !== true;
+}

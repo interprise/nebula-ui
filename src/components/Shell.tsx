@@ -89,7 +89,7 @@ import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
-import { treeHoldingTab, routesToTreePane } from './treeDetailRouting';
+import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
 
 const { Header, Content } = Layout;
 
@@ -1136,7 +1136,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // mode by re-navigating to the SELECTED node, which a record that has no
       // key yet cannot do — "Nuovo" keeps opening as a full page.
       if (treeUi && update.ui && routesToTreePane(treeUi, update.ui, !!update.ui.newRecord)) {
-        update.ui = { ...treeUi, _detailResponse: update.ui } as UITree;
+        // Un Nuovo (o Salva+) di riga andato a buon fine lascia il pannello in
+        // modifica sullo stesso view state: niente rientro, e la toolbar della
+        // risposta e' quella giusta per il pannello (SXADV-6052). Un ERROR o
+        // una domanda del server hanno gia' spento il flag qui sopra.
+        const keepsEdit = pendingAddRef.current;
+        update.ui = paneDetail(treeUi, update.ui, keepsEdit);
         // The tab still IS the tree, so its manifest has to keep describing the
         // tree. TreeRenderer re-enters edit mode with a LocateAndNavigate of its
         // own, which allocates a fresh viewstate for the pane: adopting the
@@ -1146,7 +1151,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         delete update.templateKey;
         delete update.bindings;
         delete update.scopePaths;
-        delete update.toolbar;
+        if (!keepsEdit) delete update.toolbar;
       }
       // Il trail del pannello vale finche' il pannello c'e'. Una risposta che
       // ridisegna la vista SENZA portarsi dietro un dettaglio significa che il
@@ -1455,6 +1460,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // flag gia' armato veniva preso per la risposta all'Add: il pannello si
       // fissava sulla riga salvata invece di passare a quella nuova (SXADV-6045).
       const armsAdd = action === 'Add' || action === 'SaveAndNew';
+      // Un Add che non ha creato la riga (Salva+ senza diritto di inserimento,
+      // Add che CORE fa finire senza messaggio) lascia il flag armato: nessuna
+      // riga lo consuma. Senza spegnerlo qui, il Salva successivo nell'albero
+      // passerebbe per un Nuovo e salterebbe il rientro in modifica (SXADV-6052).
+      if (!armsAdd) {
+        pendingAddRef.current = false;
+        pendingAddFieldRef.current = null;
+      }
 
       document.body.style.cursor = 'wait';
       // Istantanea, non il riferimento vivo: chi manda la richiesta puo' voler

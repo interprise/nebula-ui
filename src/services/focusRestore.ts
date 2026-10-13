@@ -91,7 +91,7 @@ export function restoreFocus(id: string | null): void {
  *  il fatto che sia visibile. L'input di una combo antd e' `readOnly` anche
  *  quando la combo e' modificabile (e' solo l'appiglio del fuoco): li' conta
  *  la combo. */
-function isUsableField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
+export function isUsableField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
   if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return false;
   if (el.tabIndex === -1 || el.disabled) return false;
   if (el instanceof HTMLInputElement && ['hidden', 'button', 'reset', 'submit'].includes(el.type)) return false;
@@ -104,7 +104,7 @@ function isUsableField(el: Element | null): el is HTMLInputElement | HTMLTextAre
   return el.getClientRects().length > 0;
 }
 
-function dialogOpen(): boolean {
+export function dialogOpen(): boolean {
   return Array.from(document.querySelectorAll('.ant-modal-wrap'))
     .some((w) => getComputedStyle(w).display !== 'none');
 }
@@ -128,7 +128,7 @@ export function nearestVerticalDelta(
  *  descrizione lunga, schermo al 125%) il primo campo modificabile sta in fondo
  *  a destra, e la maschera si apriva spostata, con le etichette di sinistra
  *  tagliate (SXADV-5922). Il legacy la apriva sempre dall'inizio. */
-function revealVertically(el: HTMLElement): void {
+export function revealVertically(el: HTMLElement): void {
   for (let box = el.parentElement; box; box = box.parentElement) {
     if (box.scrollHeight <= box.clientHeight) continue;
     if (!/(auto|scroll)/.test(getComputedStyle(box).overflowY)) continue;

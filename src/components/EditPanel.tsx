@@ -8,6 +8,7 @@ import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { panelTableUnits } from './editPanelLayout';
+import { focusFirstPanelField } from './panelFocus';
 import type { RowToolbarAction } from './rowToolbar';
 
 /**
@@ -66,6 +67,11 @@ interface EditPanelProps {
    *  ignorato, perche' col percorso posizionale colpirebbe la riga scivolata
    *  al posto di quella tolta. */
   onRemoved?: (path: string) => boolean;
+  /** Cresce a ogni apertura da un Nuovo: il cursore va sul primo campo del
+   *  pannello (SXADV-6052.1). 0 o assente = il fuoco resta dov'e'. */
+  focusRequest?: number;
+  /** Il cursore e' arrivato: chi tiene la lista spegne la richiesta. */
+  onFocused?: () => void;
 }
 
 const ROW_ACTION_ICONS: Record<RowToolbarAction['key'], React.ReactNode> = {
@@ -230,9 +236,17 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions, onRemoved,
+  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions, onRemoved, focusRequest, onFocused,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
+  // Dopo un Nuovo la riga si scrive subito: niente clic sulla riga e poi sul
+  // campo (SXADV-6052.1).
+  const onFocusedRef = React.useRef(onFocused);
+  React.useEffect(() => { onFocusedRef.current = onFocused; }, [onFocused]);
+  React.useEffect(() => {
+    if (!focusRequest) return undefined;
+    return focusFirstPanelField(panelRef.current, () => onFocusedRef.current?.());
+  }, [focusRequest]);
   const { modal } = App.useApp();
   const canDelete = rowCanDelete ?? canDeleteRecord(listUi);
   // No click-outside close: the panel is in-flow (doesn't cover rows), and a

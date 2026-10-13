@@ -3,6 +3,7 @@ import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
 import { SidContext, PaneToolbarContext, PendingAddContext, useIsTabLabelEcho } from './ViewRenderer';
+import { paneReentersEdit } from './treeDetailRouting';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 import type { FieldCaption, FieldChange } from '../controls/types';
@@ -141,12 +142,15 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   // Pick up detail responses routed through Shell (Save/Post on tree+detail).
   // After Save, re-enter editing mode by calling LocateAndNavigate again.
   const detailResponse = (ui as unknown as Record<string, unknown>)._detailResponse as UITree | undefined;
+  const reentersEdit = paneReentersEdit(ui);
   const prevDetailResponseRef = useRef(detailResponse);
   useEffect(() => {
     if (detailResponse && detailResponse !== prevDetailResponseRef.current) {
       prevDetailResponseRef.current = detailResponse;
-      // Re-enter editing mode if a node is selected (Save exits editing mode on the server)
-      if (selectedKey && ui.navigateView) {
+      // Re-enter editing mode if a node is selected (Save exits editing mode on the server).
+      // Non dopo un Nuovo di riga: il pannello e' gia' in modifica, e rinavigare
+      // lo rifarebbe su view state nuovi, perdendo la riga nuova (SXADV-6052).
+      if (selectedKey && ui.navigateView && reentersEdit) {
         (async () => {
           try {
             const resp = await api.postAction('LocateAndNavigate', {
@@ -176,7 +180,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
         detailFormValues.current = extractDetailFormValues(detailResponse);
       }
     }
-  }, [detailResponse, extractDetailFormValues, selectedKey, ui.navigateView, ui.viewName, sid, setPaneToolbar, applyNodeLabel]);
+  }, [detailResponse, reentersEdit, extractDetailFormValues, selectedKey, ui.navigateView, ui.viewName, sid, setPaneToolbar, applyNodeLabel]);
 
   const navigateView = ui.navigateView;
   const treeViewName = ui.viewName;
