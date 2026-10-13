@@ -90,6 +90,7 @@ import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
+import { withRowPostPath } from './rowPostPath';
 
 const { Header, Content } = Layout;
 
@@ -1449,6 +1450,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       } else if (editNavpathRef.current && !serverParams.navpath) {
         serverParams.navpath = editNavpathRef.current;
       }
+      // La riga del pannello anche quando il navpath dice altro (il Nuovo manda
+      // la lista): e' la riga a cui il server deve dare i valori digitati.
+      const sentParams = withRowPostPath(serverParams, editNavpathRef.current, tab.sid);
       // Il record nuovo lo crea "Nuovo", ma anche "Salva +" (SaveAndNew, dalla
       // barra di navigazione record): senza armare anche quello il pannello
       // restava sul record appena salvato invece di spostarsi su quello nuovo
@@ -1480,9 +1484,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // if it raises a confirmation — instead of the old hardcoded Post that
       // discarded the real action and its response (SXADV-5470.1).
       const replay = makeConfirmReplay(tab.key, tab.sid, (extra) =>
-        api.postAction(action, { ...serverParams, ...extra }, fv, tab.sid));
+        api.postAction(action, { ...sentParams, ...extra }, fv, tab.sid));
       try {
-        const resp = await api.postAction(action, serverParams, fv, tab.sid);
+        const resp = await api.postAction(action, sentParams, fv, tab.sid);
         if (armsAdd) {
           pendingAddRef.current = true;
           pendingAddFieldRef.current = null;
