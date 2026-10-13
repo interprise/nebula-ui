@@ -10,6 +10,7 @@ import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { panelTableUnits } from './editPanelLayout';
 import { focusFirstPanelField } from './panelFocus';
 import type { RowToolbarAction } from './rowToolbar';
+import { editPanelWaitAttrs } from './addWait';
 
 /**
  * Bottom edit panel for listEdit lists. The grid stays read-only; selecting a
@@ -72,6 +73,9 @@ interface EditPanelProps {
   focusRequest?: number;
   /** Il cursore e' arrivato: chi tiene la lista spegne la richiesta. */
   onFocused?: () => void;
+  /** Nuovo (o Salva+) in volo: il pannello mostra ancora il rigo di prima e non
+   *  si tocca finche' non arriva quello nuovo (MD-NUOVO-IN-VOLO). */
+  waiting?: boolean;
 }
 
 const ROW_ACTION_ICONS: Record<RowToolbarAction['key'], React.ReactNode> = {
@@ -236,7 +240,7 @@ const GridBody: React.FC<{
 };
 
 const EditPanel: React.FC<EditPanelProps> = ({
-  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions, onRemoved, focusRequest, onFocused,
+  panel, listUi, rowPath, canDelete: rowCanDelete, formShape, onChange, onAction, onClose, onNavigate, hasPrev, hasNext, rowActions, onRemoved, focusRequest, onFocused, waiting = false,
 }) => {
   const panelRef = React.useRef<HTMLDivElement>(null);
   // Dopo un Nuovo la riga si scrive subito: niente clic sulla riga e poi sul
@@ -323,9 +327,12 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
   return (
     <PathContext.Provider value={path}>
-      <div className="edit-panel" ref={panelRef}>
+      {/* In attesa del rigo nuovo niente clic ne' tasti nel pannello (inert):
+          quello che vi si scrivesse andrebbe sul rigo che sta per lasciare. */}
+      <div {...editPanelWaitAttrs(waiting)} ref={panelRef}>
         <div className="edit-panel-head">
           <span className="edit-panel-title">Gestione riga</span>
+          {waiting && <span className="edit-panel-waiting" role="status">Nuovo rigo in arrivo…</span>}
           {onNavigate && (
             <span className="edit-panel-head-actions">
               <Button type="text" size="small" icon={<UpOutlined />} disabled={!hasPrev}

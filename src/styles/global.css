@@ -1847,6 +1847,12 @@ body[style*="cursor: wait"] * {
 }
 .selector-nav:hover { background: rgba(22, 119, 255, 0.12); }
 .edit-panel-body { padding: 6px 8px; overflow: auto; }
+/* Nuovo di riga in volo (MD-NUOVO-IN-VOLO): il pannello mostra ancora il rigo
+   di prima, inert finche' non arriva quello nuovo. Attenuato perche' si veda
+   che non e' il momento di scrivere. */
+.edit-panel--waiting .edit-panel-body { opacity: 0.45; cursor: progress; }
+.edit-panel--waiting .edit-panel-head-actions { opacity: 0.6; }
+.edit-panel-waiting { font-size: var(--app-font-size-sm); color: var(--color-text-secondary, #555); font-style: italic; }
 /* Colonne fisse in proporzione ai colspan (colgroup in EditPanel): un campo
    non allarga la tabella e non spinge fuori i successivi (SXADV-5918). */
 .edit-panel-table { border-collapse: collapse; width: 100%; table-layout: fixed; }

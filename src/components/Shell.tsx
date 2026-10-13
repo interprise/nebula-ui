@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, Suspense } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, useReducer, Suspense } from 'react';
 import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider, Empty } from 'antd';
 import {
   MenuFoldOutlined,
@@ -68,7 +68,8 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, FieldDirtyContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, type PendingAdd } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, FieldDirtyContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, AddWaitContext, type PendingAdd, type AddWaitValue } from './ViewRenderer';
+import { addWaitReducer, isAddWaiting, respondsLater, ADD_WAIT_MAX_MS } from './addWait';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
 import ChangePasswordModal from './ChangePasswordModal';
@@ -585,6 +586,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [impersonateOpen, setImpersonateOpen] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
+  // Nuovo / Salva+ di riga dall'invio finche' il pannello non e' sul rigo
+  // nuovo: il pannello intanto non si tocca (MD-NUOVO-IN-VOLO, addWait.ts).
+  const [addWait, dispatchAddWait] = useReducer(addWaitReducer, null);
+  const addWaitSeqRef = useRef(0);
+  // Nuovo diventato un job: la risposta vera la porta il polling.
+  const asyncAddWaitRef = useRef<{ tabKey: string; token: number } | null>(null);
+  // La risposta e' arrivata: se il pannello non passa al rigo nuovo (la
+  // risposta ha portato altrove) l'attesa la chiude il tetto.
+  const answerAddWait = useCallback((token: number, resp: ServerResponse, tabKey: string) => {
+    if (respondsLater(resp)) {
+      asyncAddWaitRef.current = { tabKey, token };
+      return;
+    }
+    dispatchAddWait({ type: 'response', token, errors: resp.errors });
+    setTimeout(() => dispatchAddWait({ type: 'expire', token }), ADD_WAIT_MAX_MS);
+  }, []);
   const formValuesRef = useRef<Record<string, Record<string, string | string[]>>>({ tab_1: defaultTab.formValues });
   // Monotonic counter behind TabState.dataVersion / DataVersionContext. Bumped
   // once per response that re-renders a tab's form data; controls only compare
@@ -808,6 +825,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (!resp.trackAsynchJob || progress === -1 || progress === 100) {
           updateTabState(tabKey, { loading: false, progressPct: undefined });
           processResponseInnerRef.current(tabKey, resp);
+          const add = asyncAddWaitRef.current;
+          if (add && add.tabKey === tabKey) {
+            asyncAddWaitRef.current = null;
+            answerAddWait(add.token, resp, tabKey);
+          }
           return;
         }
         // Still running — poll again with exponential backoff (max 5s)
@@ -820,14 +842,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         await poll();
       } catch (e) {
         // Il job non arriva a una risposta: il ripristino armato per lui non
-        // deve passare alla prossima.
+        // deve passare alla prossima. Ne' l'attesa di un Nuovo.
         discardPendingFocus();
+        const add = asyncAddWaitRef.current;
+        if (add && add.tabKey === tabKey) {
+          asyncAddWaitRef.current = null;
+          dispatchAddWait({ type: 'failure', token: add.token });
+        }
         throw e;
       } finally {
         api.endTrackedJob();
       }
     },
-    [updateTabState]
+    [updateTabState, answerAddWait]
   );
 
   const processResponseInner = useCallback(
@@ -1214,16 +1241,24 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       let messages = '';
       const replay: ConfirmReplay = (token) => {
         messages += token;
+        // Il Nuovo sospeso dalla domanda riparte: di nuovo in attesa.
+        let addToken = 0;
         if (pendingAddOnReplayRef.current) {
           pendingAddOnReplayRef.current = false;
           pendingAddRef.current = true;
           pendingAddFieldRef.current = null;
+          addToken = ++addWaitSeqRef.current;
+          dispatchAddWait({ type: 'send', tabKey, token: addToken });
         }
         document.body.style.cursor = 'wait';
         updateTabState(tabKey, { loading: true, progressPct: undefined });
         request({ messages })
-          .then((resp) => processResponse(tabKey, resp, sid, replay))
+          .then((resp) => {
+            processResponse(tabKey, resp, sid, replay);
+            if (addToken) answerAddWait(addToken, resp, tabKey);
+          })
           .catch((e) => {
+            if (addToken) dispatchAddWait({ type: 'failure', token: addToken });
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
             discardPendingFocus();
@@ -1233,7 +1268,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       };
       return replay;
     },
-    [processResponse, updateTabState, feedback]
+    [processResponse, updateTabState, feedback, answerAddWait]
   );
 
   const handleMenuClick = useCallback(
@@ -1481,6 +1516,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         pendingAddRef.current = false;
         pendingAddFieldRef.current = null;
       }
+      // Dall'invio il pannello di riga aspetta il rigo nuovo: fino alla
+      // risposta mostra ancora quello di prima, e scriverci voleva dire
+      // scrivere sul rigo sbagliato (MD-NUOVO-IN-VOLO).
+      const addToken = armsAdd ? ++addWaitSeqRef.current : 0;
+      if (addToken) dispatchAddWait({ type: 'send', tabKey: tab.key, token: addToken });
 
       document.body.style.cursor = 'wait';
       // Istantanea, non il riferimento vivo: chi manda la richiesta puo' voler
@@ -1501,7 +1541,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           pendingAddFieldRef.current = null;
         }
         processResponse(tab.key, resp, tab.sid, replay);
+        if (addToken) answerAddWait(addToken, resp, tab.key);
       } catch (e) {
+        if (addToken) dispatchAddWait({ type: 'failure', token: addToken });
         updateTabState(tab.key, { loading: false, progressPct: undefined });
         // A request that never produced a response leaves no navigation to
         // account for — drop any armed breadcrumb-back so it can't be applied
@@ -1514,7 +1556,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback]
+    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback, answerAddWait]
   );
 
   // CDMS: open one of the documentale views (ricerca, document list, cestino,
@@ -1743,6 +1785,23 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     formValuesRef.current[tab.key] = tab.formValues;
   }, [getActiveTabState, handleAction]);
 
+  // Il pannello e' passato al rigo nuovo dopo un Nuovo: quello che ha ancora di
+  // sporco e' stato scritto dopo l'invio e non e' del rigo che lascia. Esce dai
+  // valori della scheda senza partire (MD-NUOVO-IN-VOLO).
+  const discardFieldEdits = useCallback((names: readonly string[]) => {
+    const tab = getActiveTabState();
+    if (!tab) return;
+    for (const n of names) {
+      if (!dirtyFieldsRef.current.delete(n)) continue;
+      delete tab.formValues[n];
+      if (tab.formCaptions) delete tab.formCaptions[n];
+    }
+    formValuesRef.current[tab.key] = tab.formValues;
+  }, [getActiveTabState]);
+  const settleAddWait = useCallback(() => {
+    dispatchAddWait({ type: 'settled', tabKey: activeTabRef.current });
+  }, []);
+
   // Track which row is being edited in listEdit mode (navpath sent with Save/Post)
   // Use a ref to avoid triggering re-renders on every row switch
   const editNavpathRef = useRef<string | null>(null);
@@ -1844,6 +1903,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const shownUi = useMemo(
     () => (currentUi && currentFormValues ? applyPendingValues(currentUi, currentFormValues, currentCaptions) : currentUi),
     [currentUi, currentFormValues, currentCaptions],
+  );
+  const addWaiting = isAddWaiting(addWait, currentTab?.key);
+  const addWaitValue = useMemo<AddWaitValue>(
+    () => ({ waiting: addWaiting, settle: settleAddWait, discard: discardFieldEdits }),
+    [addWaiting, settleAddWait, discardFieldEdits],
   );
   // While a pane owns the current viewstate its trail wins: the tab's `ui` is
   // still the enclosing view and its own trail stops short of the pane.
@@ -2698,6 +2762,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       <FlushEditsContext.Provider value={flushFieldEdits}>
                       <FieldDirtyContext.Provider value={isFieldDirty}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
+                      <AddWaitContext.Provider value={addWaitValue}>
                       <PageToolbarContext.Provider value={currentTab.toolbar}>
                         <DataVersionContext.Provider value={currentTab.dataVersion ?? 0}>
                           <ViewRenderer
@@ -2709,6 +2774,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                           />
                         </DataVersionContext.Provider>
                       </PageToolbarContext.Provider>
+                      </AddWaitContext.Provider>
                       </PendingAddContext.Provider>
                       </FieldDirtyContext.Provider>
                       </FlushEditsContext.Provider>

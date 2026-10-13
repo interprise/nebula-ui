@@ -28,6 +28,7 @@ import type { FieldCaption } from '../controls/types';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 import { solvePromptBand, type LeadingPrompt } from './promptBand';
+import { panelRowSwitch } from './addWait';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -768,6 +769,18 @@ function controlsByName(rows: readonly UIRow[] | undefined, out = new Map<string
 // response that arrived while it was, which names the new row (SXADV-6011).
 export type PendingAdd = false | { currField: string | null };
 export const PendingAddContext = React.createContext<(() => PendingAdd) | undefined>(undefined);
+// Provided once by Shell: un Nuovo (o Salva+) di riga e' partito e il pannello
+// non e' ancora passato al rigo nuovo (MD-NUOVO-IN-VOLO, vedi addWait.ts).
+// `waiting` blocca il pannello; `settle` lo chiama il pannello appena e' sul
+// rigo nuovo; `discard` toglie dai valori della scheda, senza mandarli, i campi
+// del pannello ancora sporchi: scritti dopo l'invio del Nuovo, non sono del
+// rigo che si lascia.
+export interface AddWaitValue {
+  waiting: boolean;
+  settle: () => void;
+  discard: (names: readonly string[]) => void;
+}
+export const AddWaitContext = React.createContext<AddWaitValue>({ waiting: false, settle: () => {}, discard: () => {} });
 
 // La toolbar della PAGINA (tab.toolbar, come l'ha mandata il server): il
 // pannello di riga ne replica Salva / Salva+ sulla riga, con gli stessi permessi
@@ -1106,6 +1119,10 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   const setEditRow = React.useContext(EditRowContext);
   const flushEdits = React.useContext(FlushEditsContext);
   const isFieldDirty = React.useContext(FieldDirtyContext);
+  const { waiting: addWaiting, settle: settleAdd, discard: discardEdits } = React.useContext(AddWaitContext);
+  // Letta nel rAF in cui la lista seleziona il rigo nuovo, dopo il disegno.
+  const addWaitingRef = React.useRef(addWaiting);
+  React.useEffect(() => { addWaitingRef.current = addWaiting; }, [addWaiting]);
   const [hidden, setHidden] = React.useState(false);
   const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<ListRecord[]>([]);
@@ -1150,11 +1167,26 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // portare via il cursore a chi sta scrivendo.
   const [focusRequest, setFocusRequest] = React.useState(0);
   const onPanelFocused = React.useCallback(() => setFocusRequest(0), []);
+  // I nomi a filo dei campi del pannello: dopo un Nuovo quelli ancora sporchi
+  // si scartano invece di spedirli (vedi onSelectRecord).
+  const panelNamesRef = React.useRef<readonly string[]>([]);
   const onSelectRecord = React.useCallback((path: string, opts?: { fromAdd?: boolean }) => {
     // Prima di lasciare il record precedente, spedisci quello che si e'
     // digitato su di lui: la chiave dei valori non dice la riga, il navpath si.
+    // Tranne dopo un Nuovo con il pannello ancora in attesa: quello che si era
+    // scritto prima e' partito con l'Add (postPath, SXADV-6052), e quello che
+    // risultasse ancora sporco e' stato scritto DOPO, mentre il pannello
+    // mostrava il rigo vecchio. Spedirlo col navpath del rigo vecchio lo
+    // scriveva li' (MD-NUOVO-IN-VOLO): non e' di nessun rigo, si scarta. Se
+    // l'attesa era gia' chiusa (tetto scaduto, scheda diversa) il pannello era
+    // libero e il digitato e' davvero del rigo che mostrava: si spedisce.
     const prev = selectedPathRef.current;
-    if (prev && prev !== path) flushSelected(prev);
+    const change = panelRowSwitch(prev, path, !!opts?.fromAdd && addWaitingRef.current);
+    if (change === 'flush') flushSelected(prev);
+    else if (change === 'discard') discardEdits(panelNamesRef.current);
+    // Il pannello e' sul rigo nuovo: si sblocca nello stesso disegno in cui lo
+    // mostra, mai prima.
+    if (opts?.fromAdd) settleAdd();
     pendingRemovalRef.current = null;
     selectedPathRef.current = path;
     setHidden(false);
@@ -1165,7 +1197,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     // (Shell.handleAction injects editNavpathRef as navpath when omitted).
     setEditRow?.(path);
     // INSTANT: no Post — the panel hydrates from the row's onboard editData.
-  }, [setEditRow, flushSelected]);
+  }, [setEditRow, flushSelected, settleAdd, discardEdits]);
 
   // The panel's Elimina follows the SELECTED record: the right to delete is a
   // per-row property (deletable="?expr" evaluated on the row's BO, the BO's own
@@ -1299,6 +1331,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // annullata, dopo un Annulla di riga.
   const [rowEcho, setRowEcho] = React.useState<{ path: string; echo: RowEcho } | null>(null);
   const panelControls = React.useMemo(() => controlsByName(hydratedPanel?.rows), [hydratedPanel]);
+  React.useEffect(() => { panelNamesRef.current = [...panelControls.keys()]; }, [panelControls]);
   const onPanelChange = React.useCallback((name: string, value: unknown, caption?: FieldCaption) => {
     (onChange as (n: string, v: unknown, c?: FieldCaption) => void)(name, value, caption);
     const path = selectedPathRef.current;
@@ -1366,6 +1399,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           onRemoved={onRemoved}
           focusRequest={focusRequest}
           onFocused={onPanelFocused}
+          waiting={addWaiting}
         />
         </DataVersionContext.Provider>
       )}
