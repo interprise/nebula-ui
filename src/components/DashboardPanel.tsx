@@ -29,6 +29,8 @@ interface Colonna {
   item?: string;
   etichetta?: string;
   tipo?: string | null;
+  /** Il dettaglio da cui viene la colonna, se non e' della lista (SXADV-6001.1c). */
+  vista?: string | null;
 }
 
 /**
@@ -86,6 +88,11 @@ interface Fotografia {
    * ricerca: l'ordinamento vale fra quelle (SXADV-6001.3).
    */
   ordinatoSuParte?: boolean;
+  /**
+   * Il widget ha colonne del dettaglio aggiunte dopo questa fotografia: le loro celle
+   * arrivano col prossimo aggiornamento (SXADV-6001.1c).
+   */
+  colonneInArrivo?: boolean;
 }
 
 interface Widget {
@@ -1449,6 +1456,11 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                 }}
                 onVista={(v) => void salvaVista(w, v)}
               />
+              {foto.colonneInArrivo ? (
+                <Typography.Text type="secondary" className="dash-ordinate-su-parte">
+                  Le colonne aggiunte si riempiono col prossimo aggiornamento.
+                </Typography.Text>
+              ) : null}
               {foto.ordinatoSuParte ? (
                 <Typography.Text type="secondary" className="dash-ordinate-su-parte">
                   Ordinate fra le prime {numero(foto.righeInFotografia || 0)} righe della ricerca.

@@ -44,7 +44,8 @@ export interface WidgetDaModificare {
   dettaglioPredefinito?: string | null;
   /** Da quali aziende vengono i risultati adesso, e se la lista dipende dall'azienda. */
   ambito?: { modo?: string; codici?: string[]; possibile?: boolean } | null;
-  colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null }>;
+  /** `vista` c'e' sulle colonne prese dal dettaglio (SXADV-6001.1c). */
+  colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null; vista?: string | null }>;
   /** Chi lo vede nel catalogo e se arriva da solo (CONDIVISIONE H2). */
   condivisione?: { ambito?: string; mandato?: boolean } | null;
 }
@@ -88,7 +89,24 @@ interface Bozza {
   /** Condivisione: privato | azienda | sede:<codice>, e se arriva da solo nelle Home. */
   condivisione: string;
   mandato: boolean;
+  /** SXADV-6001.1c: le colonne prese dal dettaglio, tutte (nomi degli item). */
+  colonneDettaglio: string[];
 }
+
+/** Un campo del dettaglio da offrire come colonna (dashboard.ColonneDettaglio, D3). */
+interface CampoDettaglio {
+  item: string;
+  etichetta?: string;
+  tipo?: string | null;
+  aggiunta?: boolean;
+}
+
+/** Le colonne del dettaglio gia' nel widget, nell'ordine in cui ci sono. */
+const dettaglioDi = (w: WidgetDaModificare) =>
+  (w.colonne || []).filter((c) => !!c.vista && !!c.item).map((c) => c.item as string);
+
+const stessiNomi = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
 
 const AGGREGATI = [
   { value: 'count', label: 'conteggio delle righe' },
@@ -132,6 +150,7 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     intervallo: w.intervalloMin || 60,
     condivisione: w.condivisione?.ambito || 'privato',
     mandato: !!w.condivisione?.mandato,
+    colonneDettaglio: dettaglioDi(w),
   };
 };
 
@@ -216,6 +235,11 @@ const ModificaWidget: React.FC<Props> = ({
   const richiesta = useRef(0);
   /** Il pannello e' aperto su QUESTO widget: dopo la chiusura niente piu' risposte. */
   const aperto = useRef<number | null>(null);
+  /**
+   * I campi del dettaglio da offrire come colonne (6001.1c); null finche' non arrivano,
+   * `vista` null se la lista non ha un dettaglio.
+   */
+  const [dettaglio, setDettaglio] = useState<{ vista: string | null; candidati: CampoDettaglio[] } | null>(null);
 
   useEffect(() => {
     aperto.current = widget ? widget.idWidget : null;
@@ -227,7 +251,21 @@ const ModificaWidget: React.FC<Props> = ({
     setErroreSalva(null);
     setSalvando(false);
     setCalcolando(false);
-  }, [widget]);
+    setDettaglio(null);
+    if (!widget) return;
+    const id = widget.idWidget;
+    api.postAction2('dashboard.ColonneDettaglio', { sid, idWidget: String(id) })
+      .then((r) => {
+        const resp = r as unknown as Record<string, unknown>;
+        if (aperto.current !== id || resp.esito !== 'ok') return;
+        setDettaglio({
+          vista: typeof resp.vista === 'string' ? resp.vista : null,
+          candidati: Array.isArray(resp.candidati) ? (resp.candidati as CampoDettaglio[]) : [],
+        });
+      })
+      // Senza l'elenco la sezione non compare: il resto del pannello funziona.
+      .catch(() => undefined);
+  }, [widget, sid]);
 
   /** C'e' un'anteprima in volo, e quale aspetta di partire dopo di lei. */
   const inVolo = useRef(false);
@@ -281,17 +319,35 @@ const ModificaWidget: React.FC<Props> = ({
     }
   };
 
-  const colonne = useMemo(
-    () =>
-      (widget?.colonne || [])
-        .filter((c) => c.item)
-        .map((c) => ({
-          value: c.item as string,
-          label: c.etichetta || c.item,
-          tipo: c.tipo || '',
-        })),
-    [widget]
-  );
+  /**
+   * Le colonne fra cui scegliere nella trasformazione: quelle della lista, poi quelle del
+   * dettaglio come sono scelte ADESSO nel pannello, anche se non ancora salvate (D7).
+   */
+  const sceltiDettaglio = bozza?.colonneDettaglio;
+  const colonne = useMemo(() => {
+    const scelti = sceltiDettaglio || [];
+    const out = (widget?.colonne || [])
+      .filter((c) => c.item && (!c.vista || scelti.includes(c.item)))
+      .map((c) => ({
+        value: c.item as string,
+        label: c.etichetta || c.item,
+        tipo: c.tipo || '',
+      }));
+    for (const nome of scelti)
+      if (!out.some((c) => c.value === nome)) {
+        const c = dettaglio?.candidati.find((x) => x.item === nome);
+        out.push({ value: nome, label: c?.etichetta || nome, tipo: c?.tipo || '' });
+      }
+    return out;
+  }, [widget, sceltiDettaglio, dettaglio]);
+  /**
+   * Colonne scelte ma non ancora nella fotografia: un calcolo che le usa non ha righe su
+   * cui fare l'anteprima finche' non si salva e si aggiorna.
+   */
+  const nonSalvate = useMemo(() => {
+    const salvate = new Set((widget?.colonne || []).map((c) => c.item));
+    return (sceltiDettaglio || []).filter((n) => !salvate.has(n));
+  }, [widget, sceltiDettaglio]);
   /**
    * La colonna da sommare negli esempi: un importo o un numero, mai una data o un
    * testo. Il tipo e' il controllo della lista (ExtMoney, ...). Fra gli importi si
@@ -332,12 +388,15 @@ const ModificaWidget: React.FC<Props> = ({
     return out;
   }, [candidati, bozza?.escludi, anteprima]);
   const chiaveAnteprima = bozza ? `${bozza.forma}|${JSON.stringify(trasformazione)}` : '';
+  const anteprimaDopo = !!trasformazione && (
+    (trasformazione.group || []).some((g) => nonSalvate.includes(g))
+    || (!!trasformazione.col && nonSalvate.includes(trasformazione.col)));
 
   // L'anteprima si chiede con un attimo di attesa: chi scrive un valore non deve far
   // partire un calcolo a ogni cifra.
   useEffect(() => {
     if (!widget || !bozza) return;
-    if (!trasformazione) {
+    if (!trasformazione || anteprimaDopo) {
       richiesta.current++;
       setAnteprima(null);
       setErroreAnteprima(null);
@@ -359,7 +418,7 @@ const ModificaWidget: React.FC<Props> = ({
     return () => clearTimeout(timer);
     // la chiave riassume bozza.forma e la trasformazione: e' l'unica cosa che conta
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chiaveAnteprima, widget, sid]);
+  }, [chiaveAnteprima, anteprimaDopo, widget, sid]);
 
   const cambia = (p: Partial<Bozza>) => {
     // I candidati sono valori della colonna di prima: non si offrono sul gruppo nuovo.
@@ -431,6 +490,10 @@ const ModificaWidget: React.FC<Props> = ({
         trasformazione: trasformazione ? JSON.stringify(trasformazione) : '',
         opzioni: opzioniDa(bozza, widget.opzioni, widget.ambito?.possibile !== false),
         intervalloMin: String(bozza.intervallo),
+        // Solo se la scelta e' cambiata: assente, il server non tocca le colonne (D4).
+        ...(stessiNomi(bozza.colonneDettaglio, dettaglioDi(widget))
+          ? {}
+          : { colonneDettaglio: JSON.stringify(bozza.colonneDettaglio) }),
       })) as unknown as Record<string, unknown>;
       if (resp.esito === 'ok') {
         // Anche a pannello gia' chiuso: il server ha salvato, e la Home deve mostrarlo.
@@ -518,6 +581,37 @@ const ModificaWidget: React.FC<Props> = ({
               </Typography.Text>
             ) : null}
           </Form.Item>
+
+          {dettaglio && (dettaglio.vista || dettaglio.candidati.length > 0) ? (
+            <Form.Item
+              label="Colonne dal dettaglio"
+              extra="Campi della scheda di dettaglio che la lista non mostra: si aggiungono in fondo e si riempiono col prossimo aggiornamento."
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                value={bozza.colonneDettaglio}
+                onChange={(v: string[]) => {
+                  // Una colonna del dettaglio tolta non resta scelta nel calcolo: il
+                  // server rifiuterebbe il Salva, e l'anteprima girerebbe su di lei.
+                  const tolte = bozza.colonneDettaglio.filter((n) => !v.includes(n));
+                  const p: Partial<Bozza> = { colonneDettaglio: v };
+                  if (bozza.gruppo && tolte.includes(bozza.gruppo)) p.gruppo = null;
+                  if (bozza.col && tolte.includes(bozza.col)) p.col = null;
+                  cambia(p);
+                }}
+                options={dettaglio.candidati.map((c) => ({ value: c.item, label: c.etichetta || c.item }))}
+                optionFilterProp="label"
+                placeholder="nessuna"
+                maxCount={20}
+                aria-label="Colonne dal dettaglio"
+              />
+            </Form.Item>
+          ) : dettaglio ? (
+            <Typography.Paragraph type="secondary" className="dash-modifica-motivo">
+              La lista non ha una scheda di dettaglio da cui prendere altre colonne.
+            </Typography.Paragraph>
+          ) : null}
 
           {bozza.forma === 'list' ? (
             <Typography.Text type="secondary">
@@ -771,7 +865,12 @@ const ModificaWidget: React.FC<Props> = ({
             <section className="dash-modifica-anteprima" aria-label="Anteprima" aria-busy={calcolando}>
               <Typography.Text strong>Anteprima</Typography.Text>{' '}
               {calcolando ? <Spin size="small" /> : null}
-              {erroreAnteprima ? (
+              {anteprimaDopo ? (
+                <Typography.Paragraph type="secondary">
+                  Il calcolo usa una colonna dal dettaglio appena scelta: il risultato si vede
+                  dopo il salvataggio, col prossimo aggiornamento.
+                </Typography.Paragraph>
+              ) : erroreAnteprima ? (
                 <Alert type="warning" showIcon title={erroreAnteprima} />
               ) : anteprima ? (
                 <RisultatoVista
