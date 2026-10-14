@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Empty, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, PlusOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Empty, Popconfirm, Popover, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, PlusOutlined, TableOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
@@ -14,7 +14,14 @@ import {
 import ModificaWidget from './dashboard/ModificaWidget';
 import GrigliaWidget, { type PostoSalvato } from './dashboard/GrigliaWidget';
 import CatalogoWidget from './dashboard/CatalogoWidget';
-import { ordinaRighe, permuta } from './dashboard/ordineColonne';
+import TabellaWidget from './dashboard/TabellaWidget';
+import {
+  colonneMostrate,
+  completaOrdine,
+  normalizzaVista,
+  ordinamentoEffettivo,
+  type VistaTabella,
+} from './dashboard/vistaTabella';
 
 /** Una colonna della lista fotografata: l'intestazione che il widget mostra. */
 interface Colonna {
@@ -74,6 +81,11 @@ interface Fotografia {
   definitivo?: boolean;
   parziale?: boolean;
   schemaCambiato?: boolean;
+  /**
+   * Ordinate da chi guarda, ma la fotografia tiene solo le prime 1.000 righe della
+   * ricerca: l'ordinamento vale fra quelle (SXADV-6001.3).
+   */
+  ordinatoSuParte?: boolean;
 }
 
 interface Widget {
@@ -100,6 +112,11 @@ interface Widget {
    * server non lo conosce): colonna = indice in `colonne` e nelle celle (SXADV-6001.0).
    */
   ordinamentoLocale?: { colonna: number; verso: 'asc' | 'desc' } | null;
+  /**
+   * La tabella come la vuole chi guarda (SXADV-6001): ordine, nascoste, ordinamento e
+   * larghezze, dal suo elemento della Home. null = com'era la lista all'approdo.
+   */
+  vista?: VistaTabella | null;
   filtri?: Array<{ etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
   fotografia: Fotografia;
   /** La trasformazione salvata (G9), o null: il widget mostra la lista. */
@@ -148,6 +165,68 @@ const SegnaVisteBottone: React.FC<{ onClick: () => void }> = ({ onClick }) => (
     Segna come viste
   </Button>
 );
+
+/**
+ * «Colonne» nella testata di un widget a tabella (SXADV-6001.1 a/b): una casella per
+ * colonna, nell'ordine a schermo; l'ultima accesa non si spegne. «Come all'inizio»
+ * cancella tutte le scelte di chi guarda (ordine, nascoste, ordinamento, larghezze).
+ */
+const SceltaColonne: React.FC<{
+  colonne: Array<{ etichetta?: string }>;
+  mostrate: number[];
+  ordine: number[];
+  personalizzata: boolean;
+  onNascoste: (nascoste: number[]) => void;
+  onRipristina: () => void;
+}> = ({ colonne, mostrate, ordine, personalizzata, onNascoste, onRipristina }) => {
+  const [aperto, setAperto] = useState(false);
+  const visibili = new Set(mostrate);
+  const contenuto = (
+    <div className="dash-scelta-colonne">
+      {ordine.map((i) => {
+        const acceso = visibili.has(i);
+        return (
+          <Checkbox
+            key={i}
+            checked={acceso}
+            disabled={acceso && visibili.size === 1}
+            onChange={(e) => {
+              const nascoste = ordine.filter((k) => (k === i ? !e.target.checked : !visibili.has(k)));
+              onNascoste(nascoste);
+            }}
+          >
+            {colonne[i]?.etichetta || `Colonna ${i + 1}`}
+          </Checkbox>
+        );
+      })}
+      <Button
+        size="small"
+        type="link"
+        disabled={!personalizzata}
+        onClick={() => {
+          setAperto(false);
+          onRipristina();
+        }}
+      >
+        Come all&apos;inizio
+      </Button>
+    </div>
+  );
+  return (
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      title="Colonne da mostrare"
+      content={contenuto}
+      open={aperto}
+      onOpenChange={setAperto}
+    >
+      <Tooltip title={aperto ? undefined : 'Colonne'}>
+        <Button type="text" size="small" icon={<TableOutlined />} aria-label="Colonne" />
+      </Tooltip>
+    </Popover>
+  );
+};
 
 /** «Tutta l'azienda», «la sede 044 — …», e se arriva da solo nelle Home. */
 const descriviCondivisione = (
@@ -782,7 +861,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
       t = window.setTimeout(() => {
         if (segnaInVolo.current) return;
         const generazione = generazioneVisto.current;
-        const lista = widgetRef.current || [];
+        // Un widget appena riordinato si salta: le sue righe a schermo sono ancora quelle
+        // nell'ordine di prima, e tenute come «segnate» tornerebbero sopra le nuove.
+        const lista = (widgetRef.current || []).filter((w) => !riordinoInVolo.current.has(w.idWidget));
         const viste = daSegnare(lista, segnateDaSole.current);
         if (viste.length === 0) return;
         for (const w of lista)
@@ -831,6 +912,110 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
     // griglia tornerebbe un attimo a quella vecchia.
     if (vivo.current) await leggi();
     return true;
+  };
+
+  /**
+   * Le viste scelte e non ancora confermate dal server, per idWidget: la scelta si vede
+   * subito, e se il server dice di no si torna a quella confermata (SXADV-6001). La voce
+   * resta solo finche' c'e' un salvataggio in volo: confermata, la vista va sul widget.
+   */
+  const [visteScelte, setVisteScelte] = useState<Record<number, VistaTabella | null>>({});
+  const vistaDi = (w: Widget): VistaTabella | null =>
+    w.idWidget in visteScelte ? visteScelte[w.idWidget] : (w.vista ?? null);
+  /**
+   * I salvataggi di un widget vanno in fila: due clic svelti sull'intestazione non devono
+   * arrivare al server (ne' tornare) in ordine inverso. Il numero dice qual e' l'ultimo:
+   * solo lui conferma o annulla quello che si vede.
+   */
+  const filaVista = useRef(new Map<number, Promise<void>>());
+  const ultimaVista = useRef(new Map<number, number>());
+  /** Un salvataggio della fila ha cambiato l'ordinamento: l'ultimo rilegge la Home. */
+  const daRileggere = useRef(new Set<number>());
+  /** Widget con un ordinamento appena cambiato: il «visto» automatico li salta (C1). */
+  const riordinoInVolo = useRef(new Set<number>());
+
+  /**
+   * Una scelta sulla tabella di un widget (COLONNE V5): si applica subito, poi
+   * dashboard.Vista. Le righe le ordina il server, quindi solo un ordinamento cambiato
+   * rilegge la Home; ordine, nascoste e larghezze no.
+   */
+  const salvaVista = (w: Widget, scelta: VistaTabella | null): Promise<void> => {
+    const id = w.idWidget;
+    const n = (w.colonne || []).length;
+    const prima = vistaDi(w);
+    const nuova = normalizzaVista(scelta, n);
+    const ordinamento = (v: VistaTabella | null) => {
+      const s = ordinamentoEffettivo(v, w.ordinamentoLocale);
+      return s ? `${s.colonna}:${s.verso}` : '';
+    };
+    const cambiaOrdine = ordinamento(prima) !== ordinamento(nuova);
+    const numero = (ultimaVista.current.get(id) || 0) + 1;
+    ultimaVista.current.set(id, numero);
+    setVisteScelte((v) => ({ ...v, [id]: nuova }));
+    if (cambiaOrdine) riordinoInVolo.current.add(id);
+    const ultima = () => ultimaVista.current.get(id) === numero;
+    /** La vista confermata va sul widget e la scelta in volo sparisce. */
+    const conferma = (vista: VistaTabella | null | undefined) => {
+      if (vista !== undefined)
+        setWidget((ws) => (ws ? ws.map((x) => (x.idWidget === id ? { ...x, vista } : x)) : ws));
+      setVisteScelte((v) => {
+        const resto = { ...v };
+        delete resto[id];
+        return resto;
+      });
+    };
+    /** Rilegge la Home se un salvataggio della fila ha cambiato l'ordinamento. */
+    const rileggiSeServe = async () => {
+      if (!daRileggere.current.has(id)) return;
+      daRileggere.current.delete(id);
+      // Le evidenze tenute dopo «segna viste» (C1) sono le righe nell'ordine di prima:
+      // rimesse sopra la risposta nuova annullerebbero l'ordinamento appena scelto. Chi
+      // riordina ha gia' guardato il widget.
+      segnateDaSole.current.delete(id);
+      await leggi();
+    };
+    const lavoro = async () => {
+      try {
+        let resp: Record<string, unknown>;
+        try {
+          resp = (await api.postAction2('dashboard.Vista', {
+            sid: SID,
+            idWidget: String(id),
+            vista: JSON.stringify(nuova || {}),
+          })) as unknown as Record<string, unknown>;
+        } catch (e) {
+          if (vivo.current && ultima()) {
+            conferma(undefined);
+            feedback.failure(e);
+            await rileggiSeServe();
+          }
+          return;
+        }
+        if (!vivo.current) return;
+        if (resp.esito !== 'ok') {
+          if (ultima()) {
+            conferma(undefined);
+            rifiuto(resp, 'La scelta sulle colonne non si e\' potuta salvare.');
+            await rileggiSeServe();
+          }
+          return;
+        }
+        // Confermata, anche se non e' l'ultima: il widget la sa (se quella dopo fallisce
+        // si torna a questa, che sul server c'e'); lo schermo resta sulla piu' recente.
+        const salvata = normalizzaVista(resp.vista, n);
+        setWidget((ws) => (ws ? ws.map((x) => (x.idWidget === id ? { ...x, vista: salvata } : x)) : ws));
+        if (cambiaOrdine) daRileggere.current.add(id);
+        if (!ultima()) return;
+        await rileggiSeServe();
+        if (vivo.current && ultima()) conferma(undefined);
+      } finally {
+        // Il «visto» automatico torna a guardare il widget solo a fila finita.
+        if (ultima()) riordinoInVolo.current.delete(id);
+      }
+    };
+    const coda = (filaVista.current.get(id) || Promise.resolve()).then(lavoro, lavoro);
+    filaVista.current.set(id, coda);
+    return coda;
   };
 
   /**
@@ -978,10 +1163,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
           (r) => r.n || (r.c || []).some((c) => c.p !== undefined)
         ).length;
         const totale = foto.totaleRighe;
-        // Le colonne nella posizione che avevano nella lista d'origine (SXADV-6001.0).
-        // Con lo schema cambiato le celle non corrispondono piu' alle intestazioni, e
-        // riordinarle le confonderebbe ancora di piu'.
-        const ordine = foto.schemaCambiato ? null : w.ordineColonne;
+        // Le scelte sulle colonne (SXADV-6001): solo dove c'e' una tabella, e non con lo
+        // schema cambiato, dove le celle non corrispondono piu' alle intestazioni.
+        const conTabella = mostrate > 0 && !mostraRisultato(w.forma, w.risultato);
+        const scelteColonne = conTabella && !foto.schemaCambiato && (w.colonne || []).length > 0;
         articoli.set(w.idWidget, (
         <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
           <header className="dash-widget-head">
@@ -1026,6 +1211,16 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                     onClick={() => void naviga(w)}
                   />
                 </Tooltip>
+              ) : null}
+              {scelteColonne ? (
+                <SceltaColonne
+                  colonne={w.colonne || []}
+                  mostrate={colonneMostrate(vistaDi(w), (w.colonne || []).length, w.ordineColonne)}
+                  ordine={completaOrdine(vistaDi(w)?.ordineColonne, (w.colonne || []).length, w.ordineColonne)}
+                  personalizzata={!!vistaDi(w)}
+                  onNascoste={(nascoste) => void salvaVista(w, { ...(vistaDi(w) || {}), nascoste })}
+                  onRipristina={() => void salvaVista(w, null)}
+                />
               ) : null}
               {(
                 <Tooltip title="Aggiorna ora">
@@ -1227,96 +1422,38 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               fuori dagli occhi vuol dire che «resta» solo per modo di dire. Al posto
               del numero o delle barre no: li' la tabella torna solo se il calcolo non
               si applica. */}
-          {mostrate > 0 && !mostraRisultato(w.forma, w.risultato) ? (
+          {conTabella ? (
             <div className="dash-widget-tabella">
-              <table>
-                <thead>
-                  <tr>
-                    {suPiuAziende(w) ? <th>Azienda</th> : null}
-                    {permuta(w.colonne || [], ordine).map((c, i) => (
-                      <th key={i}>{c.etichetta}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ordinaRighe(
-                    foto.righe || [],
-                    foto.schemaCambiato ? null : w.ordinamentoLocale?.colonna,
-                    w.ordinamentoLocale?.verso,
-                  ).map((r, i) => {
-                    // Si apre il record della riga col dettaglio che il server ha
-                    // scelto (quello della lista, o quello indicato nel widget). Non si
-                    // apre una riga senza chiave, con la chiave "null" (una chiave con
-                    // parti nulle) o con una chiave ripetuta: su alcune liste si ripete,
-                    // e si aprirebbe un record diverso da quello cliccato.
-                    // Nei widget su piu' aziende si aprono solo le righe dell'azienda
-                    // corrente: il dettaglio girerebbe nel suo contesto (SXADV-6000).
-                    const apribile = !!(
-                      w.dettaglio && onApriDettaglio && r.k && r.k !== 'null'
-                      && chiaviRipetute.get(r.k) === 1
-                      && (!suPiuAziende(w) || (!!r.az && r.az === aziendaCorrente))
-                    );
-                    const apri = () => {
-                      if (apribile) void apriRecord(w, r.k as string);
-                    };
-                    const classiRiga = [r.n ? 'riga-nuova' : '', apribile ? 'riga-apribile' : '']
-                      .filter(Boolean)
-                      .join(' ');
-                    return (
-                    <tr
-                      key={r.k || i}
-                      className={classiRiga || undefined}
-                      {...(apribile ? { title: 'Apri il dettaglio', onClick: apri } : {})}
-                    >
-                      {suPiuAziende(w) ? <td className="dash-cella-azienda">{r.az || ''}</td> : null}
-                      {permuta(r.c || [], ordine).map((cella, j) => {
-                        // Gli importi a destra come in ogni lista: il valore grezzo
-                        // della cella dice gia' se e' un numero, non serve indovinarlo
-                        // dal testo formattato.
-                        const classi = [
-                          typeof cella.v === 'number' ? 'number' : '',
-                          cella.p !== undefined ? 'cella-cambiata' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ');
-                        return (
-                          <td key={j} className={classi || undefined}>
-                            {/* Il valore di prima accanto a quello nuovo: e' l'unica
-                                cosa che rende leggibile «e' cambiato», e arriva gia'
-                                formattato dal server. */}
-                            {cella.p !== undefined && cella.p !== null ? (
-                              <s className="valore-prima">{cella.p}</s>
-                            ) : null}
-                            {j === 0 && r.n ? <span className="segno-nuova">nuova</span> : null}
-                            {/* La tr resta una riga di tabella per chi legge con lo
-                                screen reader: il link sta nella prima cella, e il clic
-                                del mouse vale su tutta la riga. */}
-                            {j === 0 && apribile ? (
-                              <span
-                                role="link"
-                                tabIndex={0}
-                                className="riga-apri"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    apri();
-                                  }
-                                }}
-                              >
-                                {cella.t}
-                              </span>
-                            ) : (
-                              cella.t
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <TabellaWidget
+                colonne={w.colonne || []}
+                righe={foto.righe || []}
+                ordineIniziale={w.ordineColonne}
+                ordinamentoLocale={w.ordinamentoLocale}
+                vista={vistaDi(w)}
+                schemaCambiato={!!foto.schemaCambiato}
+                colonnaAzienda={suPiuAziende(w)}
+                // Si apre il record della riga col dettaglio che il server ha scelto
+                // (quello della lista, o quello indicato nel widget). Non si apre una
+                // riga senza chiave, con la chiave "null" (una chiave con parti nulle) o
+                // con una chiave ripetuta: su alcune liste si ripete, e si aprirebbe un
+                // record diverso da quello cliccato. Nei widget su piu' aziende si aprono
+                // solo le righe dell'azienda corrente: il dettaglio girerebbe nel suo
+                // contesto (SXADV-6000).
+                rigaApribile={(r) => !!(
+                  w.dettaglio && onApriDettaglio && r.k && r.k !== 'null'
+                  && chiaviRipetute.get(r.k) === 1
+                  && (!suPiuAziende(w) || (!!r.az && r.az === aziendaCorrente))
+                )}
+                onApri={(r) => {
+                  if (r.k) void apriRecord(w, r.k);
+                }}
+                onVista={(v) => void salvaVista(w, v)}
+              />
+              {foto.ordinatoSuParte ? (
+                <Typography.Text type="secondary" className="dash-ordinate-su-parte">
+                  Ordinate fra le prime {numero(foto.righeInFotografia || 0)} righe della ricerca.
+                </Typography.Text>
+              ) : null}
               {(w.colonne || []).length === 0 && mostrate > 0 && (
                 <Typography.Text type="warning" style={{ fontSize: 12 }}>
                   Le colonne di questa lista non si leggono piu&apos;: le righe sono

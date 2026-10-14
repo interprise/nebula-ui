@@ -44,6 +44,8 @@
   --app-bar: #4096ff;
   --app-bar-negative: #fa8c16;
   --app-surface-muted: #f5f5f5;
+  /* SXADV-6001.4: la riga pari delle tabelle a strisce (widget della Home). */
+  --app-row-alt: #fafafa;
 
   /* --- Feedback ----------------------------------------------------------- */
   --app-success: #52c41a;
@@ -210,6 +212,7 @@
   /* La velatura dei chip azione va rovesciata: sul chiaro e' nero al 5%, sullo
    * scuro dev'essere bianco, altrimenti "un filo piu' scuro" diventa invisibile. */
   --app-action-chip-bg: rgba(255, 255, 255, 0.08);
+  --app-row-alt: rgba(255, 255, 255, 0.04);
   --app-action-chip-bg-hover: rgba(255, 255, 255, 0.14);
   --app-action-chip-border: rgba(255, 255, 255, 0.2);
   --app-text: rgba(255, 255, 255, 0.85);
