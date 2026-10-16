@@ -15,6 +15,7 @@ import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent } from './rowActivation';
+import { isRestoringScroll } from './tabScrollMemory';
 import {
   rememberRow, recallRow, findRememberedRow,
   armReturn, armedReturn, disarmReturn, lastRecordPath, ROW_RETURN_ATTR,
@@ -2922,6 +2923,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         alignedPathRef.current = match;
         target = nodes.find((n) => n.path === match) ?? null;
         if (!target) { giveUp(); return; }
+        // Ritorno su una scheda di sessione: la posizione la rimette la Shell,
+        // com'era quando la si e' lasciata (SXADV-6008); la riga ricordata si
+        // evidenzia soltanto.
+        if (!armed && isRestoringScroll(container)) return;
         since = performance.now();
       }
       if (userTookOver) { giveUp(); return; }

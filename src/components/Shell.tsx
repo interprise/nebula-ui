@@ -82,6 +82,7 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
+import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
 import { filterMenuTree } from './menuFilter';
 import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
@@ -574,12 +575,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   tabsRef.current = tabs;
   // Si entra sulla Home (SXADV-62); dopo un F5 il ripristino delle schede porta
   // invece sulla prima sessione ricostruita.
-  const [activeTab, setActiveTab] = useState<string>(HOME_KEY);
+  const [activeTab, setActiveTabState] = useState<string>(HOME_KEY);
   const isHome = activeTab === HOME_KEY;
   // Per chi gira fuori dal render (la risposta di una richiesta): una pagina
   // nuova prende il fuoco solo se e' della scheda che si sta guardando.
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
+  const tabContentRef = useRef<HTMLDivElement | null>(null);
+  // Lo scorrimento delle schede lasciate, con la vista su cui e' stato preso
+  // (SXADV-6008): si disegna solo la scheda in primo piano, e tornando le aree
+  // scorrevoli rinascerebbero in cima. Lo si fotografa QUI, all'unico punto da
+  // cui cambia la scheda, finche' il DOM e' ancora quello della scheda lasciata.
+  const scrollByTabRef = useRef<Record<string, { ui: UITree; snap: ScrollSnapshot }>>({});
+  const setActiveTab = useCallback((key: string) => {
+    const leaving = activeTabRef.current;
+    const root = tabContentRef.current;
+    const ui = tabsRef.current.find((t) => t.key === leaving)?.ui;
+    if (key !== leaving && leaving !== HOME_KEY && root && ui) {
+      scrollByTabRef.current[leaving] = { ui, snap: snapshotScroll(root) };
+    }
+    setActiveTabState(key);
+  }, []);
   const [menuFilter, setMenuFilter] = useState('');
   const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
   const [bannersModalOpen, setBannersModalOpen] = useState(false);
@@ -664,7 +680,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setTabs((prev) => [...prev, tab]);
     setActiveTab(key);
     return tab;
-  }, []);
+  }, [setActiveTab]);
 
   // La scheda di lavoro: l'ultima scheda di sessione su cui si e' stati. Chi apre
   // qualcosa dalla Home lo apre li', come farebbe un clic sul menu da quella scheda.
@@ -694,7 +710,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTab(tab.key);
     feedback.info(`"${tab.label}" sta ancora lavorando: quando ha finito, riprova.`);
     return false;
-  }, [getWorkTab, feedback]);
+  }, [getWorkTab, feedback, setActiveTab]);
   const entraDallaHome = useCallback((ingresso: IngressoDallaHome): boolean => {
     if (activeTabRef.current !== HOME_KEY) return false;
     const tab = getWorkTab();
@@ -706,7 +722,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTab(tab.key);
     setIngressoNonce((n) => n + 1);
     return true;
-  }, [getWorkTab, schedaDiLavoroLibera, updateTabState]);
+  }, [getWorkTab, schedaDiLavoroLibera, updateTabState, setActiveTab]);
 
   const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
     feedback.showServerMessages(errors, {
@@ -752,7 +768,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // Dopo il cambio si torna sulla Home, che si rilegge per il contesto nuovo.
     workTabRef.current = 'tab_1';
     setActiveTab(HOME_KEY);
-  }, []);
+    // Dopo setActiveTab, che fotografa la scheda lasciata: le chiavi tab_N
+    // ripartono e nessuna fotografia del contesto vecchio deve restare.
+    scrollByTabRef.current = {};
+  }, [setActiveTab]);
 
   const changeContext = useCallback(
     async (action: 'CambioAzienda' | 'CambioSede', value: string) => {
@@ -1392,7 +1411,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setTabs(restored);
     setActiveTab(restored[0].key);
     void loadRestoredTab(restored[0]);
-  }, [initialPanels, loadRestoredTab]);
+  }, [initialPanels, loadRestoredTab, setActiveTab]);
 
   /* "Aggiungi alla dashboard" (SXADV-62): il pulsante compare sulle liste, e la
      finestra chiede al server la bozza con gli stessi filtri che verranno
@@ -1632,7 +1651,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     openCdmsViewInTab(searchTab, { viewName: 'cdmsRisorseQuery', title: 'Ricerca', action: 'QueryPage' });
     openCdmsViewInTab(recentTab, { viewName: 'cdmsRisorseList', title: 'Documenti recenti', orderBy: 'dataUltimaRevisione desc' });
     setActiveTab(searchTab.key);
-  }, [tabs, getActiveTabState, getWorkTab, addTab, openCdmsViewInTab]);
+  }, [tabs, getActiveTabState, getWorkTab, addTab, openCdmsViewInTab, setActiveTab]);
 
   // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
   const handleCdmsFolderClick = useCallback(
@@ -1870,17 +1889,21 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         const resto = prima.filter((t) => t.key !== key);
         if (resto.length > 0) workTabRef.current = resto[Math.min(idx, resto.length - 1)].key;
       }
-      setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.key === key);
-        const next = prev.filter((t) => t.key !== key);
-        if (activeTab === key && next.length > 0) {
-          setActiveTab(next[Math.min(idx, next.length - 1)].key);
-        } else if (next.length === 0) {
-          setActiveTab('');
-        }
-        return next;
-      });
+      // La scheda da attivare si sceglie qui e non dentro l'updater di setTabs:
+      // setActiveTab fotografa lo scorrimento (SXADV-6008), e un updater
+      // eseguito piu' tardi, nel render, rimetterebbe in memoria quello della
+      // scheda appena chiusa.
+      const prev = tabsRef.current;
+      const idx = prev.findIndex((t) => t.key === key);
+      const next = prev.filter((t) => t.key !== key);
+      if (activeTab === key && next.length > 0) {
+        setActiveTab(next[Math.min(idx, next.length - 1)].key);
+      } else if (next.length === 0) {
+        setActiveTab('');
+      }
+      setTabs((p) => p.filter((t) => t.key !== key));
       delete formValuesRef.current[key];
+      delete scrollByTabRef.current[key];
       // La Session resta viva sul server finche' non gliela si chiude: senza
       // questo si accumulano (e dopo un F5 le schede appena chiuse
       // ricomparirebbero, ricostruite da `panels`). Come il closeSession() del
@@ -1904,6 +1927,37 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     () => (currentUi && currentFormValues ? applyPendingValues(currentUi, currentFormValues, currentCaptions) : currentUi),
     [currentUi, currentFormValues, currentCaptions],
   );
+  // Tornando su una scheda le sue aree scorrevoli ritrovano la posizione che
+  // avevano quando la si e' lasciata (SXADV-6008), come nel legacy, dove i
+  // pannelli delle sessioni restano nel DOM. Si riapplica per una finestra di
+  // tempo: AG Grid disegna le righe dopo, ad altezze prima stimate e poi
+  // misurate, e un valore oltre l'escursione del momento il browser lo tronca.
+  // Si smette appena l'utente mette mano all'area, o se la scheda cambia vista
+  // (un ingresso dal menu sulla scheda di lavoro): la fotografia era dell'altra.
+  useLayoutEffect(() => {
+    const saved = scrollByTabRef.current[activeTab];
+    const root = tabContentRef.current;
+    const uiNow = () => tabsRef.current.find((t) => t.key === activeTab)?.ui;
+    if (!saved || !root || uiNow() !== saved.ui) return;
+    let raf = 0;
+    const start = performance.now();
+    const USER_EVENTS = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+    const stop = () => {
+      cancelAnimationFrame(raf);
+      USER_EVENTS.forEach((t) => root.removeEventListener(t, stop, { capture: true }));
+      root.removeAttribute(SCROLL_RESTORE_ATTR);
+    };
+    const step = () => {
+      if (uiNow() !== saved.ui) { stop(); return; }
+      applyScroll(root, saved.snap);
+      if (performance.now() - start < SCROLL_RESTORE_WINDOW_MS) raf = requestAnimationFrame(step);
+      else stop();
+    };
+    root.setAttribute(SCROLL_RESTORE_ATTR, '');
+    USER_EVENTS.forEach((t) => root.addEventListener(t, stop, { capture: true, passive: true }));
+    step();
+    return stop;
+  }, [activeTab]);
   const addWaiting = isAddWaiting(addWait, currentTab?.key);
   const addWaitValue = useMemo<AddWaitValue>(
     () => ({ waiting: addWaiting, settle: settleAddWait, discard: discardFieldEdits }),
@@ -2013,7 +2067,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // for a moment: a view still settling (a tab's content swapped by ChangeTab, a
   // grid growing to its measured height) would otherwise flash it for as long
   // as the settling lasts — a blink testers can see and cannot photograph.
-  const tabContentRef = useRef<HTMLDivElement | null>(null);
   const [copyrightFits, setCopyrightFits] = useState(false);
   const copyrightRevealTimer = useRef<number | undefined>(undefined);
   const copyrightHasRoom = useCallback((): boolean => {
