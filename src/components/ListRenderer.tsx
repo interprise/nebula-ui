@@ -23,6 +23,7 @@ import {
 import { focusNewPage } from '../services/focusRestore';
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
+import { layoutButtonsPlacement } from './layoutButtonsPlacement';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import {
   nomiInOrdine,
@@ -2972,6 +2973,58 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     listContainerStyle.flex = 'initial';
   }
 
+  // Comandi di layout della griglia, in coda a destra.
+  // - una-riga: le bande di continuazione diventano colonne, il record sta su
+  //   una linea e si scorre in orizzontale con le prime colonne bloccate.
+  //   Guadagna sull'asse ORIZZONTALE.
+  // - zoom: collassa testata e barra tab. Guadagna sul VERTICALE. Non è un
+  //   overlay — la griglia non si rimonta, quindi scroll, selezione e riga in
+  //   editing restano dove sono.
+  // Si compongono, ed entrambi fanno riadattare il page size da solo: più
+  // record entrano, il client li misura e li chiede al server
+  // (SetPageSizeCommand, SXADV-5742).
+  // Stanno nella banda grid-actions; se quella non ha altro e c'è la barra
+  // delle azioni di lista, vanno in coda a quest'ultima invece di occupare una
+  // riga da soli (layoutButtonsPlacement).
+  const showsGridTitle = !!gridActions?.title && !titleEchoesTab;
+  const gridBandHasContent = hasGridActions || showsGridTitle;
+  const layoutPlacement = layoutButtonsPlacement({
+    hasLayoutButtons: canFlatten || canZoom,
+    gridBandHasContent,
+    hasListActions: !!ui.listActions && ui.listActions.length > 0,
+  });
+  const layoutButtons = layoutPlacement !== 'none' && (
+    <Space size="small" style={{ marginLeft: 'auto' }}>
+      {canFlatten && (
+        <Tooltip
+          title={oneLine ? 'Torna al record su più righe' : 'Un record per riga (colonne affiancate, prime colonne bloccate)'}
+          placement="bottom"
+        >
+          <Button
+            size="small"
+            type={oneLine ? 'primary' : 'default'}
+            icon={oneLine ? <ColumnHeightOutlined /> : <ColumnWidthOutlined />}
+            aria-label={oneLine ? 'Torna al record su più righe' : 'Un record per riga'}
+            aria-pressed={oneLine}
+            onClick={() => setOneLine(gridId as string, !oneLine)}
+          />
+        </Tooltip>
+      )}
+      {canZoom && (
+        <Tooltip title={isZoomed ? 'Riduci la griglia (Esc)' : 'Ingrandisci la griglia'} placement="bottom">
+          <Button
+            size="small"
+            type={isZoomed ? 'primary' : 'default'}
+            icon={isZoomed ? <CompressOutlined /> : <ExpandOutlined />}
+            aria-label={isZoomed ? 'Riduci la griglia' : 'Ingrandisci la griglia'}
+            aria-pressed={isZoomed}
+            onClick={() => setZoomedGridId(isZoomed ? null : gridId)}
+          />
+        </Tooltip>
+      )}
+    </Space>
+  );
+
   return (
     <div className="list-container" style={listContainerStyle}>
       {/* In zoom il titolo torna anche quando ripete l'etichetta del tab: la
@@ -2985,7 +3038,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           section header) so users who had scrolled a long list could reach it
           without scrolling back; detail grids paginate now, so a single bar on
           top is both enough and consistent with the page toolbar (SXADV-5693). */}
-      {(hasGridActions || canZoom || canFlatten) && (
+      {(hasGridActions || layoutPlacement === 'grid-band') && (
         <div className="toolbar grid-actions" style={{ display: 'flex', alignItems: 'center' }}>
           {gridActions && hasGridActions && (
           <Space wrap size="small">
@@ -3031,50 +3084,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               lo scriveva il legacy ("Azioni" sotto la testata di Eventi
               Clienti). Il server non lo manda quando la griglia sta dentro un
               tab, che l'etichetta ce l'ha gia'. */}
-          {gridActions?.title && !titleEchoesTab && (
-            <span className="grid-actions-title">{gridActions.title}</span>
+          {showsGridTitle && (
+            <span className="grid-actions-title">{gridActions!.title}</span>
           )}
-          {/* Comandi di layout della griglia, in coda a destra.
-              - una-riga: le bande di continuazione diventano colonne, il record
-                sta su una linea e si scorre in orizzontale con le prime colonne
-                bloccate. Guadagna sull'asse ORIZZONTALE.
-              - zoom: collassa testata e barra tab. Guadagna sul VERTICALE. Non è
-                un overlay — la griglia non si rimonta, quindi scroll, selezione
-                e riga in editing restano dove sono.
-              Si compongono, ed entrambi fanno riadattare il page size da solo:
-              più record entrano, il client li misura e li chiede al server
-              (SetPageSizeCommand, SXADV-5742). */}
-          {(canFlatten || canZoom) && (
-            <Space size="small" style={{ marginLeft: 'auto' }}>
-              {canFlatten && (
-                <Tooltip
-                  title={oneLine ? 'Torna al record su più righe' : 'Un record per riga (colonne affiancate, prime colonne bloccate)'}
-                  placement="bottom"
-                >
-                  <Button
-                    size="small"
-                    type={oneLine ? 'primary' : 'default'}
-                    icon={oneLine ? <ColumnHeightOutlined /> : <ColumnWidthOutlined />}
-                    aria-label={oneLine ? 'Torna al record su più righe' : 'Un record per riga'}
-                    aria-pressed={oneLine}
-                    onClick={() => setOneLine(gridId as string, !oneLine)}
-                  />
-                </Tooltip>
-              )}
-              {canZoom && (
-                <Tooltip title={isZoomed ? 'Riduci la griglia (Esc)' : 'Ingrandisci la griglia'} placement="bottom">
-                  <Button
-                    size="small"
-                    type={isZoomed ? 'primary' : 'default'}
-                    icon={isZoomed ? <CompressOutlined /> : <ExpandOutlined />}
-                    aria-label={isZoomed ? 'Riduci la griglia' : 'Ingrandisci la griglia'}
-                    aria-pressed={isZoomed}
-                    onClick={() => setZoomedGridId(isZoomed ? null : gridId)}
-                  />
-                </Tooltip>
-              )}
-            </Space>
-          )}
+          {layoutPlacement === 'grid-band' && layoutButtons}
         </div>
       )}
 
@@ -3089,6 +3102,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               {act.label}
             </Button>
           ))}
+          {layoutPlacement === 'action-bar' && layoutButtons}
         </div>
       )}
 
