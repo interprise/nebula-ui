@@ -11,32 +11,46 @@ function isPosted(ctrl: UIControl): boolean {
 
 /** Valori dei controlli modificabili cosi' come li ha disegnati il server: la
  *  base dei `formValues` di una scheda a ogni risposta. I controlli in sola
- *  lettura restano fuori, il server il loro stato ce l'ha gia'. */
+ *  lettura restano fuori, il server il loro stato ce l'ha gia'.
+ *
+ *  Si cercano negli stessi posti in cui li ridisegna applyPendingValues. Le
+ *  viste incorporate "in linea" (content="this") arrivano come cella
+ *  contenitore con le sue righe, e prima restavano fuori: un campo li' dentro
+ *  partiva solo finche' non tornava una risposta. Sulla ricerca Fatture attive
+ *  il secondo Esegui partiva senza la Sede della testata, e il server perdeva
+ *  il filtro Stato (SXADV-5989.Z). */
 export function extractFormValues(ui: UITree): Record<string, string | string[]> {
   const values: Record<string, string | string[]> = {};
   const walkRows = (rows: UIRow[]) => {
     for (const row of rows) {
       for (const cell of row.cells) {
         const ctrl = cell.control;
-        if (!ctrl) continue;
-        if (isPosted(ctrl)) {
-          const name = ctrl.name || ctrl.id;
-          if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
-            values[name] = String(ctrl.value);
-          }
-          // Re-seed the negation ($not) flag from the server's authoritative
-          // state so it survives this rebuild and is posted on ExecuteQuery.
-          // Without it, toggling "not" then triggering any reload would drop
-          // the flag (no control carries it) — same class of loss the scalar
-          // value above was fixed for (SXADV-5465).
-          if (name && ctrl.negation && ctrl.negationValue) {
-            values[negationFieldName(name)] = '1';
-          }
-        }
-        // Recurse into embedded/detail views and tabs
-        if (ctrl.contentRows) walkRows(ctrl.contentRows);
+        if (ctrl) collect(ctrl);
+        if (cell.rows) walkRows(cell.rows);
       }
     }
+  };
+  const collect = (ctrl: UIControl) => {
+    if (isPosted(ctrl)) {
+      const name = ctrl.name || ctrl.id;
+      if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
+        values[name] = String(ctrl.value);
+      }
+      // Re-seed the negation ($not) flag from the server's authoritative
+      // state so it survives this rebuild and is posted on ExecuteQuery.
+      // Without it, toggling "not" then triggering any reload would drop
+      // the flag (no control carries it) — same class of loss the scalar
+      // value above was fixed for (SXADV-5465).
+      if (name && ctrl.negation && ctrl.negationValue) {
+        values[negationFieldName(name)] = '1';
+      }
+    }
+    // Recurse into embedded/detail views and tabs
+    if (ctrl.contentRows) walkRows(ctrl.contentRows);
+    // Le viste embedded/detail portano le righe in `control.rows`. Una lista
+    // no: vedi isList.
+    const rows = viewRows(ctrl);
+    if (rows && !isList(ctrl)) walkRows(rows);
   };
   if (ui.rows) walkRows(ui.rows);
   return values;
@@ -51,6 +65,15 @@ export function extractFormValues(ui: UITree): Record<string, string | string[]>
  *  quando si smonta (flushFieldEdits). */
 function isList(v: UIControl | UITree): boolean {
   return v.pageType === 1 || v.layoutType === 'horizontal' || !!v.listEdit;
+}
+
+/** Le righe di layout di una vista embedded/detail, che il server fonde nel
+ *  controllo (lo stesso controllo di ViewRenderer). Altri controlli usano
+ *  `rows` per altro: un numero per la textarea, un elenco di contenitori senza
+ *  `cells` per CdmsClass (cdmsRisorseDetail). */
+function viewRows(ctrl: UIControl): UIRow[] | undefined {
+  if (ctrl.type !== 'embeddedView' && ctrl.type !== 'detailView') return undefined;
+  return Array.isArray(ctrl.rows) ? (ctrl.rows as unknown as UIRow[]) : undefined;
 }
 
 /** La vista di una scheda ridisegnata con le modifiche non ancora spedite.
@@ -102,16 +125,17 @@ export function applyPendingValues(
       }
     }
     // Viste incorporate e tab: `contentRows`; le viste embedded/detail
-    // portano le loro righe in `control.rows` (per una textarea `rows` e' un
-    // numero). Una lista incorporata no: vedi isList.
+    // portano le loro righe in `control.rows` (vedi viewRows). Una lista
+    // incorporata no: vedi isList.
     if (isList(ctrl)) return next;
     if (ctrl.contentRows) {
       const rows = patchRows(ctrl.contentRows);
       if (rows !== ctrl.contentRows) set({ contentRows: rows });
     }
-    if (Array.isArray(ctrl.rows)) {
-      const rows = patchRows(ctrl.rows as unknown as UIRow[]);
-      if (rows !== (ctrl.rows as unknown)) set({ rows: rows as unknown as number });
+    const ownRows = viewRows(ctrl);
+    if (ownRows) {
+      const rows = patchRows(ownRows);
+      if (rows !== ownRows) set({ rows: rows as unknown as number });
     }
     return next;
   };
