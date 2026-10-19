@@ -17,7 +17,7 @@ import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from 
 import { oncePerEvent } from './rowActivation';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
-  rememberRow, recallRow, findRememberedRow,
+  rememberRow, recallRow, findRememberedRow, pageOfRememberedRow,
   armReturn, armedReturn, disarmReturn, lastRecordPath, ROW_RETURN_ATTR,
 } from './rowSelectionMemory';
 import { focusNewPage } from '../services/focusRestore';
@@ -507,6 +507,9 @@ const ROW_ACTIVATION_IGNORE = '.list-cell-control, .selector-nav-cell, button, s
 /** Per quanto, tornando in lista, si riallinea la riga di partenza mentre le
  *  altezze delle righe si assestano (SXADV-5957.1). */
 const ALIGN_WINDOW_MS = 1500;
+/** Quanto il ritorno su una lista di un tab aspetta la pagina del rigo che ha
+ *  chiesto al server (SXADV-5957.2B). */
+const PAGE_WAIT_MS = 5000;
 
 /** Leftmost navigate-to-detail column for listEdit+detailView lists (the
  *  legacy "selector"). Field click edits in the panel; this icon opens the
@@ -2041,6 +2044,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // testata, un refresh) non devono strappare la griglia a chi la sta
   // scorrendo. Un clic su una riga lo azzera: il prossimo ritorno riallinea.
   const alignedPathRef = useRef<string | null>(null);
+  // La riga ricordata per cui si e' gia' chiesta la sua pagina: una volta per
+  // ritorno, anche se la pagina arrivata non la contiene (5957.2B).
+  const pagedForPathRef = useRef<{ path: string; until: number } | null>(null);
+  const pageInfoRef = useRef(pageInfo);
+  pageInfoRef.current = pageInfo;
 
   // An embedded grid fills the space its container actually leaves it, measured
   // in pixels. Sizing it to content (or to a fixed 60vh) makes a tall grid
@@ -2374,6 +2382,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     const path = data._selectorPath as string | undefined;
     rememberRow(selKey, path);
     alignedPathRef.current = null;
+    pagedForPathRef.current = null;
     markSelected(path ?? null);
 
     const command = data._selectorCommand as string | undefined;
@@ -2911,6 +2920,29 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const match = armed === 'new'
           ? lastRecordPath(nodes)
           : findRememberedRow(stored ?? '', nodes.map((n) => n.path), !!embedded);
+        if (!match && armed === 'row' && embedded && stored) {
+          // La lista del tab ricreata al ritorno riparte da pagina 1: si chiede
+          // la pagina del rigo, e la risposta rifa' girare questo effetto con
+          // le righe nuove (5957.2B). Si aspetta al piu' PAGE_WAIT_MS: se la
+          // pagina non arriva (errore, sessione scaduta) il ritorno si chiude
+          // come quando la riga non c'e', invece di restare armato.
+          const asked = pagedForPathRef.current;
+          if (!asked || asked.path !== stored) {
+            const info = pageInfoRef.current;
+            const page = info && ui.path
+              ? pageOfRememberedRow(stored, nodes.map((n) => n.path), info.pageSize)
+              : null;
+            if (info && page !== null && page !== info.currentPage && page <= info.totalPages) {
+              pagedForPathRef.current = { path: stored, until: performance.now() + PAGE_WAIT_MS };
+              onActionRef.current('DetailPage', { navpath: ui.path as string, page: String(page) });
+              raf = requestAnimationFrame(attempt);
+              return;
+            }
+          } else if (performance.now() < asked.until) {
+            raf = requestAnimationFrame(attempt);
+            return;
+          }
+        }
         if (!match) {
           if (tries++ < 10) raf = requestAnimationFrame(attempt);
           else giveUp();
@@ -2948,7 +2980,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       cancelAnimationFrame(raf);
       USER_SCROLL_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage]);
+  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage, ui.path]);
 
   // The server emits gridActions for embedded lists only. `ui.footer` (the
   // legacy below-the-grid Add) is deliberately no longer rendered — its command

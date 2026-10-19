@@ -71,3 +71,31 @@ export function findRememberedRow(
   }
   return found;
 }
+
+/** La pagina (da 1) su cui sta la riga ricordata di una lista incorporata,
+ *  quando la lista e' la stessa ma la riga non e' sulla pagina mostrata.
+ *
+ *  Il server ricrea la lista del tab al ritorno dal dettaglio di un rigo e la
+ *  rimanda da pagina 1 (5957.2B). La posizione nel percorso e' quella nella
+ *  collezione, non nella pagina, quindi dice da sola su che pagina sta il rigo.
+ *  Null se la riga e' gia' in lista, se la lista e' un'altra (padre o sid
+ *  diversi, primo livello) o se mancano i dati per calcolarla. */
+export function pageOfRememberedRow(
+  stored: string,
+  candidates: readonly string[],
+  pageSize: number,
+): number | null {
+  if (!stored || !Number.isInteger(pageSize) || pageSize <= 0) return null;
+  const cut = stored.lastIndexOf(',');
+  if (cut < 0) return null;
+  const parent = stored.slice(0, cut + 1);
+  const last = SEGMENT.exec(stored.slice(cut + 1));
+  if (!last) return null;
+  const sameList = candidates.some((c) => {
+    if (!c.startsWith(parent)) return false;
+    const m = SEGMENT.exec(c.slice(parent.length));
+    return !!m && m[1] === last[1];
+  });
+  if (!sameList || findRememberedRow(stored, candidates) !== null) return null;
+  return Math.floor(Number(last[2]) / pageSize) + 1;
+}
