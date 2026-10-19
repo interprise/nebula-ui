@@ -36,8 +36,8 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import type { ToolbarItem } from '../types/ui';
-import { comboFromToolbarKeys, comboLabel } from './toolbarKeys';
-import { HotkeyPriority, useHotkeys, type HotkeyBinding } from '../hooks/hotkeys';
+import { comboFromToolbarKeys, toolbarTooltip } from './toolbarKeys';
+import { HotkeyPriority, useHotkey, useHotkeys, type HotkeyBinding } from '../hooks/hotkeys';
 
 const iconMap: Record<string, React.ReactNode> = {
   'control_repeat_blue.png': <ReloadOutlined />,
@@ -281,14 +281,9 @@ function renderToolbarItem(
   }
 
   const iconOnly = !item.text && item.icon;
-  // Il tasto acceleratore si affianca al tooltip invece di sostituirlo solo
-  // quando manca: è l'unico posto in cui l'utente può scoprirlo, e prima ci
-  // finiva comunque il keyCode grezzo ("120" al posto di "F9").
-  const combo = comboFromToolbarKeys(item.keys, item.shift);
-  const keyHint = combo && !item.disabled ? comboLabel(combo) : undefined;
-  const tooltipText = item.tooltip
-    ? (keyHint ? `${item.tooltip} (${keyHint})` : item.tooltip)
-    : keyHint;
+  // Il tasto acceleratore si affianca al tooltip ("Salva (F9)"): è l'unico
+  // posto in cui l'utente può scoprirlo.
+  const tooltipText = toolbarTooltip(item.tooltip, item.keys, item.shift, item.disabled);
 
   const btn = (
     <Button
@@ -347,6 +342,12 @@ const Toolbar: React.FC<ToolbarProps> = ({ items, paging, pageType, onAction, ex
      i control scrivono in formValues a ogni battuta (`useCommitReload.store`),
      non al blur: il valore appena digitato parte insieme al comando. */
   useHotkeys(bindings, { priority: HotkeyPriority.toolbar, allowWhileTyping: true });
+  /* F5 dentro una vista non ricarica mai la pagina (SXADV-5749). Se la toolbar
+     ha "Ricarica dati" vince il suo binding qui sopra; altrimenti (dettaglio
+     nuovo, senza righe), con il tasto tenuto premuto o con un overlay aperto
+     resta questo, che non fa nulla ma tiene il tasto lontano dal browser: il
+     ricaricamento perderebbe quello che si sta digitando. Ctrl+R resta. */
+  useHotkey('F5', () => {}, { priority: 0, allowWhileTyping: true, allowRepeat: true, claim: true });
 
   // Con una barra vuota non c'e' niente da disegnare, ma un pulsante del client
   // (extraRight) e' comunque da mostrare: oggi le liste hanno sempre almeno il

@@ -25,6 +25,7 @@ import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import { layoutButtonsPlacement } from './layoutButtonsPlacement';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
+import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
 import {
   nomiInOrdine,
   ordinamentoVisualizzato,
@@ -3029,26 +3030,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     <Space size="small" style={{ marginLeft: 'auto' }}>
       {canFlatten && (
         <Tooltip
-          title={oneLine ? 'Torna al record su più righe' : 'Un record per riga (colonne affiancate, prime colonne bloccate)'}
+          title={layoutToggleTooltip(oneLine)}
           placement="bottom"
         >
           <Button
             size="small"
             type={oneLine ? 'primary' : 'default'}
             icon={oneLine ? <ColumnHeightOutlined /> : <ColumnWidthOutlined />}
-            aria-label={oneLine ? 'Torna al record su più righe' : 'Un record per riga'}
+            aria-label={layoutToggleTooltip(oneLine)}
             aria-pressed={oneLine}
             onClick={() => setOneLine(gridId as string, !oneLine)}
           />
         </Tooltip>
       )}
       {canZoom && (
-        <Tooltip title={isZoomed ? 'Riduci la griglia (Esc)' : 'Ingrandisci la griglia'} placement="bottom">
+        <Tooltip title={sectionZoomTooltip(isZoomed)} placement="bottom">
           <Button
             size="small"
             type={isZoomed ? 'primary' : 'default'}
             icon={isZoomed ? <CompressOutlined /> : <ExpandOutlined />}
-            aria-label={isZoomed ? 'Riduci la griglia' : 'Ingrandisci la griglia'}
+            aria-label={sectionZoomTooltip(isZoomed)}
             aria-pressed={isZoomed}
             onClick={() => setZoomedGridId(isZoomed ? null : gridId)}
           />

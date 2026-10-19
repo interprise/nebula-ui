@@ -28,6 +28,8 @@ export interface UIControl {
   options?: { value: string; text: string }[];
   codeTableName?: string;
   remote?: boolean;
+  /** Didascalia del campo vuoto dichiarata dalla view (`emptyMessage`). */
+  emptyMessage?: string;
   // textarea
   rows?: number;
   cols?: number;

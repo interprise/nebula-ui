@@ -6,9 +6,11 @@
  * abilitato che abbia un'azione — ma il client React se ne serviva solo per
  * comporre il tooltip, e ci scriveva dentro il numero grezzo ("120").
  *
- * Censimento dei bottoni che dichiarano un tasto in CORE + entrasp: sono due,
- * `save` = 120 (F9) e `saveNew` = 121 (F10), entrambi in `RecordNavigator`.
- * Tasti funzione, quindi senza collisioni con la digitazione.
+ * Censimento dei bottoni che dichiarano un tasto in CORE + entrasp (costanti
+ * `Toolbar.KEY_*`, uguali in tutti i navigator — SXADV-5749): `newRecord` = 113
+ * (F2), `buttonRefresh` = 116 (F5), `executeQuery` = 119 (F8), `save` = 120
+ * (F9), `saveNew` = 121 (F10). Tasti funzione, quindi senza collisioni con la
+ * digitazione.
  */
 
 const NAMED_KEYCODES: Record<number, string> = {
@@ -65,4 +67,19 @@ export function comboFromToolbarKeys(keys: unknown, shift?: boolean): string | n
  *  proprio perché ' ' da solo non si vede. */
 export function comboLabel(combo: string): string {
   return combo === ' ' ? 'Spazio' : combo.replace(/\+ $/, '+Spazio');
+}
+
+/** Tooltip di un bottone di toolbar: il testo del server più il tasto, quando
+ *  il bottone ne dichiara uno ed è abilitato — "Salva (F9)". È l'unico posto in
+ *  cui l'utente può scoprire l'acceleratore. Senza testo, nessun tooltip. */
+export function toolbarTooltip(
+  tooltip: string | undefined,
+  keys: unknown,
+  shift?: boolean,
+  disabled?: boolean,
+): string | undefined {
+  if (!tooltip) return undefined;
+  const combo = comboFromToolbarKeys(keys, shift);
+  const keyHint = combo && !disabled ? comboLabel(combo) : undefined;
+  return keyHint ? `${tooltip} (${keyHint})` : tooltip;
 }

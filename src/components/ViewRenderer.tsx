@@ -29,6 +29,7 @@ import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 import { solvePromptBand, type LeadingPrompt } from './promptBand';
 import { panelRowSwitch } from './addWait';
+import { sectionZoomTooltip } from './zoomLabels';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -1840,12 +1841,12 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                      esso sia, e cambiare tab deve continuare a funzionare. */
                   showBar={!zoomed || panelZoom}
                   extraRight={(
-                    <Tooltip title={panelZoom ? 'Riduci la sezione (Esc)' : 'Ingrandisci la sezione'} placement="bottom">
+                    <Tooltip title={sectionZoomTooltip(panelZoom)} placement="bottom">
                       <Button
                         size="small"
                         type={panelZoom ? 'primary' : 'default'}
                         icon={panelZoom ? <CompressOutlined /> : <ExpandOutlined />}
-                        aria-label={panelZoom ? 'Riduci la sezione' : 'Ingrandisci la sezione'}
+                        aria-label={sectionZoomTooltip(panelZoom)}
                         aria-pressed={panelZoom}
                         onClick={() => zoomStore.setZoomForScope(zoomScope, panelZoom ? null : PANEL_ZOOM_ID)}
                       />

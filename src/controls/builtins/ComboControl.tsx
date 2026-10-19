@@ -6,6 +6,7 @@ import type { UIControl } from '../../types/ui';
 import { useCommonProps, useControlChange, getTextMaxWidth, comboWidthForSize, useSelectKeys, useSyncedState, useSelectOpen, useComboTextField, mandatoryStatus, getFieldName } from '../helpers';
 import type { CommonInputProps } from '../helpers';
 import { withPostDecorations } from '../decorations';
+import { comboPlaceholder } from './comboPlaceholder';
 import { SidContext, PathContext } from '../../components/ViewRenderer';
 import * as api from '../../services/api';
 
@@ -248,6 +249,7 @@ const RemoteCombo: React.FC<{
       status={mandatoryStatus(control, selected ?? '')}
       ref={selectRef}
       value={selected}
+      placeholder={comboPlaceholder(control)}
       open={open}
       showSearch
       searchValue={search}
@@ -432,6 +434,7 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
       status={mandatoryStatus(control, selected ?? '')}
       ref={selectRef}
       value={selected}
+      placeholder={comboPlaceholder(control)}
       open={open}
       showSearch
       searchValue={search}

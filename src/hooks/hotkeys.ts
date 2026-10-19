@@ -92,7 +92,8 @@ export function hasOpenOverlay(): boolean {
 /** Priorità: vince la più alta, e ne parte **una sola**. Su Esc questo produce
  *  la semantica voluta — si chiude la modalità più interna, una per pressione. */
 export const HotkeyPriority = {
-  /** Acceleratori dei bottoni di toolbar (F9 Salva, F10 Salva+). */
+  /** Acceleratori dei bottoni di toolbar (F2 Nuovo, F5 Ricarica dati, F8
+   *  Esegui, F9 Salva, F10 Salva+). */
   toolbar: 10,
   /** Uscita dalla modalità immersiva. */
   immersive: 20,
@@ -119,6 +120,11 @@ export interface HotkeyOptions {
   allowWhileTyping?: boolean;
   /** Parte anche sull'auto-ripetizione del tasto tenuto premuto. */
   allowRepeat?: boolean;
+  /** La combo resta nostra anche quando una guardia (overlay aperto,
+   *  auto-ripetizione) le impedisce di partire: il tasto non torna al browser.
+   *  Serve a F5, che lasciato passare ricarica la pagina e perde quello che si
+   *  stava digitando (SXADV-5749). */
+  claim?: boolean;
 }
 
 interface Registration extends Required<HotkeyOptions> {
@@ -133,9 +139,38 @@ export interface HotkeyRegistry {
 export const HotkeyRegistryContext = createContext<HotkeyRegistry>({ register: () => () => {} });
 
 /** Tasti che restano al browser finché non c'è una ragione esplicita per
- *  toglierglieli: F1 è l'aiuto, F5 il ricaricamento. Nessun bottone di toolbar
- *  li usa oggi (l'unico censimento nel codice CORE dà 120=F9 e 121=F10). */
-const BROWSER_RESERVED = new Set(['F1', 'F5']);
+ *  toglierglieli: F1 è l'aiuto. F5 la ragione l'ha avuta — è "Ricarica dati"
+ *  sulle toolbar che lo hanno (SXADV-5749.0A, il server lo dichiara come gli
+ *  altri tasti); dove la toolbar non ce l'ha resta il ricaricamento del
+ *  browser, perché nessuno lo registra. Ctrl+F5 e Ctrl+R non si toccano. */
+const BROWSER_RESERVED = new Set(['F1']);
+
+/** La combo resta al browser? Accetta qualunque grafia ("f5", "shift+f1"). */
+export function isBrowserReservedCombo(combo: string): boolean {
+  return BROWSER_RESERVED.has(normalizeCombo(combo));
+}
+
+/** Quale registrazione parte per una pressione, e se il tasto va comunque
+ *  sottratto al browser (`claim`). Vince la priorità più alta; con un overlay
+ *  aperto non parte niente — l'applicazione aspetta una risposta, ed Esc
+ *  appartiene all'overlay. */
+export function resolveHotkey<R extends Pick<Registration, 'combo' | 'priority' | 'allowWhileTyping' | 'allowRepeat' | 'claim'>>(
+  regs: Iterable<R>,
+  combo: string,
+  ctx: { overlay: boolean; typing: boolean; repeat: boolean },
+): { best: R | null; claimed: boolean } {
+  let best: R | null = null;
+  let claimed = false;
+  for (const reg of regs) {
+    if (reg.combo !== combo) continue;
+    if (reg.claim) claimed = true;
+    if (ctx.overlay) continue;
+    if (ctx.typing && !reg.allowWhileTyping) continue;
+    if (ctx.repeat && !reg.allowRepeat) continue;
+    if (!best || reg.priority > best.priority) best = reg;
+  }
+  return { best, claimed };
+}
 
 /** Stato e listener del registro. Vive in un hook perché il provider che lo
  *  monta stia in un file di soli componenti (react-refresh). */
@@ -151,17 +186,16 @@ export function useHotkeyRegistry(): HotkeyRegistry {
     const onKeyDown = (e: KeyboardEvent) => {
       // Già gestito da qualcun altro (handler locale di un control, antd…).
       if (e.defaultPrevented) return;
-      if (hasOpenOverlay()) return;
-      const combo = comboFromEvent(e);
-      const typing = isTypingTarget(e.target);
-      let best: Registration | null = null;
-      for (const reg of regsRef.current) {
-        if (reg.combo !== combo) continue;
-        if (typing && !reg.allowWhileTyping) continue;
-        if (e.repeat && !reg.allowRepeat) continue;
-        if (!best || reg.priority > best.priority) best = reg;
+      const { best, claimed } = resolveHotkey(regsRef.current, comboFromEvent(e), {
+        overlay: hasOpenOverlay(),
+        typing: isTypingTarget(e.target),
+        repeat: e.repeat,
+      });
+      if (!best) {
+        // Niente parte, ma il tasto non va nemmeno al browser.
+        if (claimed) e.preventDefault();
+        return;
       }
-      if (!best) return;
       e.preventDefault();
       e.stopPropagation();
       best.handler(e);
@@ -189,12 +223,12 @@ export function useHotkey(
   // ri-registrare (e quindi di perdere la combo per un frame) ogni volta.
   const handlerRef = useRef(handler);
   useEffect(() => { handlerRef.current = handler; });
-  const { priority = 0, enabled = true, allowWhileTyping = false, allowRepeat = false } = options ?? {};
+  const { priority = 0, enabled = true, allowWhileTyping = false, allowRepeat = false, claim = false } = options ?? {};
   const normalized = combo ? normalizeCombo(combo) : null;
 
   useEffect(() => {
     if (!normalized || !enabled) return;
-    if (BROWSER_RESERVED.has(normalized)) {
+    if (isBrowserReservedCombo(normalized)) {
       console.warn(`[hotkeys] ${normalized} è riservata al browser: registrazione ignorata`);
       return;
     }
@@ -204,9 +238,10 @@ export function useHotkey(
       enabled,
       allowWhileTyping,
       allowRepeat,
+      claim,
       handler: (e) => handlerRef.current(e),
     });
-  }, [normalized, enabled, priority, allowWhileTyping, allowRepeat, register]);
+  }, [normalized, enabled, priority, allowWhileTyping, allowRepeat, claim, register]);
 }
 
 export interface HotkeyBinding {
@@ -221,7 +256,7 @@ export function useHotkeys(bindings: HotkeyBinding[], options?: HotkeyOptions): 
   const { register } = useContext(HotkeyRegistryContext);
   const bindingsRef = useRef(bindings);
   useEffect(() => { bindingsRef.current = bindings; });
-  const { priority = 0, enabled = true, allowWhileTyping = false, allowRepeat = false } = options ?? {};
+  const { priority = 0, enabled = true, allowWhileTyping = false, allowRepeat = false, claim = false } = options ?? {};
   const signature = bindings.map((b) => normalizeCombo(b.combo)).join('|');
 
   useEffect(() => {
@@ -230,7 +265,7 @@ export function useHotkeys(bindings: HotkeyBinding[], options?: HotkeyOptions): 
     const seen = new Set<string>();
     const unregisters: Array<() => void> = [];
     combos.forEach((combo, i) => {
-      if (BROWSER_RESERVED.has(combo)) {
+      if (isBrowserReservedCombo(combo)) {
         console.warn(`[hotkeys] ${combo} è riservata al browser: registrazione ignorata`);
         return;
       }
@@ -245,11 +280,12 @@ export function useHotkeys(bindings: HotkeyBinding[], options?: HotkeyOptions): 
         enabled,
         allowWhileTyping,
         allowRepeat,
+        claim,
         // Per indice: l'elenco corrente sta nel ref, quindi l'handler resta
         // valido anche quando la toolbar si ricostruisce senza cambiare combo.
         handler: (e) => bindingsRef.current[i]?.handler(e),
       }));
     });
     return () => unregisters.forEach((u) => u());
-  }, [signature, enabled, priority, allowWhileTyping, allowRepeat, register]);
+  }, [signature, enabled, priority, allowWhileTyping, allowRepeat, claim, register]);
 }
