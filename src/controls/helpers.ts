@@ -440,22 +440,69 @@ export function useComboTextField(label: string, open: boolean): {
   const selectRef = useRef<BaseSelectRef | null>(null);
   const [search, setSearch] = useState('');
   const focusedRef = useRef(false);
+  const [focused, setFocused] = useState(false);
+  // Fuoco dentro, tendina chiusa, input vuoto: la didascalia torna nell'input.
+  // Chiudendo la tendina rc-select chiama da se' `onSearch('')` (un suo effetto
+  // su `rawOpen`), e dopo una SCELTA questo cancellava la didascalia appena
+  // rimessa da `showLabel`: il nominativo restava sotto un input vuoto e col
+  // mouse non se ne selezionava nessuna parte (SXADV-5641B). Niente selezione
+  // qui: chi e' gia' nel campo deve poterne evidenziare un pezzo.
+  if (focused && !open && !search && label) setSearch(label);
+  // Stessa cosa quando cambia il VALORE con il fuoco dentro (il server ne
+  // rimanda un altro dopo il reload, o un Esc lo riporta indietro): se l'input
+  // mostra ancora la didascalia di prima, si allinea a quella nuova — non deve
+  // leggersi un nominativo e valerne un altro.
+  const [seenLabel, setSeenLabel] = useState(label);
+  if (label !== seenLabel) {
+    setSeenLabel(label);
+    if (focused && !open && search === seenLabel) setSearch(label);
+  }
   const inputEl = useCallback(
     () => selectRef.current?.nativeElement?.querySelector<HTMLInputElement>('input') ?? null,
     [],
   );
   const onFocus = useCallback(() => {
     focusedRef.current = true;
-    if (open || !label) return;
+    setFocused(true);
+    if (open) {
+      // Si torna da un'altra finestra a tendina aperta: il testo cercato e'
+      // rimasto (vedi onBlur) e, come nel legacy, torna evidenziato
+      // (SXADV-5641D).
+      requestAnimationFrame(() => {
+        const input = inputEl();
+        if (input?.value) input.select();
+      });
+      return;
+    }
+    if (!label) return;
     setSearch(label);
     // L'input prende il testo al giro di render successivo: la selezione va
     // chiesta dopo, o si seleziona il vuoto.
     requestAnimationFrame(() => inputEl()?.select());
   }, [open, label, inputEl]);
   const onBlur = useCallback(() => {
+    // La finestra ha perso il fuoco (CTRL+TAB, ALT+TAB): il browser manda il
+    // blur all'input ma il fuoco della pagina resta li', e antd tiene aperta
+    // la tendina. Svuotare qui faceva sparire la stringa digitata sotto una
+    // lista ancora filtrata su di essa (SXADV-5641D). Al ritorno arriva un
+    // focus normale; se invece si rientra cliccando un altro campo l'input non
+    // riceve un secondo blur, e la pulizia si fa al rientro nella finestra.
+    if (typeof document !== 'undefined' && !document.hasFocus()) {
+      const input = inputEl();
+      const win = input?.ownerDocument?.defaultView
+        ?? (typeof window !== 'undefined' ? window : undefined);
+      win?.addEventListener('focus', () => {
+        if (document.activeElement === input) return;
+        focusedRef.current = false;
+        setFocused(false);
+        setSearch('');
+      }, { once: true });
+      return;
+    }
     focusedRef.current = false;
+    setFocused(false);
     setSearch('');
-  }, []);
+  }, [inputEl]);
   /** Scelta una voce, la sua didascalia torna nell'input (il campo ha ancora il
    *  fuoco, e quello che si vede dev'essere di nuovo testo selezionabile).
    *  Va chiamato: con `searchValue` controllato antd non puo' piu' ripulire da
@@ -476,6 +523,8 @@ const norm = (v: unknown): string | undefined =>
  *
  *  - **Canc/Backspace** with an empty search box clears the value from the
  *    keyboard (antd only removes selections on Backspace in `mode="multiple"`).
+ *    Lo stesso, e anche lo **Spazio**, quando l'input contiene la didascalia
+ *    tutta selezionata a tendina chiusa (SXADV-5641C).
  *  - **Esc** acts as a field-level undo, restoring `baseline` (the last
  *    server/committed value) — a value the user had just cleared or changed is
  *    otherwise lost. Also closes the dropdown, since `open` is controlled.
@@ -522,10 +571,31 @@ export function useSelectKeys(
         if (b !== norm(value)) restore(b); // undo to the baseline
         return;
       }
-      if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+      const space = e.key === ' ' && !e.ctrlKey && !e.altKey && !e.metaKey;
+      // Ctrl+X sulla didascalia tutta selezionata: taglia (la copia la fa il
+      // browser, niente preventDefault) e svuota il campo, come cancellarla.
+      const cut = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'x' || e.key === 'X');
+      if (cut && value != null && value !== '' && !isOpen) {
+        const t = e.target as HTMLInputElement;
+        if (t.value && t.selectionStart === 0 && t.selectionEnd === t.value.length) clear(undefined);
+        return;
+      }
+      if (e.key !== 'Backspace' && e.key !== 'Delete' && !space) return;
       if (value == null || value === '') return;
+      // A tendina chiusa l'input contiene la didascalia del valore scelto
+      // (useComboTextField), che rientrando nel campo e' tutta selezionata:
+      // Canc, Backspace o Spazio svuotano il campo al primo colpo, come nel
+      // legacy. Prima cancellavano solo il testo e serviva un secondo Canc
+      // (SXADV-5641C). Una selezione parziale invece si modifica come testo.
+      const input = e.target as HTMLInputElement;
+      const text = input.value ?? '';
+      const allSelected = text !== '' && !isOpen
+        && input.selectionStart === 0 && input.selectionEnd === text.length;
       // Non-empty search input → the key edits the filter text, don't hijack it.
-      if ((e.target as HTMLInputElement).value) return;
+      if (text && !allSelected) return;
+      // Spazio a campo senza testo: lo si lascia scrivere, e la digitazione
+      // apre la lista (handleSearch) — e' il gesto di 5641.2.
+      if (space && !text) return;
       e.preventDefault();
       e.stopPropagation();
       clear(undefined);

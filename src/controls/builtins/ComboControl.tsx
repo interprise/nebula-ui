@@ -76,8 +76,11 @@ const RemoteCombo: React.FC<{
 
   // Didascalia del valore scelto: e' quella che deve stare NELL'input perche'
   // sia selezionabile e copiabile col mouse (SXADV-5641.1).
-  const label = (options.find(o => o.value === selected)?.label
-    ?? displayText ?? selected ?? '') as string;
+  // Senza un valore niente didascalia: `displayText` e' quella del valore con
+  // cui il server ha disegnato il campo, e dopo un Canc tornerebbe nell'input.
+  const label = (selected
+    ? options.find(o => o.value === selected)?.label ?? displayText ?? selected
+    : '') as string;
   const { selectRef, search, setSearch, showLabel, onFocus, onBlur, focusInput } =
     useComboTextField(label, open);
 
@@ -225,13 +228,18 @@ const RemoteCombo: React.FC<{
   const restore = useCallback((val: string | undefined) => {
     setSelected(val);
     // Anche l'annullamento rimette nell'input la didascalia GIUSTA: senza,
-    // resterebbe scritta quella del valore appena annullato.
-    const caption = val ? String(options.find(o => o.value === val)?.label ?? val) : '';
+    // resterebbe scritta quella del valore appena annullato. Il valore del
+    // server puo' non stare piu' fra le voci caricate (si era cercato altro):
+    // la sua didascalia e' quella con cui il server ha disegnato il campo.
+    const caption = val
+      ? String(options.find(o => o.value === val)?.label
+        ?? (val === String(value ?? '') ? displayText : undefined) ?? val)
+      : '';
     showLabel(caption);
     // Con la didascalia, come una scelta: tornando sulla scheda non deve
     // ricomparire quella della voce appena annullata (SXADV-5989).
     rawOnChange(getFieldName(control), val ?? '', caption);
-  }, [control, rawOnChange, setSelected, showLabel, options]);
+  }, [control, rawOnChange, setSelected, showLabel, options, value, displayText]);
   // Chiusura (Esc, clic fuori, scelta): il testo di ricerca se ne va con la
   // tendina, quindi il ref torna vuoto e la freccia riprende a fare da toggle.
   const closeList = useCallback(() => { searchRef.current = ''; setOpen(false); }, [setOpen]);
@@ -288,8 +296,10 @@ const ComboControl: ControlComponent = ({ control, pageType, onAction, onChange 
   // Open only on typing or a trigger-arrow click, never on a body/focus click
   // (ExtJS parity, SXADV-5489.2) — same treatment as the remote branch.
   const { open, setOpen, onOpenChange } = useSelectOpen();
-  const staticLabel = ((control.options || []).find(o => o.value === selected)?.text
-    ?? control.displayText ?? control.displayValue ?? selected ?? '') as string;
+  const staticLabel = (selected
+    ? (control.options || []).find(o => o.value === selected)?.text
+      ?? control.displayText ?? control.displayValue ?? selected
+    : '') as string;
   const { selectRef, search, setSearch, showLabel, onFocus, onBlur, focusInput } =
     useComboTextField(staticLabel, open);
   // Testo digitato nel campo di ricerca (SXADV-5766) — stesso ruolo che ha
