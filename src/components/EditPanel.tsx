@@ -7,7 +7,7 @@ import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
-import { panelTableUnits } from './editPanelLayout';
+import { panelCellFloor, panelTableUnits, panelUnitWidths } from './editPanelLayout';
 import { listHeaderLabel } from './listHeaderLabel';
 import { focusFirstPanelField } from './panelFocus';
 import type { RowToolbarAction } from './rowToolbar';
@@ -196,6 +196,19 @@ const GridBody: React.FC<{
   onChange?: (name: string, value: unknown) => void;
   onAction: (action: string, params?: Record<string, string>) => void;
 }> = ({ rows, listUi, onChange, onAction }) => {
+  // Larghezza disponibile: le colonne si dividono questa, rispettando il
+  // minimo di numeri e date (panelUnitWidths). Ref a callback: il contenitore
+  // c'e' solo quando ci sono righe.
+  const [box, setBox] = React.useState<HTMLDivElement | null>(null);
+  const [boxWidth, setBoxWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    if (!box) return undefined;
+    setBoxWidth(box.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setBoxWidth(box.clientWidth));
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [box]);
   if (rows.length === 0) return null;
   const [mainRow, ...contRows] = rows;
   const contHeaders = listUi.continuationHeaders ?? [];
@@ -208,14 +221,28 @@ const GridBody: React.FC<{
       visibleCells(cr.cells).map((c) => c.colspan),
     ]),
   ]);
+  // Le celle con un controllo: le intestazioni non chiedono minimi. Ogni
+  // colonna tiene comunque i suoi PANEL_UNIT_MIN_PX, anche quando i minimi di
+  // numeri e date da soli superano la larghezza e il corpo scorre: senza, le
+  // colonne di testo restavano a 0 px.
+  const cellRows = [mainRow, ...contRows.filter((cr) => hasVisibleContent(cr.cells))]
+    .map((r) => visibleCells(r.cells).map((c) => {
+      const span = c.colspan != null && c.colspan > 0 ? c.colspan : 1;
+      return { span: c.colspan, floor: Math.max(panelCellFloor(c.control), span * PANEL_UNIT_MIN_PX) };
+    }));
+  const unitWidths = units > 0 && boxWidth > 0 ? panelUnitWidths(cellRows, units, boxWidth) : null;
+  const tableMin = Math.max(units * PANEL_UNIT_MIN_PX, unitWidths ? unitWidths.reduce((a, b) => a + b, 0) : 0);
   return (
+    <div ref={setBox}>
     <table
       className="edit-panel-table"
-      style={units > 0 ? { minWidth: units * PANEL_UNIT_MIN_PX } : undefined}
+      style={units > 0 ? { minWidth: tableMin } : undefined}
     >
       {units > 0 && (
         <colgroup>
-          {Array.from({ length: units }, (_, i) => <col key={i} style={{ width: `${100 / units}%` }} />)}
+          {Array.from({ length: units }, (_, i) => (
+            <col key={i} style={{ width: unitWidths ? `${unitWidths[i]}px` : `${100 / units}%` }} />
+          ))}
         </colgroup>
       )}
       <thead>
@@ -245,6 +272,7 @@ const GridBody: React.FC<{
         ))}
       </tbody>
     </table>
+    </div>
   );
 };
 
