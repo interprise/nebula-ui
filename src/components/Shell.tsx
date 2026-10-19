@@ -83,7 +83,7 @@ import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/te
 import { hydrate } from '../services/hydrate';
 import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
 import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
-import { filterMenuTree } from './menuFilter';
+import { effectiveMenuFilter, filterMenuTree } from './menuFilter';
 import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
@@ -652,8 +652,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
   useEffect(() => { setMenuNonce((n) => n + 1); }, [menuItems]);
 
-  const filteredMenu = menuFilter ? filterMenuTree(menuItems, menuFilter) : menuItems;
-  const menuOpenKeys = menuFilter ? collectOpenKeys(filteredMenu) : undefined;
+  // Col menu compresso il filtro non vale: vedi effectiveMenuFilter.
+  const activeMenuFilter = effectiveMenuFilter(menuFilter, collapsed);
+  const filteredMenu = activeMenuFilter ? filterMenuTree(menuItems, activeMenuFilter) : menuItems;
+  const menuOpenKeys = activeMenuFilter ? collectOpenKeys(filteredMenu) : undefined;
 
   const getActiveTabState = useCallback((): TabState | undefined => {
     return tabs.find((t) => t.key === activeTab);
@@ -667,6 +669,31 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     },
     []
   );
+
+  // Clic su una voce di menu: la scheda prende subito titolo e voce nuovi,
+  // prima di sapere se la navigazione avverra'. Se il server chiede conferma
+  // ("modifiche non salvate") e l'utente annulla, o la richiesta fallisce, si
+  // resta sulla videata di prima e titolo e voce evidenziata tornano quelli di
+  // prima del clic: restava il titolo della voce cliccata sopra la vecchia
+  // videata (trovato provando SXADV-5952). Armato da handleMenuClick, consumato
+  // dalla risposta che non e' piu' una domanda (processResponseInner).
+  // Uno per scheda: un clic di menu su un'altra scheda non deve sovrascriverlo,
+  // ne' l'Annulla di una domanda di un'altra scheda consumarlo.
+  const pendingMenuUndoRef = useRef<Map<string, {
+    tabKey: string;
+    label: string;
+    menuId?: string;
+    functionAction?: string;
+  }>>(new Map());
+  const undoMenuChange = useCallback((tabKey: string | undefined) => {
+    if (tabKey === undefined) return;
+    const u = pendingMenuUndoRef.current.get(tabKey);
+    if (!u) return;
+    pendingMenuUndoRef.current.delete(tabKey);
+    updateTabState(u.tabKey, {
+      label: u.label, menuId: u.menuId, functionAction: u.functionAction, loading: false, progressPct: undefined,
+    });
+  }, [updateTabState]);
 
   // Append a session tab (own sid, own form values) and make it active.
   // Returns it synchronously so the caller can fire a request on it without
@@ -724,13 +751,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     return true;
   }, [getWorkTab, schedaDiLavoroLibera, updateTabState, setActiveTab]);
 
-  const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay) => {
+  const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay, tabKey?: string) => {
     feedback.showServerMessages(errors, {
       // Refusing the prompt aborts the guarded action, so a breadcrumb-back
       // waiting on this answer never happens — un-arm it (SXADV-5659).
       // Stessa cosa per la riga da togliere: la cancellazione rifiutata
       // non avviene, e la riga deve restare in griglia.
-      onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; },
+      onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; undoMenuChange(tabKey); },
       onAnswer: (prompt, answer) => {
         if (!prompt.mnemonic) return;
         // Answer token per CORE's message grammar (Session.addConfirmation):
@@ -753,7 +780,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         }
       },
     });
-  }, [getActiveTabState, getWorkTab, feedback]);
+  }, [getActiveTabState, getWorkTab, feedback, undoMenuChange]);
 
   // Changing Azienda/Sede di accesso wipes the whole server session pool
   // (CambioAziendaCommand: clearSession + sessions.clear()). The legacy client
@@ -861,8 +888,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         await poll();
       } catch (e) {
         // Il job non arriva a una risposta: il ripristino armato per lui non
-        // deve passare alla prossima. Ne' l'attesa di un Nuovo.
+        // deve passare alla prossima. Ne' l'attesa di un Nuovo, ne' il clic di
+        // menu che l'ha lanciato (un Annulla molto dopo lo farebbe tornare).
         discardPendingFocus();
+        pendingMenuUndoRef.current.delete(tabKey);
         const add = asyncAddWaitRef.current;
         if (add && add.tabKey === tabKey) {
           asyncAddWaitRef.current = null;
@@ -889,16 +918,18 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const r = resp as Record<string, unknown>;
       if (r.notLoggedIn) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
+        undoMenuChange(tabKey);
         feedback.error('Sessione scaduta. Effettuare nuovamente il login.');
         return;
       }
       if (r.noSession) {
         updateTabState(tabKey, { loading: false, progressPct: undefined });
+        undoMenuChange(tabKey);
         feedback.error('Sessione non valida. Riprovare.');
         return;
       }
       if (resp.errors && resp.errors.length > 0) {
-        handleErrors(resp.errors, replay);
+        handleErrors(resp.errors, replay, tabKey);
       }
       if (resp.redirect) {
         window.location.href = resp.redirect;
@@ -929,6 +960,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (!errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) {
           pendingBreadcrumbsRef.current = null;
           if (!errs.some((e) => e.type === 'ERROR')) backTrail = pendingBack.html;
+        }
+      }
+      // Clic di menu in sospeso (pendingMenuUndoRef): una domanda non e' ancora
+      // un esito. Una risposta senza videata e con un errore vuol dire che la
+      // navigazione non e' avvenuta: si torna allo stato di prima del clic.
+      // Altrimenti la videata nuova e' arrivata: il digitato e la riga in
+      // modifica della videata di prima non valgono piu' (la videata nuova
+      // porta i suoi valori piu' sotto).
+      if (pendingMenuUndoRef.current.has(tabKey)) {
+        const errs = resp.errors ?? [];
+        if (!errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) {
+          if (!resp.ui && !resp.templateKey && errs.some((e) => e.type === 'ERROR')) {
+            undoMenuChange(tabKey);
+          } else {
+            pendingMenuUndoRef.current.delete(tabKey);
+            const freshValues: Record<string, string | string[]> = {};
+            formValuesRef.current[tabKey] = freshValues;
+            update.formValues = freshValues;
+            update.formCaptions = {};
+            editNavpathRef.current = null;
+          }
         }
       }
       // Two-phase pipeline — METADATA+DATA: cache the stable template and
@@ -1232,7 +1284,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // getActiveTabState, che dipende da tabs — quindi bastava stabilizzare
     // handleErrors per congelare qui un elenco di schede vecchio e far ripartire
     // i merge da dati superati, senza che niente lo segnalasse.
-    [handleErrors, updateTabState, tabs, feedback]
+    [handleErrors, updateTabState, tabs, feedback, undoMenuChange]
   );
 
   processResponseInnerRef.current = processResponseInner;
@@ -1280,6 +1332,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             if (addToken) dispatchAddWait({ type: 'failure', token: addToken });
             updateTabState(tabKey, { loading: false, progressPct: undefined });
             pendingBreadcrumbsRef.current = null;
+            undoMenuChange(tabKey);
             discardPendingFocus();
             feedback.failure(e);
           })
@@ -1287,7 +1340,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       };
       return replay;
     },
-    [processResponse, updateTabState, feedback, answerAddWait]
+    [processResponse, updateTabState, feedback, answerAddWait, undoMenuChange]
   );
 
   const handleMenuClick = useCallback(
@@ -1299,18 +1352,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       }
       if (tab.loading) return; // Block while a request is pending
 
-      // Reset form values for the new screen
-      tab.formValues = {};
-      tab.formCaptions = {};
-      formValuesRef.current[tab.key] = tab.formValues;
-      editNavpathRef.current = null;
+      // Quello che c'era prima del clic, se la navigazione non avviene
+      // (pendingMenuUndoRef). Digitato e riga in modifica invece non si toccano
+      // qui: si azzerano quando la videata nuova arriva (processResponseInner),
+      // cosi' una navigazione che non avviene non li porta via.
+      pendingMenuUndoRef.current.set(tab.key, {
+        tabKey: tab.key, label: tab.label, menuId: tab.menuId, functionAction: tab.functionAction,
+      });
       // Keep the current view mounted under a loading overlay while the new
       // screen loads, instead of blanking `ui` to undefined. Blanking made the
       // HomePanel ("BENVENUTO…") flash on every menu click, and linger behind
       // the confirm dialog when the navigation hit an "unsaved changes" prompt
       // (SXADV-5470.0 / .1). processResponse installs the new view (and clears
       // loading) once it arrives.
-      updateTabState(tab.key, { label: menuLabel, menuId, functionAction: undefined, loading: true, progressPct: undefined, formValues: tab.formValues });
+      updateTabState(tab.key, { label: menuLabel, menuId, functionAction: undefined, loading: true, progressPct: undefined });
 
       document.body.style.cursor = 'wait';
       // If the navigation raises a confirmation ("annullare TUTTE le modifiche?"),
@@ -1323,6 +1378,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
         updateTabState(tab.key, { loading: false, progressPct: undefined });
+        undoMenuChange(tab.key);
         // Un campo lasciato mentre questa richiesta era in volo ha armato il
         // ripristino per lei (handleAction esce su `loading`): non arriva.
         discardPendingFocus();
@@ -1331,7 +1387,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, entraDallaHome, processResponse, updateTabState, makeConfirmReplay, feedback]
+    [getActiveTabState, entraDallaHome, processResponse, updateTabState, makeConfirmReplay, feedback, undoMenuChange]
   );
 
   // After an identity change (impersonate), reload the menu and refresh the

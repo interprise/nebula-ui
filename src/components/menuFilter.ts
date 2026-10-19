@@ -20,3 +20,13 @@ export function filterMenuTree(items: MenuItem[], filter: string): MenuItem[] {
   }
   return result;
 }
+
+/** Il filtro che vale davvero. Col menu compresso la casella di ricerca non si
+ *  vede, ma il testo restava attivo: il menu restava filtrato e i rami trovati
+ *  forzati aperti, che compresso vuol dire sottomenu a comparsa aperti da soli
+ *  sopra la mappa, a prendersi i clic diretti ai campi (trovato provando
+ *  SXADV-5952). Compresso si ignora; il testo resta e torna a valere quando il
+ *  menu si riapre. */
+export function effectiveMenuFilter(filter: string, collapsed: boolean): string {
+  return collapsed ? '' : filter;
+}
