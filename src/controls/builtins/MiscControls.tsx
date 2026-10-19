@@ -9,6 +9,7 @@ import type { ControlComponent } from '../types';
 import { triggerDownload } from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
 import { mapUrl } from '../mapUrl';
+import { legacyUrl, serverHtml, HTML_POLICY } from '../../services/serverHtml';
 
 interface AttachmentItem { key: string; fileName: string }
 
@@ -158,19 +159,17 @@ export const PathControl: ControlComponent = ({ control }) => {
 
 export const PopupUrlControl: ControlComponent = ({ control }) => {
   if (control.visible === false) return null;
-  const href = control.href as string | undefined;
+  const raw = control.href as string | undefined;
+  const href = legacyUrl(raw);
   if (!href) return null;
   const target = (control.target as string | undefined) ?? '_blank';
-  return (
-    <a
-      className={(control.cls as string) || 'link'}
-      href={href}
-      target={target}
-      rel="noopener noreferrer"
-    >
-      {(control.prompt as string | undefined) ?? href}
-    </a>
-  );
+  const prompt = control.prompt as string | undefined;
+  const linkProps = { className: (control.cls as string) || 'link', href, target, rel: 'noopener noreferrer' };
+  // La didascalia e' HTML come nel legacy: «Guida:<img src="images/icons/help.png">»
+  // (SXADV-5741.4).
+  return prompt != null
+    ? <a {...linkProps} dangerouslySetInnerHTML={{ __html: serverHtml(prompt, HTML_POLICY.prompt) }} />
+    : <a {...linkProps}>{raw}</a>;
 };
 
 // UploadButtonControl moved to ButtonControls.tsx: it is a file picker, not a

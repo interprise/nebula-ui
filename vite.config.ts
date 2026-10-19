@@ -30,6 +30,11 @@ export default defineConfig({
         target: 'http://localhost:9080',
         changeOrigin: true,
       },
+      // Guide e specifiche dei link PopupUrl/Url (content="doc/x.pdf", SXADV-5741.4).
+      '/entrasp/doc': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
       '/entrasp/app-plugins': {
         target: 'http://localhost:9080',
         changeOrigin: true,

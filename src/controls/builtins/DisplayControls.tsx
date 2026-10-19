@@ -1,5 +1,5 @@
 import { Input } from 'antd';
-import { serverHtml, HTML_POLICY } from '../../services/serverHtml';
+import { legacyUrl, serverHtml, HTML_POLICY } from '../../services/serverHtml';
 import { BarcodeOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { useCommonProps, useCommitReload, useSyncedValue, parseInlineStyle } from '../helpers';
@@ -22,14 +22,14 @@ export const BarcodeControl: ControlComponent = ({ control, onAction, onChange }
 
 export const UrlControl: ControlComponent = ({ control }) => {
   if (control.visible === false) return null;
-  const href = (control.href ?? control.value) as string | undefined;
-  const label = (control.prompt ?? control.displayValue ?? control.value) as string | undefined;
+  const href = legacyUrl((control.href ?? control.value) as string | undefined);
   if (!href) return null;
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {label}
-    </a>
-  );
+  const prompt = control.prompt as string | undefined;
+  // La didascalia della view e' HTML come nel legacy (SXADV-5741.4); il valore
+  // del record resta testo.
+  return prompt != null
+    ? <a href={href} target="_blank" rel="noopener noreferrer" dangerouslySetInnerHTML={{ __html: serverHtml(prompt, HTML_POLICY.prompt) }} />
+    : <a href={href} target="_blank" rel="noopener noreferrer">{(control.displayValue ?? control.value) as string | undefined}</a>;
 };
 
 export const HtmlControl: ControlComponent = ({ control }) => (

@@ -146,6 +146,20 @@ export function sanitizeServerHtml(html: string, policy: HtmlPolicy): string {
   return body.innerHTML;
 }
 
+/**
+ * L'href di un link dichiarato nella view (PopupUrl, Url: `content="doc/x.pdf"`).
+ * Il legacy lo scriveva cosi' com'e' in una pagina servita da /entrasp/, quindi
+ * un percorso relativo vale sotto /entrasp/; dalla base /entrasp/app/ andrebbe
+ * in 404 (SXADV-5741.4). Assoluti, http(s), mailto e tel restano come sono; uno
+ * schema non ammesso (javascript:, data:…) non da' un link.
+ */
+export function legacyUrl(raw: string | null | undefined): string | undefined {
+  const href = raw?.trim();
+  if (!href || !isSafeHref(href)) return undefined;
+  if (urlScheme(href) || href.startsWith('/') || href.startsWith('#')) return href;
+  return `/entrasp/${href}`;
+}
+
 /** I messaggi del server: solo formattazione, nessun attributo (SXADV-5814). */
 export function sanitizeMessageHtml(html: string): string {
   return sanitizeServerHtml(html, HTML_POLICY.message);
