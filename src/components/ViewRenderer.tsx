@@ -15,9 +15,9 @@ import {
 } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
 import { comboWidthForSize, fieldWidthForSize, javaToDayjsFormat, moneyWidthForSize, numberWidthForSize, pickerWidthForFormat } from '../controls/helpers';
-import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID } from '../hooks/uiMode';
+import { useUiMode, UiModeStoreContext, ZoomScopeContext, PANEL_ZOOM_ID, sectionZoomEscapeApplies } from '../hooks/uiMode';
 import { useDensity, DENSITY_FONT_SIZE, type Density } from '../hooks/density';
-import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
+import { useHotkey, HotkeyPriority, isTypingTarget } from '../hooks/hotkeys';
 import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersion';
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
@@ -1414,10 +1414,21 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
  *  testata resterebbe collassata con la barra dei tab nascosta e nessun modo di
  *  riaprirla. Componente separato, montato solo quando lo zoom è acceso, così i
  *  suoi hook non pesano sul conteggio di ViewRenderer. Priorità più bassa della
- *  griglia, che quando c'è deve vincere lei. */
-const ZoomEscapeFallback: React.FC = () => {
+ *  griglia, che quando c'è deve vincere lei.
+ *
+ *  È anche l'unica uscita da tastiera dello zoom d'AREA (`section`), che
+ *  nessuna griglia rivendica: lì Esc vale anche col fuoco in un campo
+ *  (SXADV-5956, vedi `sectionZoomEscapeApplies`), ma solo in un campo
+ *  dell'area ingrandita — chi scrive in "Cerca nel menu..." e preme Esc non
+ *  vuole ridurre la sezione. Lo zoom di una griglia resta con la guardia di
+ *  digitazione. */
+const ZoomEscapeFallback: React.FC<{ section: boolean }> = ({ section }) => {
   const { setZoomedGridId } = useUiMode();
-  useHotkey('Escape', () => setZoomedGridId(null), { priority: HotkeyPriority.gridZoomFallback });
+  useHotkey('Escape', (e) => {
+    if (section && !sectionZoomEscapeApplies(e)) return;
+    if (section && isTypingTarget(e.target) && !(e.target as HTMLElement).closest?.('.view-split-bottom')) return;
+    setZoomedGridId(null);
+  }, { priority: HotkeyPriority.gridZoomFallback, allowWhileTyping: section });
   return null;
 };
 
@@ -1780,7 +1791,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {zoomed && !embedded && <ZoomEscapeFallback />}
+        {zoomed && !embedded && <ZoomEscapeFallback section={panelZoom} />}
         {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">

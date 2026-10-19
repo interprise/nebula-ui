@@ -35,6 +35,19 @@ export const ZoomScopeContext = createContext<string>('');
  *  identificano con `ui.viewName ?? ui.path`. */
 export const PANEL_ZOOM_ID = '@panel';
 
+/** Esc riduce la sezione ingrandita anche dal campo in cui si sta scrivendo
+ *  (SXADV-5956): in un tab a campi il fuoco sta quasi sempre in un input, e
+ *  con la guardia di digitazione il "(Esc)" promesso dal tooltip non partiva.
+ *  In un input, in una textarea o nell'editor HTML Esc non ha altri compiti — i controlli che
+ *  lo usano (combo, editor di espressioni) lo fermano da sé con
+ *  preventDefault. Restano fuori l'editor di cella AG Grid, dove Esc annulla
+ *  la modifica, e la composizione IME, dove chiude il suggeritore. */
+export function sectionZoomEscapeApplies(e: { target: EventTarget | null; isComposing?: boolean }): boolean {
+  if (e.isComposing) return false;
+  const el = e.target as HTMLElement | null;
+  return !el?.closest?.('.ag-cell-inline-editing, .ag-popup-editor');
+}
+
 interface UiModeStore {
   immersive: boolean;
   setImmersive: (v: boolean) => void;
