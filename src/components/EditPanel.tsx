@@ -8,6 +8,7 @@ import ControlRenderer from '../controls/ControlRenderer';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { panelTableUnits } from './editPanelLayout';
+import { listHeaderLabel } from './listHeaderLabel';
 import { focusFirstPanelField } from './panelFocus';
 import type { RowToolbarAction } from './rowToolbar';
 import { editPanelWaitAttrs } from './addWait';
@@ -120,10 +121,18 @@ const deleteCommandOf = (ui: UITree): string => {
   return 'Delete';
 };
 
+/** Le intestazioni della lista: prompt HTML come nella griglia (SXADV-5771). */
+const HeaderCell: React.FC<{ header: ListHeader }> = ({ header }) => {
+  const label = listHeaderLabel(header.text);
+  return label.html != null
+    ? <th colSpan={header.colspan} className="edit-panel-th" title={label.text} dangerouslySetInnerHTML={{ __html: label.html }} />
+    : <th colSpan={header.colspan} className="edit-panel-th" title={label.text}>{label.text}</th>;
+};
+
 const HeaderRow: React.FC<{ headers: ListHeader[] }> = ({ headers }) => (
   <tr>
     {headers.map((h, i) => (
-      <th key={i} colSpan={h.colspan} className="edit-panel-th" title={h.text}>{h.text}</th>
+      <HeaderCell key={i} header={h} />
     ))}
   </tr>
 );

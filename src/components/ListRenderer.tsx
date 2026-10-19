@@ -10,6 +10,7 @@ import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, 
 import { controls, isCellRenderable } from '../controls/registry';
 import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
 import { addedRowPath } from './addedRow';
+import { listHeaderLabel } from './listHeaderLabel';
 import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
@@ -45,15 +46,26 @@ type SortDispatch = (sortExpression: string) => void;
 const sortDispatchRef = { current: null as SortDispatch | null };
 const toggleItemDispatchRef = { current: null as ((itemId: string) => void) | null };
 
+/** Il nome della colonna nell'intestazione: l'HTML filtrato del prompt quando
+ *  ne porta (l'icona accanto a "Telefono:", SXADV-5771), altrimenti il testo.
+ *  Fa anche da `innerHeaderComponent` dell'intestazione di serie di AG Grid,
+ *  che cosi' tiene ordinamento e menu suoi. */
+const HeaderLabel = ({ displayName, labelHtml }: { displayName: string; labelHtml?: string }) =>
+  labelHtml != null
+    ? <span className="list-header-label" dangerouslySetInnerHTML={{ __html: labelHtml }} />
+    : <span>{displayName}</span>;
+
 /** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort.
  *  Also renders a configureIcon (green/red dot) when in configuring mode. */
 const ServerSortHeader = (props: {
   displayName: string;
+  labelHtml?: string;
   sortExpression?: string;
   sortDir?: string;
   configureIcon?: { included: boolean; itemId: string };
 }) => {
-  const { displayName, sortExpression, sortDir, configureIcon } = props;
+  const { displayName, labelHtml, sortExpression, sortDir, configureIcon } = props;
+  const label = <HeaderLabel displayName={displayName} labelHtml={labelHtml} />;
   const icon = configureIcon && (
     <span
       className={`configure-icon ${configureIcon.included ? 'configure-on' : 'configure-off'}`}
@@ -70,7 +82,7 @@ const ServerSortHeader = (props: {
   if (!sortExpression) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-        <span>{displayName}</span>
+        {label}
         {icon}
       </span>
     );
@@ -87,7 +99,7 @@ const ServerSortHeader = (props: {
       }}
       onClick={() => sortDispatchRef.current?.(sortExpression)}
     >
-      <span>{displayName}</span>
+      {label}
       {sortDir === 'asc' && <span style={{ fontSize: 10 }}>&#9650;</span>}
       {sortDir === 'desc' && <span style={{ fontSize: 10 }}>&#9660;</span>}
       {icon}
@@ -729,6 +741,11 @@ function headerTokens(hdr: { name?: string; tag?: string } | undefined): string[
  *  dimensione dichiarata da cui dedurla. */
 const FLAT_COL_MIN_WIDTH = 60;
 
+/** Testo da affiancare all'HTML di un'altra etichetta (colonne una-riga). */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** Testo piatto di una cella HTML — per ordinamento e copia, non per il render. */
 function stripHtml(html?: string): string {
   return html ? html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() : '';
@@ -1166,7 +1183,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         let pos = 0;
         for (const sh of chRow) {
           const span = sh.colspan || 1;
-          const longest = (sh.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
+          const longest = listHeaderLabel(sh.text).text.split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
           const need = headerLabelMinWidth(longest);
           const covered = mainCols.filter(c => c.start < pos + span && (c.start + c.span) > pos);
           // Quanto deve valere la colonna PRINCIPALE perche' questa etichetta ci
@@ -1233,7 +1250,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const isRightAlign = rightAlignColumns.has(idx);
         // Minimum width based on longest word in header (measured, zoom-proof),
         // piu' cio' che condivide la riga dell'intestazione con l'etichetta.
-        const longestWord = (hdr.text || '').split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
+        const headerLabel = listHeaderLabel(hdr.text);
+        const longestWord = headerLabel.text.split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
         const headerDecorWidth = (!allDataLocal && hdr.sortExpression ? HEADER_SORT_ICON_WIDTH : 0)
           + (hdr.configureIcon ? HEADER_CONFIG_ICON_WIDTH : 0);
         const hdrMinWidth = headerLabelMinWidth(longestWord) + headerDecorWidth;
@@ -1336,7 +1354,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         colTokens.set(`col_${idx}`, headerTokens(hdr));
         cols.push({
           field: `col_${idx}`,
-          headerName: hdr.text || '',
+          headerName: headerLabel.text,
           sortable: allDataLocal && !isMultiEdit,
           comparator: allDataLocal ? rawValueComparator(idx) : undefined,
           // Static header class + money/number right-align fallback, combined
@@ -1389,11 +1407,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           ...((!allDataLocal && hdr.sortExpression) || hdr.configureIcon ? {
             headerComponent: ServerSortHeader,
             headerComponentParams: {
+              labelHtml: headerLabel.html,
               sortExpression: !allDataLocal ? hdr.sortExpression : undefined,
               sortDir: hdr.sortDir,
               configureIcon: hdr.configureIcon,
             },
-          } : {}),
+          } : {
+            // Sempre, anche senza markup: AG Grid crea il componente interno solo
+            // quando monta l'intestazione, e la griglia resta montata passando a
+            // un'altra lista che riusa la stessa col_N (SXADV-5771).
+            headerComponentParams: {
+              innerHeaderComponent: HeaderLabel,
+              innerHeaderComponentParams: { labelHtml: headerLabel.html },
+            },
+          }),
         });
       });
     } else {
@@ -1403,9 +1430,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         firstRow.cells.forEach((cell: UICell, idx: number) => {
           if (cell.elementType === ELTYPE_CONTENT) {
             const isHtml = cell.control?.type === 'html';
+            const promptLabel = listHeaderLabel(cell.prompt);
             cols.push({
               field: `col_${idx}`,
-              headerName: cell.prompt || cell.control?.name || `Col ${idx}`,
+              headerName: promptLabel.text || cell.control?.name || `Col ${idx}`,
+              headerComponentParams: {
+                innerHeaderComponent: HeaderLabel,
+                innerHeaderComponentParams: { labelHtml: promptLabel.html },
+              },
               sortable: false,
               cellRenderer: isHtml ? HtmlCellRenderer : undefined,
               autoHeight: isHtml,
@@ -1762,28 +1794,35 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // che copre più celle presta il proprio nome a tutte, quindi bloccarla per
       // nome le blocca insieme — che è il comportamento voluto, sono lo stesso
       // campo spezzato su più celle.
-      const bandInfoFor = (band: number, unit: number, span: number): { label: string; tokens: string[] } => {
+      const bandInfoFor = (band: number, unit: number, span: number): { label: string; labelHtml?: string; tokens: string[] } => {
         const hdrs = contHeaders[band];
         if (!hdrs) return { label: '', tokens: [] };
         const labels: string[] = [];
+        const htmls: string[] = [];
+        let hasHtml = false;
         const tokens: string[] = [];
         let pos = 0;
         for (const h of hdrs) {
           const hs = h.colspan || 1;
           if (pos < unit + span && pos + hs > unit) {
-            if (h.text) labels.push(h.text);
+            const l = listHeaderLabel(h.text);
+            if (l.text || l.html) {
+              labels.push(l.text);
+              htmls.push(l.html ?? escapeHtml(l.text));
+              hasHtml ||= l.html != null;
+            }
             tokens.push(...headerTokens(h));
           }
           pos += hs;
         }
-        return { label: labels.join(' '), tokens };
+        return { label: labels.join(' '), labelHtml: hasHtml ? htmls.join(' ') : undefined, tokens };
       };
       const perUnitPx = ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0;
       Array.from(flatCols.entries())
         .filter(([, m]) => m.hasContent)
         .sort((a, b) => a[1].band - b[1].band || a[1].unit - b[1].unit)
         .forEach(([field, m]) => {
-          const { label, tokens } = bandInfoFor(m.band, m.unit, m.span);
+          const { label, labelHtml, tokens } = bandInfoFor(m.band, m.unit, m.span);
           colTokens.set(field, tokens);
           const longest = label.split(/\s+/).reduce((a, b) => (a.length > b.length ? a : b), '');
           const minW = Math.max(FLAT_COL_MIN_WIDTH, headerLabelMinWidth(longest));
@@ -1794,6 +1833,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           cols.push({
             field,
             headerName: label,
+            headerComponentParams: {
+              innerHeaderComponent: HeaderLabel,
+              innerHeaderComponentParams: { labelHtml },
+            },
             width,
             minWidth: Math.min(40, minW),
             resizable: true,
@@ -2636,7 +2679,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
         // Etichetta a sinistra anche sopra quantita' e importi, come nel legacy
         // e come l'intestazione principale (SXADV-5736.2C).
-        cell.textContent = hdr.text || '';
+        // Il prompt e' HTML come nell'intestazione principale (SXADV-5771):
+        // passa dallo stesso filtro, mai scritto cosi' com'e' arriva.
+        const label = listHeaderLabel(hdr.text);
+        if (label.html != null) cell.innerHTML = label.html;
+        else cell.textContent = label.text;
         track.appendChild(cell);
       });
       wrapper.appendChild(track);
