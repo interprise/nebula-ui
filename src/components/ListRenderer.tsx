@@ -16,6 +16,7 @@ import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
 import { oncePerEvent, rowClickOutcome } from './rowActivation';
+import { decidePageSize, newAdaptiveMemory, type AdaptiveMemory } from './adaptivePageSize';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
   rememberRow, recallRow, findRememberedRow, pageOfRememberedRow,
@@ -259,14 +260,6 @@ const NO_WRAP_CONTENT_TYPES = new Set([
   'boolean', 'checkbox', 'button', 'action', 'windowButton',
   'navigateView', 'add', 'upload', 'download', 'barcode',
 ]);
-
-/* Adaptive page size (SXADV-5742). Bounds mirror SetPageSizeCommand's, which is
- * the authority — these only keep the client from asking for something the
- * server would clamp anyway. */
-const MIN_ADAPTIVE_PAGE_SIZE = 20;   // ToolView.STD_PAGE_SIZE
-const MAX_ADAPTIVE_PAGE_SIZE = 100;  // server caps at 200; stay well under it
-/** Rows of difference below which a resize isn't worth a round-trip. */
-const ADAPTIVE_PAGE_SIZE_HYSTERESIS = 3;
 
 const gridTheme = themeAlpine.withParams({
   rowHeight: GRID_ROW_HEIGHT,
@@ -2185,13 +2178,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
    * Without this the page size is a fixed 20 and the mismatch is visible today:
    * on a 1265px-tall window 22 wrapped records fit and 20 are loaded, so every
    * list ends in a band of empty grid. */
-  const requestedPageSizeRef = useRef<number | null>(null);
-  /** Sizes already requested for the current amount of space. Now that a record
-   *  sizes to its content, the page size and the average record height feed each
-   *  other — asking for 40 can load records that wrap, which measures back as 30,
-   *  which measures back as 40 — so each size is asked at most once, until the
-   *  space available genuinely changes (window resize, zoom) (SXADV-5770.2). */
-  const askedPageSizesRef = useRef<{ avail: number; sizes: Set<number> }>({ avail: 0, sizes: new Set<number>() });
+  /** Memoria delle taglie chieste: per quale lista, per quale spazio, l'ultima
+   *  (adaptivePageSize.ts). */
+  const adaptiveMemRef = useRef<AdaptiveMemory>(newAdaptiveMemory());
+  /** Letto dalla misura: a pannello di riga aperto la pagina non si ricalcola. */
+  const panelShownRef = useRef(!!panelShown);
+  useEffect(() => { panelShownRef.current = !!panelShown; }, [panelShown]);
+  /** Identita' della lista: l'id del viewstate, che cambia a ogni rientro. */
+  const adaptiveListId = selectorInfo.basePath || (ui.path ? ui.path.replace(/\.\d+$/, '') : null);
 
   /** Vertical pitch of one RECORD — main row plus its continuation rows. Measured
    *  from the rendered rows rather than computed from the height constants, so it
@@ -2231,8 +2225,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      chiesta nell'altra modalità risulterebbe già richiesta e tornando indietro
      non si rimpicciolirebbe più. */
   useEffect(() => {
-    askedPageSizesRef.current = { avail: 0, sizes: new Set<number>() };
-    requestedPageSizeRef.current = null;
+    adaptiveMemRef.current = newAdaptiveMemory();
   }, [oneLine]);
 
   useEffect(() => {
@@ -2253,31 +2246,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const viewport = getGridViewport();
       if (!viewport) return;
       const avail = viewport.clientHeight;
-      const asked = askedPageSizesRef.current;
-      if (Math.abs(asked.avail - avail) > 8) {
-        asked.avail = avail;
-        asked.sizes.clear();
-      }
-      const pitch = measureRecordPitch();
-      if (!pitch || avail < pitch) return;
-      const fits = Math.floor(avail / pitch);
-      const want = Math.max(MIN_ADAPTIVE_PAGE_SIZE, Math.min(MAX_ADAPTIVE_PAGE_SIZE, fits));
-      if (want === currentPageSize) return;
-      // The server clamps and may refuse (a view that declares its own pageSize),
-      // in which case the response comes back with the old size — remembering what
-      // we asked for stops us asking again on every resize.
-      const lastAsked = requestedPageSizeRef.current;
-      if (want === lastAsked) return;
-      // Hysteresis applies to RESIZES, not to the first fit: the gap between the
-      // fixed default and what fits is usually small (20 vs the 22 that fit on a
-      // 1265px window) and that gap is the whole point — measuring it against a
-      // threshold meant for damping a window drag would silently do nothing.
-      // Once we've adapted, a couple of rows is no longer worth a round-trip and
-      // a renumbered pager.
-      if (lastAsked !== null && Math.abs(want - lastAsked) < ADAPTIVE_PAGE_SIZE_HYSTERESIS) return;
-      if (asked.sizes.has(want)) return;
-      asked.sizes.add(want);
-      requestedPageSizeRef.current = want;
+      const want = decidePageSize(adaptiveMemRef.current, {
+        listId: adaptiveListId,
+        avail,
+        pitch: measureRecordPitch(),
+        current: currentPageSize,
+        panelShown: panelShownRef.current,
+      });
+      if (want === null) return;
       onAction('SetPageSize', { option1: String(want) });
     };
 
@@ -2292,7 +2268,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       window.clearTimeout(timer);
       ro.disconnect();
     };
-  }, [embedded, oneLine, ui.paging?.adaptivePageSize, ui.paging?.pageSize, ui.header?.adaptivePageSize, ui.header?.pageSize, getGridViewport, measureRecordPitch, onAction]);
+  }, [embedded, oneLine, adaptiveListId, ui.paging?.adaptivePageSize, ui.paging?.pageSize, ui.header?.adaptivePageSize, ui.header?.pageSize, getGridViewport, measureRecordPitch, onAction]);
 
   /** Apply a CSS class to all rows sharing the same _selectorPath */
   const applyClassByPath = useCallback((path: string | null, cls: string) => {
