@@ -1166,6 +1166,14 @@ tr.breakRow td {
   line-height: 1.25;
 }
 
+/* Pandora mark in the header (SXADV-6115): the asset is navy on an opaque
+   white ground, which over the company-coloured band reads as a white plate.
+   Round its corners and keep a hairline so it does not look like a cut-out. */
+.product-logo-plate {
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
 /* ALFA (test) environment badge in the header (SXADV-5454.2B) */
 .alfa-badge {
   display: inline-block;

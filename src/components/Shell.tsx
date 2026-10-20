@@ -91,6 +91,7 @@ import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
+import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
 import { withRowPostPath } from './rowPostPath';
 
@@ -651,6 +652,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   useEffect(() => api.subscribeInFlight((count) => setRequestActive(count > 0)), []);
 
   useEffect(() => { setMenuNonce((n) => n + 1); }, [menuItems]);
+  // Icona della scheda col marchio del prodotto (SXADV-6115): il prodotto si sa
+  // solo dopo l'accesso, e al logout torna l'icona della pagina.
+  useEffect(() => applyBrandFavicon(loginInfo.brand), [loginInfo.brand]);
 
   // Col menu compresso il filtro non vale: vedi effectiveMenuFilter.
   const activeMenuFilter = effectiveMenuFilter(menuFilter, collapsed);
@@ -2596,15 +2600,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           }}
         >
           {/* Left: product logo (brand-driven) + ALFA env badge + release.
-              Pandora instances show the white Pandora mark; Nebula instances keep
-              logo_sx.png. "Rel." sits beside the mark for topical grouping and is
+              Pandora instances show the new Pandora mark (SXADV-6115: navy on an
+              opaque white ground, so it sits on a white plate over the coloured
+              band); Nebula instances keep logo_sx.png. "Rel." sits beside the mark for topical grouping and is
               prefixed "Rel." (SXADV-5454.2A). ALFA goes between the two, as in the
               classic client ("PANDORA ALFA"): it qualifies the product, not the
               release. The server raises the flag (SXADV-5454.2B). */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifySelf: 'start' }}>
             <img
-              src={loginInfo.brand === 'Pandora' ? '/entrasp/images/logos/pandora_bianco.png' : '/entrasp/images/logos/logo_sx.png'}
+              src={productLogo(loginInfo.brand)}
               alt={loginInfo.brand || 'Pandora'}
+              className={loginInfo.brand === 'Pandora' ? 'product-logo-plate' : undefined}
               style={{ height: 'var(--app-header-logo-h)', objectFit: 'contain', flexShrink: 0 }}
             />
             {loginInfo.alfa && <span className="alfa-badge">ALFA</span>}
