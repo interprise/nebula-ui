@@ -747,6 +747,11 @@ export const FlushEditsContext = React.createContext<((navpath: string) => void)
 // il server non la rimanda (SXADV-6048).
 export const FieldDirtyContext = React.createContext<((name: string) => boolean) | undefined>(undefined);
 
+// Provided once by Shell: il campo (nome a filo) e' stato scritto nel pannello
+// aperto su quella riga. Parte solo con una richiesta per quella riga
+// (panelFieldScope.ts, MD-VALORI-RESIDUI-DOPO-SALVA).
+export const PanelFieldContext = React.createContext<((name: string, rowPath: string) => void) | undefined>(undefined);
+
 /** I controlli di un albero di righe, per nome a filo. */
 function controlsByName(rows: readonly UIRow[] | undefined, out = new Map<string, UIControl>()): Map<string, UIControl> {
   for (const row of rows ?? []) {
@@ -1120,6 +1125,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   const setEditRow = React.useContext(EditRowContext);
   const flushEdits = React.useContext(FlushEditsContext);
   const isFieldDirty = React.useContext(FieldDirtyContext);
+  const markPanelField = React.useContext(PanelFieldContext);
   const { waiting: addWaiting, settle: settleAdd, discard: discardEdits } = React.useContext(AddWaitContext);
   // Letta nel rAF in cui la lista seleziona il rigo nuovo, dopo il disegno.
   const addWaitingRef = React.useRef(addWaiting);
@@ -1334,8 +1340,9 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   const panelControls = React.useMemo(() => controlsByName(hydratedPanel?.rows), [hydratedPanel]);
   React.useEffect(() => { panelNamesRef.current = [...panelControls.keys()]; }, [panelControls]);
   const onPanelChange = React.useCallback((name: string, value: unknown, caption?: FieldCaption) => {
-    (onChange as (n: string, v: unknown, c?: FieldCaption) => void)(name, value, caption);
     const path = selectedPathRef.current;
+    if (path) markPanelField?.(name, path);
+    (onChange as (n: string, v: unknown, c?: FieldCaption) => void)(name, value, caption);
     if (!path) return;
     const text = echoText(panelControls.get(name), value, caption);
     const bare = bareFieldName(name, viewstateIdOf(path));
@@ -1353,7 +1360,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
       }
       return { path, echo };
     });
-  }, [onChange, panelControls]);
+  }, [onChange, panelControls, markPanelField]);
 
   // The panel is stacked in-flow BELOW the grid (not an overlay), so the grid
   // stays fully visible above it. Only wrap in the flex split when the panel

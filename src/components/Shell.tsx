@@ -68,7 +68,7 @@ import { ELTYPE_DUMMY } from '../types/ui';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
-import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, FieldDirtyContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, AddWaitContext, type PendingAdd, type AddWaitValue } from './ViewRenderer';
+import ViewRenderer, { SidContext, FormValuesContext, EditRowContext, FlushEditsContext, FieldDirtyContext, PanelFieldContext, PendingAddContext, PageToolbarContext, PaneToolbarContext, AddWaitContext, type PendingAdd, type AddWaitValue } from './ViewRenderer';
 import { addWaitReducer, isAddWaiting, respondsLater, ADD_WAIT_MAX_MS } from './addWait';
 import { DataVersionContext } from '../controls/dataVersion';
 import HomePanel from './HomePanel';
@@ -94,6 +94,7 @@ import { headerColor } from './headerColor';
 import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
 import { withRowPostPath } from './rowPostPath';
+import { markPanelField, scopePanelValues, type PanelFieldRows } from './panelFieldScope';
 
 const { Header, Content } = Layout;
 
@@ -780,7 +781,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           // re-posting on the active tab so the prompt isn't a dead end.
           // Dalla Home (che non e' una sessione) si risponde sulla scheda di lavoro.
           const tab = getActiveTabState() ?? getWorkTab();
-          if (tab) api.postAction('Post', { messages: token }, tab.formValues, tab.sid);
+          // Senza riga: il digitato del pannello non parte (panelFieldScope.ts).
+          if (tab) api.postAction('Post', { messages: token }, scopePanelValues(tab.formValues, panelFieldRowsRef.current[tab.key] ?? new Map(), null).values, tab.sid);
         }
       },
     });
@@ -981,6 +983,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             pendingMenuUndoRef.current.delete(tabKey);
             const freshValues: Record<string, string | string[]> = {};
             formValuesRef.current[tabKey] = freshValues;
+            panelFieldRowsRef.current[tabKey] = new Map();
             update.formValues = freshValues;
             update.formCaptions = {};
             editNavpathRef.current = null;
@@ -1053,6 +1056,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         update.scopePaths = scopePaths;
         const newFormValues = extractFormValues(hydrated);
         formValuesRef.current[tabKey] = newFormValues;
+        panelFieldRowsRef.current[tabKey] = new Map();
         update.formValues = newFormValues;
         update.dataVersion = ++dataVersionRef.current;
       }
@@ -1086,6 +1090,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           update.templateKey = resp.ui.templateKey;
           const newFormValues = extractFormValues(hydrated);
           formValuesRef.current[tabKey] = newFormValues;
+          panelFieldRowsRef.current[tabKey] = new Map();
           update.formValues = newFormValues;
           update.dataVersion = ++dataVersionRef.current;
         } else {
@@ -1145,6 +1150,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           // Initialize form values from all controls in the UI tree
           const newFormValues = extractFormValues(resp.ui);
           formValuesRef.current[tabKey] = newFormValues;
+          panelFieldRowsRef.current[tabKey] = new Map();
           // Also update the tab state's formValues
           update.formValues = newFormValues;
           update.dataVersion = ++dataVersionRef.current;
@@ -1481,8 +1487,33 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
      le ricerche. */
   const [addWidgetOpen, setAddWidgetOpen] = useState(false);
 
+  // Campi scritti nel pannello di riga, per scheda: su quale riga (panelFieldScope.ts).
+  const panelFieldRowsRef = useRef<Record<string, PanelFieldRows>>({});
+  const panelFieldRows = useCallback((tabKey: string): PanelFieldRows => (
+    panelFieldRowsRef.current[tabKey] ??= new Map()
+  ), []);
+  const markPanelFieldEdit = useCallback((name: string, rowPath: string) => {
+    const tab = getActiveTabState();
+    if (tab) markPanelField(panelFieldRows(tab.key), name, rowPath);
+  }, [getActiveTabState, panelFieldRows]);
+  /** Toglie un campo del pannello dai valori della scheda. */
+  const forgetPanelField = useCallback((tabKey: string, name: string) => {
+    panelFieldRowsRef.current[tabKey]?.delete(name);
+    dirtyFieldsRef.current.delete(name);
+    const fvs = formValuesRef.current[tabKey];
+    if (fvs) delete fvs[name];
+    const tab = tabsRef.current.find((t) => t.key === tabKey);
+    if (tab) {
+      delete tab.formValues[name];
+      if (tab.formCaptions) delete tab.formCaptions[name];
+    }
+  }, []);
+
+  // handleAction che chiama se stesso (il Post prima di una navigazione).
+  const handleActionRef = useRef<(action: string, params?: Record<string, string>) => Promise<ServerResponse | undefined>>(
+    async () => undefined);
   const handleAction = useCallback(
-    async (action: string, params: Record<string, string> = {}) => {
+    async (action: string, params: Record<string, string> = {}): Promise<ServerResponse | undefined> => {
       const tab = getActiveTabState();
       if (!tab) {
         discardPendingFocus();
@@ -1543,6 +1574,29 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const noFormValues = params._noFormValues === 'true';
       const serverParams = { ...params };
       delete serverParams._noFormValues;
+      delete serverParams._afterFlush;
+
+      // Pagine, ordinamento, Refresh e pagine di una griglia incorporata: la
+      // riga del pannello non vale piu' (i suoi valori si scartano, piu' sotto).
+      // Se ha digitato non ancora partito, prima lo si manda alla riga con un
+      // Post normale (stessa strada del cambio rigo) e si naviga solo se il
+      // Post va a buon fine: i comandi di pagina postano sulla posizione che
+      // ricorda il server, non sul navpath, quindi portarlo nella navigazione
+      // lo scriveva su un altro rigo (MD-VALORI-RESIDUI-DOPO-SALVA).
+      const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
+      const isNav = navActions.includes(action);
+      const endsRowScope = isNav || action === 'DetailPage';
+      const openRow = editNavpathRef.current;
+      if (endsRowScope && openRow && params._afterFlush !== '1') {
+        const rows = panelFieldRows(tab.key);
+        if ([...dirtyFieldsRef.current].some((n) => rows.get(n) === openRow)) {
+          const flushed = await handleActionRef.current('Post', { navpath: openRow });
+          const blocked = !flushed || (flushed.errors ?? []).some(
+            (e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');
+          if (blocked) return flushed;
+          return handleActionRef.current(action, { ...params, _afterFlush: '1' });
+        }
+      }
       // Riga da togliere dalla griglia se la richiesta va a buon fine (Elimina
       // dal pannello di una lista). Non e' un parametro del server.
       const removeRow = params._removeRow;
@@ -1566,8 +1620,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // For listEdit: include the editing row's navpath for data-modifying actions
       // (Save, Post, etc.) so the server positions on the correct row.
       // Navigation actions have their own positioning — clear edit state instead.
-      const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
-      if (navActions.includes(action)) {
+      if (isNav) {
         editNavpathRef.current = null;
         pendingAddRef.current = false;
       } else if (editNavpathRef.current && !serverParams.navpath) {
@@ -1606,21 +1659,54 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // ripulire subito i valori appena spediti (il pannello di riga lo fa
       // quando cambia record) e una mutazione arrivata mentre la richiesta e'
       // in volo si porterebbe via i valori dalla richiesta stessa.
-      const fv = noFormValues ? undefined : { ...(formValuesRef.current[tab.key] ?? {}) };
-      if (fv) dirtyFieldsRef.current.clear();
+      let fv = noFormValues ? undefined : { ...(formValuesRef.current[tab.key] ?? {}) };
+      // Il digitato del pannello di riga parte solo con una richiesta per la
+      // sua riga (MD-VALORI-RESIDUI-DOPO-SALVA). La riga e' quella del navpath:
+      // solo AddCommand legge postPath. Quello che non parte resta da mandare;
+      // con una navigazione (pagine, ordinamento, Refresh) la riga non vale piu'
+      // e si scarta, dopo averlo spedito alla riga se era ancora da spedire.
+      // Quello che parte esce dai valori della scheda quando la risposta
+      // arriva senza errori, se nel frattempo non e' cambiato.
+      const rowTarget = action === 'Add' ? (sentParams.postPath ?? sentParams.navpath) : sentParams.navpath;
+      let sentPanel: { name: string; value: string | string[] | undefined }[] = [];
+      let keptPanel: string[] = [];
+      if (fv) {
+        const scoped = scopePanelValues(fv, panelFieldRows(tab.key), endsRowScope ? null : rowTarget);
+        fv = scoped.values;
+        if (endsRowScope) for (const n of scoped.dropped) forgetPanelField(tab.key, n);
+        else keptPanel = scoped.dropped.filter((n) => dirtyFieldsRef.current.has(n));
+        sentPanel = scoped.sent.map((name) => ({ name, value: fv?.[name] }));
+      }
+      const settlePanelFields = (resp: ServerResponse) => {
+        if ((resp.errors ?? []).some((e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) return;
+        const rows = panelFieldRows(tab.key);
+        for (const { name, value } of sentPanel) {
+          if (!rows.has(name) || formValuesRef.current[tab.key]?.[name] !== value) continue;
+          forgetPanelField(tab.key, name);
+        }
+      };
+      if (fv) {
+        dirtyFieldsRef.current.clear();
+        for (const n of keptPanel) dirtyFieldsRef.current.add(n);
+      }
       // Replay THIS action (Save/Delete/navigation/…) with the answer appended
       // if it raises a confirmation — instead of the old hardcoded Post that
       // discarded the real action and its response (SXADV-5470.1).
       const replay = makeConfirmReplay(tab.key, tab.sid, (extra) =>
-        api.postAction(action, { ...sentParams, ...extra }, fv, tab.sid));
+        api.postAction(action, { ...sentParams, ...extra }, fv, tab.sid).then((r) => {
+          settlePanelFields(r);
+          return r;
+        }));
       try {
         const resp = await api.postAction(action, sentParams, fv, tab.sid);
         if (armsAdd) {
           pendingAddRef.current = true;
           pendingAddFieldRef.current = null;
         }
+        settlePanelFields(resp);
         processResponse(tab.key, resp, tab.sid, replay);
         if (addToken) answerAddWait(addToken, resp, tab.key);
+        return resp;
       } catch (e) {
         if (addToken) dispatchAddWait({ type: 'failure', token: addToken });
         updateTabState(tab.key, { loading: false, progressPct: undefined });
@@ -1635,8 +1721,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         document.body.style.cursor = '';
       }
     },
-    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback, answerAddWait]
+    [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback, answerAddWait, panelFieldRows, forgetPanelField]
   );
+  useEffect(() => { handleActionRef.current = handleAction; }, [handleAction]);
 
   // CDMS: open one of the documentale views (ricerca, document list, cestino,
   // gestione profili/utenti) in a given tab. Not menu items — these views live
@@ -1650,6 +1737,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     ) => {
       const fv: Record<string, string | string[]> = {};
       formValuesRef.current[tab.key] = fv;
+      panelFieldRowsRef.current[tab.key] = new Map();
       editNavpathRef.current = null;
       updateTabState(tab.key, { label: opts.title, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
       document.body.style.cursor = 'wait';
@@ -1858,7 +1946,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // tolgono valori dalla mappa che nessuno ha spedito. Restano segnati come
     // da mandare e partiranno con la richiesta successiva.
     if (tab.loading) return;
-    const names = [...dirtyFieldsRef.current];
+    // I campi del pannello escono quando la risposta al Post arriva senza
+    // errori (handleAction, panelFieldScope.ts): con un errore il server ha
+    // annullato i valori, e il digitato deve poter ripartire.
+    const rows = panelFieldRowsRef.current[tab.key];
+    const names = [...dirtyFieldsRef.current].filter((n) => !rows?.has(n));
     void handleAction('Post', { navpath });
     for (const n of names) delete tab.formValues[n];
     formValuesRef.current[tab.key] = tab.formValues;
@@ -1872,6 +1964,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     if (!tab) return;
     for (const n of names) {
       if (!dirtyFieldsRef.current.delete(n)) continue;
+      panelFieldRowsRef.current[tab.key]?.delete(n);
       delete tab.formValues[n];
       if (tab.formCaptions) delete tab.formCaptions[n];
     }
@@ -2876,6 +2969,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     <EditRowContext.Provider value={handleEditRow}>
                       <FlushEditsContext.Provider value={flushFieldEdits}>
                       <FieldDirtyContext.Provider value={isFieldDirty}>
+                      <PanelFieldContext.Provider value={markPanelFieldEdit}>
                       <PendingAddContext.Provider value={consumePendingAdd}>
                       <AddWaitContext.Provider value={addWaitValue}>
                       <PageToolbarContext.Provider value={currentTab.toolbar}>
@@ -2891,6 +2985,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                       </PageToolbarContext.Provider>
                       </AddWaitContext.Provider>
                       </PendingAddContext.Provider>
+                      </PanelFieldContext.Provider>
                       </FieldDirtyContext.Provider>
                       </FlushEditsContext.Provider>
                     </EditRowContext.Provider>
