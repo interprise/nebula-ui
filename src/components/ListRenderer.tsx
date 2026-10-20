@@ -15,7 +15,7 @@ import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
-import { oncePerEvent } from './rowActivation';
+import { oncePerEvent, rowClickOutcome } from './rowActivation';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
   rememberRow, recallRow, findRememberedRow, pageOfRememberedRow,
@@ -1057,6 +1057,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
     return map;
   }, [ui.columns, isMultiEdit, isListEdit]);
+  // Una multiEdit con una casella spuntabile in griglia e' una lista di
+  // selezione: il clic di riga non naviga (rowClickOutcome, SXADV-6014).
+  const hasGridCheckbox = useMemo(
+    () => isMultiEdit && [...editableColumns.values()].some((c) => isBooleanType(c?.type as string | undefined)),
+    [isMultiEdit, editableColumns],
+  );
 
 
 
@@ -2431,37 +2437,32 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
     const command = data._selectorCommand as string | undefined;
     if (!path) return;
-    // La riga si modifica QUI solo se il server ha mandato il pannello. Con una
-    // detailViewName e senza inlineEdit="true" non lo manda: la modifica sta
-    // sulla pagina di dettaglio, quindi il clic sulla riga ci naviga come su una
-    // lista non modificabile. La struttura della riga la descrive la detail,
-    // `inlineEdit` dice solo dove si modifica (ToolView.isRowEditedInPanel).
-    const editsInPanel = isListEdit && !!ui.panelTemplateKey;
-    // Il comando serve solo per NAVIGARE. Una lista `selector="false"` non ne
-    // porta uno, ma la selezione per il pannello ha bisogno del solo percorso di
-    // riga (SXADV-5796.3b).
-    if (!command && !editsInPanel) return;
-
-    if (editsInPanel) {
-      // Editing lives in the bottom panel, not in the grid: AG Grid remounts
-      // full-width rows and destroys any stateful control (combo/date/lookup)
-      // rendered in place. A row click selects the record; the panel edits it in
-      // the stable React tree. Only open the panel when the view is actually
-      // editable — a listEdit view can be read-only by a dynamic rule (e.g. the
-      // document isn't provisional), which the server reflects in the selector's
-      // canEdit (isEmbeddedEditable) AND canUpdate (the dynamic updatable="?expr"
-      // rule — e.g. document not provisional). Read-only → just select (highlight
-      // above), no panel, no round-trip.
-      if (selectorInfo.canEdit && selectorInfo.canUpdate) onSelectRecord?.(path);
-      return;
-    }
-    // Non-editable lists: the selector navigates to the detail as before.
-    if (command) {
+    // La riga si modifica QUI solo se il server ha mandato il pannello
+    // (ToolView.isRowEditedInPanel). Editing lives in the bottom panel, not in
+    // the grid: AG Grid remounts full-width rows and destroys any stateful
+    // control rendered in place. Il pannello si apre solo se la riga si puo'
+    // modificare: canEdit (isEmbeddedEditable) e canUpdate (updatable="?expr",
+    // es. documento non provvisorio); altrimenti la riga resta solo evidenziata.
+    // Una multiEdit di selezione (casella in griglia) senza pannello: il clic
+    // non naviga (SXADV-6014). Il comando serve solo per NAVIGARE; una lista
+    // `selector="false"` non ne porta uno (SXADV-5796.3b).
+    const outcome = rowClickOutcome({
+      isListEdit,
+      isMultiEdit,
+      hasGridCheckbox,
+      hasPanelTemplate: !!ui.panelTemplateKey,
+      command,
+      canEdit: !!selectorInfo.canEdit,
+      canUpdate: !!selectorInfo.canUpdate,
+    });
+    if (outcome === 'panel') {
+      onSelectRecord?.(path);
+    } else if (outcome === 'navigate' && command) {
       // Al ritorno il fuoco va su questa riga (SXADV-5927).
       if (!isListEdit) armReturn(selKey, 'row');
       onAction(command, { navpath: path });
     }
-  }, [isListEdit, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, selKey]);
+  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, selKey]);
 
   // Lo stesso clic su una banda di continuazione arriva sia qui sia a
   // handleGridClick: si attiva una volta sola (SXADV-5920, vedi rowActivation).

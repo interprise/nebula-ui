@@ -24,3 +24,30 @@ export function oncePerEvent(): (event: Event | undefined) => boolean {
     return true;
   };
 }
+
+export type RowClickOutcome = 'panel' | 'navigate' | 'none';
+
+/** Cosa fa il clic su una riga di lista, oltre a evidenziarla.
+ *
+ *  - Pannello di riga (listEdit + pannello mandato dal server): lo apre, se la
+ *    riga si puo' modificare; altrimenti la riga resta solo evidenziata.
+ *  - multiEdit senza pannello ma con una casella spuntabile in griglia: e' una
+ *    lista di SELEZIONE (spunta piu' azioni di lista). Il clic non naviga mai:
+ *    chi sta spuntando righe e sbaglia mira perderebbe la pagina. Il dettaglio
+ *    resta sul ">" (SXADV-6014). Una multiEdit senza caselle (docLottiList) non
+ *    e' una selezione e naviga come le altre.
+ *  - Gli altri: navigano col comando della riga, se c'e'.
+ */
+export function rowClickOutcome(o: {
+  isListEdit: boolean;
+  isMultiEdit: boolean;
+  hasGridCheckbox: boolean;
+  hasPanelTemplate: boolean;
+  command?: string;
+  canEdit: boolean;
+  canUpdate: boolean;
+}): RowClickOutcome {
+  if (o.isListEdit && o.hasPanelTemplate) return o.canEdit && o.canUpdate ? 'panel' : 'none';
+  if (o.isMultiEdit && o.hasGridCheckbox) return 'none';
+  return o.command ? 'navigate' : 'none';
+}
