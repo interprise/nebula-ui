@@ -15,7 +15,7 @@ import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
-import { oncePerEvent, rowClickOutcome } from './rowActivation';
+import { oncePerEvent, rowClickOutcome, rowActivatableClass, ROW_ACTIVATABLE_CLASS } from './rowActivation';
 import { decidePageSize, newAdaptiveMemory, type AdaptiveMemory } from './adaptivePageSize';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
@@ -909,6 +909,9 @@ interface ListRendererProps {
   /** Whether the bottom edit panel is currently visible — re-measure the fill
    *  height when it appears/disappears (the grid grows to reclaim its space). */
   panelShown?: boolean;
+  /** listEdit: i righi su cui il clic apre davvero il pannello (ci va il
+   *  cursore a mano, SXADV-5921). Assente = decide la sola rowClickOutcome. */
+  editablePanelPaths?: ReadonlySet<string>;
   /** listEdit: la riga su cui lavora il pannello aperto - sfondo giallo su
    *  tutte le sue bande (SXADV-6048.1). */
   editingPath?: string | null;
@@ -919,7 +922,7 @@ interface ListRendererProps {
   isEchoLive?: (wire: string) => boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown, editingPath, rowEcho, isEchoLive }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown, editablePanelPaths, editingPath, rowEcho, isEchoLive }) => {
   // A grid inside a tab does not repeat the tab's own label (the documents
   // "Righe fattura" case — see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
@@ -2297,12 +2300,39 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // toglie la classe, cosi' non resta su una riga che ha cambiato record.
   // La riga in gestione nel pannello, letta dalla regola di classe (SXADV-6048.1).
   const editingPathRef = useRef<string | null>(null);
+  // Il rigo il cui clic agisce: cursore a mano (SXADV-5921). Regola di classe e
+  // non getRowClass, perche' AG Grid la classe di getRowClass non la toglie
+  // piu', e l'elenco dei righi col pannello arriva un disegno dopo le righe.
+  const isActivatableRef = useRef<(data?: Record<string, unknown>) => boolean>(() => false);
   const selectedRowClassRules = useMemo(() => ({
     'record-group-selected': (params: { data?: Record<string, unknown> }) =>
       selectedPathRef.current != null && params.data?._selectorPath === selectedPathRef.current,
     'record-row-editing': (params: { data?: Record<string, unknown> }) =>
       editingPathRef.current != null && params.data?._selectorPath === editingPathRef.current,
+    [ROW_ACTIVATABLE_CLASS]: (params: { data?: Record<string, unknown> }) => isActivatableRef.current(params.data),
   }), []);
+
+  // Stessa regola di activateRow; il pannello conta solo sui righi dove si
+  // aprirebbe davvero. Cambiata la regola, si riallineano i righi gia' disegnati.
+  useEffect(() => {
+    const list = {
+      isListEdit,
+      isMultiEdit,
+      hasGridCheckbox,
+      hasPanelTemplate: !!ui.panelTemplateKey,
+      canEdit: !!selectorInfo.canEdit,
+      canUpdate: !!selectorInfo.canUpdate,
+    };
+    const panelOpensOn = editablePanelPaths && ((path: string) => editablePanelPaths.has(path));
+    isActivatableRef.current = (data) => !!rowActivatableClass(data, list, panelOpensOn);
+    const api = gridApiRef.current;
+    const viewport = getGridViewport();
+    if (!api || !viewport) return;
+    api.forEachNode((node: { data?: Record<string, unknown>; id?: string }) => {
+      const on = isActivatableRef.current(node.data);
+      viewport.querySelectorAll(`[row-id="${node.id}"]`).forEach(el => el.classList.toggle(ROW_ACTIVATABLE_CLASS, on));
+    });
+  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, editablePanelPaths, getGridViewport]);
 
   // La riga in gestione nel pannello (SXADV-6048.1): come la riga corrente,
   // subito sulle righe gia' disegnate e con la regola di classe sulle altre.

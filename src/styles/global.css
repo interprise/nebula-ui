@@ -1842,6 +1842,13 @@ body[style*="cursor: wait"] * {
 }
 .edit-panel-title { font-size: var(--app-font-size-sm); font-weight: 600; color: var(--color-text-secondary, #555); }
 .edit-panel-head-actions { display: flex; align-items: center; gap: 4px; }
+/* Il rigo il cui clic apre il dettaglio o il pannello (rowActivatableClass,
+   SXADV-5921). Nelle liste di selezione non c'e': li' si apre dal ">". */
+.ag-row.row-activatable { cursor: pointer; }
+/* ...tranne sui controlli dentro la cella, il cui clic non vale per il rigo
+   (ROW_ACTIVATION_IGNORE): chi agisce davvero mette il suo cursore. */
+.ag-row.row-activatable .list-cell-control,
+.ag-row.row-activatable .selector-nav-cell { cursor: default; }
 .selector-nav-cell { padding: 0 !important; display: flex; align-items: center; justify-content: center; }
 .selector-nav {
   cursor: pointer;

@@ -51,3 +51,28 @@ export function rowClickOutcome(o: {
   if (o.isMultiEdit && o.hasGridCheckbox) return 'none';
   return o.command ? 'navigate' : 'none';
 }
+
+export const ROW_ACTIVATABLE_CLASS = 'row-activatable';
+
+/** Classe dei righi il cui clic fa qualcosa: il cursore a mano sta solo li'
+ *  (SXADV-5921). Nelle liste di selezione il clic non naviga (SXADV-6014) e il
+ *  dettaglio sta sul ">": un rigo che sembrasse cliccabile come quelli di una
+ *  lista che naviga sarebbe proprio il disorientamento del ticket. La regola e'
+ *  quella del clic, `rowClickOutcome`, cosi' il cursore non promette un clic
+ *  che non fa niente e non ne nasconde uno che agisce. */
+export function rowActivatableClass(
+  data: Record<string, unknown> | undefined,
+  list: Omit<Parameters<typeof rowClickOutcome>[0], 'command'>,
+  panelOpensOn?: (path: string) => boolean,
+): string | undefined {
+  // Senza percorso il clic si ferma prima di decidere (activateRow).
+  const path = data?._selectorPath as string | undefined;
+  if (!data || data._isBreakRow || !path) return undefined;
+  const outcome = rowClickOutcome({ ...list, command: data._selectorCommand as string | undefined });
+  if (outcome === 'none') return undefined;
+  // Il pannello si apre solo se sul rigo c'e' qualcosa da scrivere
+  // (ListView.panelIsEditable): altrimenti il clic evidenzia e basta, come sui
+  // Dettagli Fatturabili dove la sola colonna aperta e' la spunta in griglia.
+  if (outcome === 'panel' && panelOpensOn && !panelOpensOn(path)) return undefined;
+  return ROW_ACTIVATABLE_CLASS;
+}
