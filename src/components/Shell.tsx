@@ -91,6 +91,7 @@ import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
+import { centroIngranaggio } from './contextChangeGear';
 import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
 import { withRowPostPath } from './rowPostPath';
@@ -2294,6 +2295,34 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     };
   }, [measureCopyrightRoom, isHome, currentTab?.key, currentTab?.ui, currentTab?.loading, collapsed, sidebarWidth, immersive]);
 
+  // L'ingranaggio del cambio azienda/sede sta al centro dello spazio di lavoro,
+  // in asse con le scritte della Home, non al centro dello schermo (SXADV-5980.a).
+  // Il cambio riporta sulla Home, che e' un altro .tab-content: si rimisura.
+  const [gearAt, setGearAt] = useState<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!contextChanging) return;
+    const measure = () => {
+      // Il box client, senza la barra di scorrimento: e' su quello che si
+      // centrano le scritte (col bordo esterno l'ingranaggio cadeva 7 px a destra).
+      const el = tabContentRef.current;
+      const b = el?.getBoundingClientRect();
+      const r = el && b
+        ? { left: b.left + el.clientLeft, top: b.top + el.clientTop, width: el.clientWidth, height: el.clientHeight }
+        : null;
+      const c = centroIngranaggio(r, { width: window.innerWidth, height: window.innerHeight });
+      setGearAt((prev) => (prev && prev.x === c.x && prev.y === c.y ? prev : c));
+    };
+    measure();
+    const tc = tabContentRef.current;
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (tc && ro) ro.observe(tc);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [contextChanging, isHome, currentTab?.key, collapsed, sidebarWidth, immersive]);
+
   const APPBAR_WIDTH = 48;
   // Collapsed, the sidebar is a rail of module glyphs: 48px, the width of the
   // app bar beside it, instead of antd's 80px default (SXADV-5454.5). The
@@ -2500,9 +2529,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         <div
           role="status"
           aria-label="Cambio di azienda o sede in corso"
-          style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'wait', background: 'transparent' }}
+          style={{ position: 'fixed', inset: 0, zIndex: 3000, cursor: 'wait', background: 'transparent' }}
         >
-          <SettingOutlined spin style={{ fontSize: 40, color: headerColor(loginInfo.bkColor) }} />
+          {/* Il posizionamento sta sul contenitore: l'animazione di `spin` scrive
+              `transform` sull'icona e cancellerebbe il translate. */}
+          <div
+            className="context-change-gear"
+            style={{
+              position: 'absolute',
+              left: gearAt ? gearAt.x : '50%',
+              top: gearAt ? gearAt.y : '50%',
+              transform: 'translate(-50%, -50%)',
+              display: 'flex',
+            }}
+          >
+            <SettingOutlined spin style={{ fontSize: 40, color: headerColor(loginInfo.bkColor) }} />
+          </div>
         </div>
       )}
       {/* Uscita dalla modalità immersiva: senza header spariscono anche utente,
