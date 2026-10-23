@@ -1254,7 +1254,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             ) : null}
             <Space size={0}>
               {onNaviga ? (
-                <Tooltip title="Apri la lista completa">
+                // Rifa' la ricerca adesso, non apre la fotografia del widget: il
+                // suggerimento lo dice, perche' su liste grosse costa quanto la
+                // ricerca dal menu (SXADV-5999.2, deciso il 23/10).
+                <Tooltip title="Rifai la ricerca completa adesso">
                   <Button
                     type="text"
                     size="small"
