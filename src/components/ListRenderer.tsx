@@ -19,7 +19,7 @@ import { oncePerEvent, rowClickOutcome, rowActivatableClass, ROW_ACTIVATABLE_CLA
 import { decidePageSize, newAdaptiveMemory, type AdaptiveMemory } from './adaptivePageSize';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
-  rememberRow, recallRow, findRememberedRow, pageOfRememberedRow,
+  rememberRow, recallRow, findRememberedRow, pageOfRememberedRow, listOwnerOf,
   armReturn, armedReturn, disarmReturn, lastRecordPath, ROW_RETURN_ATTR,
 } from './rowSelectionMemory';
 import { focusNewPage } from '../services/focusRestore';
@@ -994,9 +994,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // Stable key for persisting the selected row across the remount that occurs
   // when navigating into a detail and back (item 5455.1C).
   const selKey = `${sid ?? ''}|${ui.viewName ?? ui.path ?? ''}`;
+  // La lista proprietaria di un ritorno armato: per una lista incorporata il
+  // padre del suo percorso, che resta lo stesso quando la lista rinasce col
+  // viewstate nuovo. Il dettaglio di un rigo puo' contenere una griglia della
+  // stessa vista (i Componenti del rigo, stessa selKey): senza il padre quella
+  // consumava il ritorno e la lista del tab non lo vedeva piu' (5957.2B).
+  const returnOwner = embedded ? listOwnerOf(ui.path) : null;
+  // Riga ricordata e ritorno armato stanno sotto vista + padre: aprendo un
+  // rigo dei Componenti il dettaglio non sovrascrive la riga ricordata da
+  // Righe fattura, a cui si torna dopo (5957.2B).
+  const memKey = returnOwner ? `${selKey}@${returnOwner}` : selKey;
   // Ritorno armato dall'uscita verso un dettaglio: finche' c'e', il cursore lo
   // mette la lista sulla riga e non focusNewPage in testata (SXADV-5927).
-  const returnArmed = !isListEdit && !!armedReturn(selKey);
+  const returnArmed = !isListEdit && !!armedReturn(memKey, returnOwner);
 
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
@@ -2436,7 +2446,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const activateRow = useCallback((data: Record<string, unknown> | undefined) => {
     if (!data || data._isBreakRow) return;
     const path = data._selectorPath as string | undefined;
-    rememberRow(selKey, path);
+    rememberRow(memKey, path);
     alignedPathRef.current = null;
     pagedForPathRef.current = null;
     markSelected(path ?? null);
@@ -2465,10 +2475,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       onSelectRecord?.(path);
     } else if (outcome === 'navigate' && command) {
       // Al ritorno il fuoco va su questa riga (SXADV-5927).
-      if (!isListEdit) armReturn(selKey, 'row');
+      if (!isListEdit) armReturn(memKey, 'row', returnOwner);
       onAction(command, { navpath: path });
     }
-  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, selKey]);
+  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, memKey, returnOwner]);
 
   // Lo stesso clic su una banda di continuazione arriva sia qui sia a
   // handleGridClick: si attiva una volta sola (SXADV-5920, vedi rowActivation).
@@ -2896,8 +2906,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // mano alla griglia: da li' lo scorrimento e' suo.
   useEffect(() => {
     if (isListEdit) return; // edit mode handled by the effect above
-    const armed = armedReturn(selKey);
-    const stored = recallRow(selKey);
+    const armed = armedReturn(memKey, returnOwner);
+    const stored = recallRow(memKey);
     // Il fuoco sulla riga si da' al ritorno armato dall'uscita verso il
     // dettaglio (SXADV-5927); un ridisegno qualsiasi della lista evidenzia e
     // riallinea come prima, ma non sposta il cursore. Il ritorno resta armato
@@ -2908,7 +2918,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     let focused = false;
     const giveUp = () => {
       if (!armed) return;
-      disarmReturn(selKey);
+      disarmReturn(memKey);
       gridContainerRef.current?.removeAttribute(ROW_RETURN_ATTR);
       // La lista non ha trovato la riga (cancellata nel dettaglio, su un'altra
       // pagina...): il cursore torna a chi lo dava prima, altrimenti resterebbe
@@ -3005,7 +3015,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         }
         // La lista rinata con un viewstate nuovo (5957.2) da' alla riga un
         // percorso nuovo: da qui in poi vale quello.
-        if (match !== stored) rememberRow(selKey, match);
+        if (match !== stored) rememberRow(memKey, match);
         markSelected(match);
         if (alignedPathRef.current === match && !armed) return;
         alignedPathRef.current = match;
@@ -3035,7 +3045,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       cancelAnimationFrame(raf);
       USER_SCROLL_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [rowData, selKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage, ui.path]);
+  }, [rowData, memKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage, ui.path, returnOwner]);
 
   // The server emits gridActions for embedded lists only. `ui.footer` (the
   // legacy below-the-grid Add) is deliberately no longer rendered — its command
@@ -3138,7 +3148,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
                   // rigo nuovo: al ritorno il fuoco va sull'ultima riga, quella
                   // appena aggiunta (SXADV-5927). Le listEdit aggiungono nel
                   // pannello e restano sulla pagina.
-                  if (!isListEdit) armReturn(selKey, 'new');
+                  if (!isListEdit) armReturn(memKey, 'new', returnOwner);
                   onAction(gridActions.addCommand!, gridPath ? { navpath: gridPath } : undefined);
                 }}
               >

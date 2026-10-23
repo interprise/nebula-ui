@@ -7,14 +7,25 @@
  *  `newTask`) li disarma tutti, perche' da li' non si torna piu' alla lista.
  *  Chiave = sid + vista, come la riga ricordata in rowSelectionMemory. */
 export type ReturnMode = 'row' | 'new';
-const armedByList = new Map<string, ReturnMode>();
+/** `owner` e' la lista che ha armato il ritorno (per una lista incorporata il
+ *  padre del suo percorso, `listOwnerOf`): la chiave sid + vista non basta,
+ *  perche' il dettaglio di un rigo puo' contenere una griglia della stessa
+ *  vista (i Componenti di Righe fattura), che consumava il ritorno al posto
+ *  della lista del tab (SXADV-5957.2B). Senza owner il ritorno vale per
+ *  chiunque abbia la chiave. */
+const armedByList = new Map<string, { mode: ReturnMode; owner: string | null }>();
 
-export function armReturn(key: string, mode: ReturnMode): void {
-  armedByList.set(key, mode);
+export function armReturn(key: string, mode: ReturnMode, owner?: string | null): void {
+  armedByList.set(key, { mode, owner: owner ?? null });
 }
 
-export function armedReturn(key: string): ReturnMode | undefined {
-  return armedByList.get(key);
+/** Il ritorno armato per questa lista: undefined se non c'e', o se l'ha armato
+ *  un'altra lista con la stessa chiave. Non disarma. */
+export function armedReturn(key: string, owner?: string | null): ReturnMode | undefined {
+  const armed = armedByList.get(key);
+  if (!armed) return undefined;
+  if (armed.owner !== null && armed.owner !== (owner ?? null)) return undefined;
+  return armed.mode;
 }
 
 export function disarmReturn(key: string): void {

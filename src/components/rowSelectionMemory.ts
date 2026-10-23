@@ -99,3 +99,13 @@ export function pageOfRememberedRow(
   if (!sameList || findRememberedRow(stored, candidates) !== null) return null;
   return Math.floor(Number(last[2]) / pageSize) + 1;
 }
+
+/** Il padre di un percorso di lista o di riga: tutto fino all'ultima virgola
+ *  compresa (`S1-0.0,S1-11.0,S1-14.0` -> `S1-0.0,S1-11.0,`). E' lo stesso per
+ *  le righe e per la lista, e resta lo stesso quando la lista incorporata
+ *  rinasce con un viewstate nuovo; null per una lista di primo livello. */
+export function listOwnerOf(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const cut = path.lastIndexOf(',');
+  return cut < 0 ? null : path.slice(0, cut + 1);
+}
