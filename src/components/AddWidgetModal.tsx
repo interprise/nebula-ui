@@ -10,11 +10,17 @@ interface Sorgente {
   filtri?: Array<{ campo: string; etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
   filtriLeggibili?: boolean;
   descrizione?: string;
-  colonne?: Array<{ etichetta?: string }>;
+  colonne?: Array<{ etichetta?: string; azione?: boolean }>;
   listView?: string;
   /** I criteri di tipo data: su una dashboard possono seguire il calendario. */
   criteriData?: Array<{ chiave: string; etichetta: string; valore: string; modoProposto: string }>;
 }
+
+/** « (visualizzaFE, Stampa)»: le etichette delle colonne di comando, se ce l'hanno. */
+const pulsanti = (colonne: Array<{ etichetta?: string; azione?: boolean }>) => {
+  const nomi = colonne.filter((c) => c.azione && c.etichetta).map((c) => c.etichetta);
+  return nomi.length > 0 ? ` (${nomi.join(', ')})` : '';
+};
 
 /** Come si muove una data del widget. Le voci sono quelle di DateMobili, lato server. */
 const MODI_DATA = [
@@ -290,8 +296,11 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
                       }
                     />
                     {scelta.modo === 'oggiMenoGiorni' && (
+                      // SXADV-6100.3: senza le frecce, come i campi numerici delle
+                      // maschere (NumberControl): nel campo piccolo coprivano il numero.
                       <InputNumber
                         size="small"
+                        controls={false}
                         min={1}
                         max={3650}
                         value={scelta.giorni}
@@ -319,7 +328,11 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
             <Select options={INTERVALLI} />
           </Form.Item>
           <Typography.Text type="secondary">
-            {(bozza.sorgente.colonne || []).length} colonne, come nella lista.
+            {(bozza.sorgente.colonne || []).filter((c) => !c.azione).length} colonne, come nella lista.
+            {/* SXADV-6100.1: i comandi della lista non entrano, e lo si dice prima. */}
+            {(bozza.sorgente.colonne || []).some((c) => c.azione)
+              ? ` Senza i pulsanti${pulsanti(bozza.sorgente.colonne || [])}: si usano aprendo la riga.`
+              : null}
           </Typography.Text>
         </Form>
       )}

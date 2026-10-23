@@ -45,7 +45,7 @@ export interface WidgetDaModificare {
   /** Da quali aziende vengono i risultati adesso, e se la lista dipende dall'azienda. */
   ambito?: { modo?: string; codici?: string[]; possibile?: boolean } | null;
   /** `vista` c'e' sulle colonne prese dal dettaglio (SXADV-6001.1c). */
-  colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null; vista?: string | null }>;
+  colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null; vista?: string | null; azione?: boolean }>;
   /** Chi lo vede nel catalogo e se arriva da solo (CONDIVISIONE H2). */
   condivisione?: { ambito?: string; mandato?: boolean } | null;
 }
@@ -327,7 +327,9 @@ const ModificaWidget: React.FC<Props> = ({
   const colonne = useMemo(() => {
     const scelti = sceltiDettaglio || [];
     const out = (widget?.colonne || [])
-      .filter((c) => c.item && (!c.vista || scelti.includes(c.item)))
+      // I comandi della lista non sono dati: non si raggruppa ne' si somma su un pulsante
+      // (SXADV-6100.1).
+      .filter((c) => c.item && !c.azione && (!c.vista || scelti.includes(c.item)))
       .map((c) => ({
         value: c.item as string,
         label: c.etichetta || c.item,
@@ -666,6 +668,7 @@ const ModificaWidget: React.FC<Props> = ({
                       aria-label="Confronto"
                     />
                     <InputNumber
+                      controls={false}
                       value={bozza.valore}
                       disabled={!bozza.conFiltro}
                       onChange={(v) => cambia({ valore: v === null ? null : Number(v) })}
@@ -711,6 +714,7 @@ const ModificaWidget: React.FC<Props> = ({
                 <Form.Item label="Quante barre">
                   <Space>
                     <InputNumber
+                      controls={false}
                       min={1}
                       max={12}
                       value={bozza.topN}

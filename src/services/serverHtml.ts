@@ -193,3 +193,21 @@ export function serverText(text: string): string {
     return decoded;
   });
 }
+
+/** I tag che possono arrivare in un valore di cella: quelli composti dai lookup
+ *  (`#br#` -> `<br />`, `#b#` -> `<b>`, `#nobr#`) e quelli che il dominio scrive
+ *  a mano in un getter (le icone-di-stato, `<div class="invalid">`, `<img>`). */
+const HTML_TAG_NAMES = /^(?:br|b|i|u|em|strong|nobr|small|sub|sup|span|div|p|a|img|font|table|tbody|thead|tr|td|th|ul|ol|li|dl|dt|dd|pre|code|hr|h[1-6]|center|blockquote|s|strike|del|ins|mark|caption|label|input|button|select|option|textarea)$/i;
+
+/** Un valore di cella che PORTA markup, non che lo racconta. Le descrizioni dei
+ *  lookup sono composte dal server con `#br#`/`#b#` (UIUtils.extractToken), e la
+ *  `<td>` legacy le scriveva grezze: in React finivano nel testo, quindi
+ *  l'utente leggeva il tag invece di andare a capo (SXADV-5759.2).
+ *  Il tag va ELENCATO, non basta "qualcosa fra < e >": il toString di un BO e'
+ *  un dump XML, e un dump finito per sbaglio in una cella deve restare VISIBILE
+ *  — ingoiarlo come markup lo farebbe sembrare un dato mancante.
+ *  Vale per le celle delle liste e per quelle dei widget (SXADV-6100.1). */
+export const looksLikeServerHtml = (val: string): boolean => {
+  const m = /<\/?([a-z][a-z0-9]*)\b/i.exec(val);
+  return !!m && HTML_TAG_NAMES.test(m[1]);
+};

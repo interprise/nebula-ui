@@ -99,16 +99,32 @@ export function normalizzaVista(vista: unknown, n: number): VistaTabella | null 
   return Object.keys(o).length > 0 ? o : null;
 }
 
-/** Gli indici a schermo: ordine completato meno le nascoste (almeno una resta). */
+/**
+ * Gli indici a schermo: ordine completato meno le nascoste (almeno una resta).
+ * `escluse` sono le colonne che il widget non mostra mai, a prescindere da chi guarda:
+ * i comandi della lista (SXADV-6100.1). Se le nascoste spegnerebbero tutte le altre,
+ * vince la regola «almeno una resta» e le nascoste non contano.
+ */
 export function colonneMostrate(
   vista: VistaTabella | null | undefined,
   n: number,
   ordineIniziale?: unknown,
+  escluse?: ReadonlySet<number>,
 ): number[] {
   const v = normalizzaVista(vista, n);
-  const ordine = completaOrdine(v?.ordineColonne, n, ordineIniziale);
+  const ordine = completaOrdine(v?.ordineColonne, n, ordineIniziale).filter((i) => !escluse?.has(i));
   const nascoste = new Set(v?.nascoste || []);
-  return ordine.filter((i) => !nascoste.has(i));
+  const mostrate = ordine.filter((i) => !nascoste.has(i));
+  return mostrate.length > 0 ? mostrate : ordine;
+}
+
+/** SXADV-6100.1: gli indici delle colonne di comando, che il server marca `azione`. */
+export function colonneAzione(colonne: ReadonlyArray<{ azione?: boolean } | null | undefined>): Set<number> {
+  const out = new Set<number>();
+  colonne.forEach((c, i) => {
+    if (c?.azione) out.add(i);
+  });
+  return out;
 }
 
 /**

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Empty, Popconfirm, Popover, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { Button, Checkbox, Empty, Popover, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { ReloadOutlined, CloseOutlined, EditOutlined, EyeOutlined, PlusOutlined, TableOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
@@ -16,6 +16,7 @@ import GrigliaWidget, { type PostoSalvato } from './dashboard/GrigliaWidget';
 import CatalogoWidget from './dashboard/CatalogoWidget';
 import TabellaWidget from './dashboard/TabellaWidget';
 import {
+  colonneAzione,
   colonneMostrate,
   completaOrdine,
   normalizzaVista,
@@ -31,6 +32,8 @@ interface Colonna {
   tipo?: string | null;
   /** Il dettaglio da cui viene la colonna, se non e' della lista (SXADV-6001.1c). */
   vista?: string | null;
+  /** Un comando della lista (pulsante, stampe): il widget non lo mostra (SXADV-6100.1). */
+  azione?: boolean;
 }
 
 /**
@@ -1128,12 +1131,21 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         else feedback.error(String(resp.messaggio || 'Il widget non e stato tolto.'));
         return;
       }
-      feedback.info(`"${w.titolo || 'Widget'}" tolto dalla dashboard.`);
+      feedback.info(`"${w.titolo || 'Widget'}" eliminato dalla dashboard.`);
       void leggi();
     } catch (e) {
       feedback.failure(e);
     }
   };
+
+  // SXADV-6100.2: la finestra di conferma standard dell'applicazione, con il testo
+  // dello standard («Eliminare ...?» e OK / Annulla).
+  const chiediRimozione = (w: Widget) =>
+    feedback.confirm(
+      'Eliminare dalla dashboard questo widget?',
+      "La dashboard non lo mostrera' piu'.",
+      () => void rimuovi(w),
+    );
 
   if (caricando && widget === null)
     return (
@@ -1270,8 +1282,11 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               {scelteColonne ? (
                 <SceltaColonne
                   colonne={w.colonne || []}
-                  mostrate={colonneMostrate(vistaDi(w), (w.colonne || []).length, w.ordineColonne)}
-                  ordine={completaOrdine(vistaDi(w)?.ordineColonne, (w.colonne || []).length, w.ordineColonne)}
+                  mostrate={colonneMostrate(vistaDi(w), (w.colonne || []).length, w.ordineColonne, colonneAzione(w.colonne || []))}
+                  // Le colonne di comando non si offrono: il widget non le mostra (SXADV-6100.1).
+                  ordine={completaOrdine(vistaDi(w)?.ordineColonne, (w.colonne || []).length, w.ordineColonne).filter(
+                    (i) => !(w.colonne || [])[i]?.azione,
+                  )}
                   personalizzata={!!vistaDi(w)}
                   onNascoste={(nascoste) => void salvaVista(w, { ...(vistaDi(w) || {}), nascoste })}
                   onRipristina={() => void salvaVista(w, null)}
@@ -1302,27 +1317,17 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                   />
                 </Tooltip>
               ) : null}
-              {/* Niente suggerimento su questo tasto: resta aperto sotto il puntatore,
-                  e quando la finestrella di conferma non ha spazio a destra antd la apre
-                  proprio li' sopra — il tasto «Togli» si becca il clic del suggerimento
-                  e il widget non si toglie (trovato dalla prova indipendente, 21/09).
-                  Il nome del comando lo dice gia' aria-label, e la conferma si spiega da
-                  se'. */}
-              <Popconfirm
-                title="Togliere questo widget?"
-                description="La dashboard non lo mostrera' piu'. I dati non si toccano."
-                okText="Togli"
-                okButtonProps={{ danger: true }}
-                cancelText="Annulla"
-                onConfirm={() => rimuovi(w)}
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined />}
-                  aria-label={`Togli ${w.titolo || 'widget'} dalla dashboard`}
-                />
-              </Popconfirm>
+              {/* Niente suggerimento su questo tasto: con la vecchia finestrella di
+                  conferma antd la apriva proprio li' sopra e il clic finiva sul
+                  suggerimento (prova indipendente, 21/09). Il nome del comando lo dice
+                  gia' aria-label. */}
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined />}
+                aria-label={`Togli ${w.titolo || 'widget'} dalla dashboard`}
+                onClick={() => chiediRimozione(w)}
+              />
             </Space>
           </header>
 
@@ -1361,14 +1366,15 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
             {totale != null ? (
               <span>
                 ·{' '}
-                {/* «prime N» deve essere il numero che si VEDE. La fotografia ne tiene
-                    fino a 1.000, ma alla Home ne arrivano al massimo 200: dire «prime
-                    1.000» con 200 righe sotto gli occhi e' una bugia misurabile. */}
+                {/* «visualizzazione: N di M» (SXADV-6100.4, era «prime N di M»): N deve
+                    essere il numero che si VEDE. La fotografia ne tiene fino a 1.000, ma
+                    alla Home ne arrivano al massimo 200: dire 1.000 con 200 righe sotto
+                    gli occhi e' una bugia misurabile. */}
                 {/* Numero e barre sono calcolati su TUTTA la ricerca: «prime 200 di
                     4.762» li farebbe sembrare parziali (SXADV-62, 24/09). Vale solo
                     quando il widget mostra davvero il risultato e non ripiega sulle righe. */}
                 {mostrate < totale && !mostraRisultato(w.forma, w.risultato)
-                  ? `prime ${numero(mostrate)} di ${numero(totale)}`
+                  ? `visualizzazione: ${numero(mostrate)} di ${numero(totale)}`
                   : `${numero(totale)} ${totale === 1 ? 'riga' : 'righe'}`}
               </span>
             ) : null}
@@ -1430,18 +1436,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                     Modifica
                   </Button>
                 ) : null}
-                <Popconfirm
-                  title="Togliere questo widget?"
-                  description="La dashboard non lo mostrera' piu'. I dati non si toccano."
-                  okText="Togli"
-                  okButtonProps={{ danger: true }}
-                  cancelText="Annulla"
-                  onConfirm={() => rimuovi(w)}
-                >
-                  <Button size="small" danger icon={<CloseOutlined />}>
-                    Rimuovi
-                  </Button>
-                </Popconfirm>
+                <Button size="small" danger icon={<CloseOutlined />} onClick={() => chiediRimozione(w)}>
+                  Rimuovi
+                </Button>
               </Space>
             </div>
           ) : foto.stato === 'OK' || foto.stato === 'RUN' ? null : (

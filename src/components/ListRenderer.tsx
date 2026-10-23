@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
-import { serverHtml, serverText, HTML_POLICY } from '../services/serverHtml';
+import { serverHtml, serverText, HTML_POLICY, looksLikeServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, type IRowNode, themeAlpine } from 'ag-grid-community';
 import { applyRowEcho, pruneEcho, type EchoEntry, type RowEcho } from './rowEcho';
@@ -267,23 +267,6 @@ const gridTheme = themeAlpine.withParams({
   fontSize: 12,
   cellHorizontalPadding: 4,
 });
-
-/** I tag che possono arrivare in un valore di cella: quelli composti dai lookup
- *  (`#br#` -> `<br />`, `#b#` -> `<b>`, `#nobr#`) e quelli che il dominio scrive
- *  a mano in un getter (le icone-di-stato, `<div class="invalid">`, `<img>`). */
-const HTML_TAG_NAMES = /^(?:br|b|i|u|em|strong|nobr|small|sub|sup|span|div|p|a|img|font|table|tbody|thead|tr|td|th|ul|ol|li|dl|dt|dd|pre|code|hr|h[1-6]|center|blockquote|s|strike|del|ins|mark|caption|label|input|button|select|option|textarea)$/i;
-
-/** Un valore di cella che PORTA markup, non che lo racconta. Le descrizioni dei
- *  lookup sono composte dal server con `#br#`/`#b#` (UIUtils.extractToken), e la
- *  `<td>` legacy le scriveva grezze: in React finivano nel testo, quindi
- *  l'utente leggeva il tag invece di andare a capo (SXADV-5759.2).
- *  Il tag va ELENCATO, non basta "qualcosa fra < e >": il toString di un BO e'
- *  un dump XML, e un dump finito per sbaglio in una cella deve restare VISIBILE
- *  — ingoiarlo come markup lo farebbe sembrare un dato mancante. */
-const looksLikeServerHtml = (val: string): boolean => {
-  const m = /<\/?([a-z][a-z0-9]*)\b/i.exec(val);
-  return !!m && HTML_TAG_NAMES.test(m[1]);
-};
 
 /** Descrittore della catenella NavigateView che il server appende alla cella. */
 type CellNavDescriptor = { command: string; navpath: string; controlName: string };

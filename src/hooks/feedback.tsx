@@ -43,6 +43,9 @@ export interface Feedback {
   /** Una richiesta fallita senza una risposta del server da mostrare
    *  (rete, HTTP 500, risposta illeggibile): "Errore Server" come nel legacy. */
   failure: (e: unknown) => void;
+  /** Una domanda nata nel client, nella stessa finestra delle CONFIRMATION del
+   *  server (OK / Annulla): la domanda e' il titolo, `text` la spiegazione. */
+  confirm: (question: string, text: string, onOk: () => void, onCancel?: () => void) => void;
 }
 
 /** Il testo del legacy per una richiesta fallita (ui.js handleFailure). */
@@ -89,6 +92,24 @@ export function useFeedback(): Feedback {
         pauseOnHover: true,
       });
 
+    const okCancel = (title: string, content: React.ReactNode, onOk: () => void, onCancel?: () => void) => {
+      modal.confirm({
+        ...dialog,
+        title,
+        content,
+        cancelText: 'Annulla',
+        onOk,
+        onCancel,
+        // Ordine del legacy: l'azione prima, Annulla all'estrema destra.
+        footer: (_, { OkBtn, CancelBtn }) => (
+          <>
+            <OkBtn />
+            <CancelBtn />
+          </>
+        ),
+      });
+    };
+
     const showServerMessages = (errors: ErrorItem[], handlers: ServerMessageHandlers = {}) => {
       const ofType = (type: ErrorItem['type']) => errors.filter((e) => e.type === type);
       const errs = ofType('ERROR');
@@ -104,21 +125,12 @@ export function useFeedback(): Feedback {
       const confirms = ofType('CONFIRMATION');
       if (confirms.length > 0) {
         const prompt = confirms[confirms.length - 1];
-        modal.confirm({
-          ...dialog,
-          title: 'Richiesta di conferma',
-          content: serverBody(confirms),
-          cancelText: 'Annulla',
-          onOk: () => handlers.onAnswer?.(prompt, 'yes'),
-          onCancel: () => handlers.onCancel?.(),
-          // Ordine del legacy: l'azione prima, Annulla all'estrema destra.
-          footer: (_, { OkBtn, CancelBtn }) => (
-            <>
-              <OkBtn />
-              <CancelBtn />
-            </>
-          ),
-        });
+        okCancel(
+          'Richiesta di conferma',
+          serverBody(confirms),
+          () => handlers.onAnswer?.(prompt, 'yes'),
+          () => handlers.onCancel?.(),
+        );
         return;
       }
 
@@ -184,6 +196,7 @@ export function useFeedback(): Feedback {
       warning: (text) => executedWithWarnings(textBody(text), 'Attenzione'),
       info: (text) => toast(textBody(text), false),
       failure,
+      confirm: (question, text, onOk, onCancel) => okCancel(question, textBody(text), onOk, onCancel),
     };
   }, [modal, notification]);
 }

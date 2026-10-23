@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
+import { HTML_POLICY, looksLikeServerHtml, serverHtml, serverText } from '../../services/serverHtml';
 import {
+  colonneAzione,
   colonneMostrate,
   completaOrdine,
   larghezzaValida,
@@ -20,6 +22,39 @@ import {
 export interface ColonnaTabella {
   item?: string;
   etichetta?: string;
+  /** Il controlType della colonna nella lista (`Html`, `SingleAction`, ...). */
+  tipo?: string | null;
+  /** Un comando della lista (pulsante, stampe): il widget non lo mostra (SXADV-6100.1). */
+  azione?: boolean;
+}
+
+/**
+ * SXADV-6100.1: il testo di una cella com'e' nella lista. Le colonne Html e i valori che
+ * portano markup (descrizioni composte, icone di stato) la lista li disegna come HTML
+ * filtrato; il resto e' testo, con le entita' decodificate. `piano()` e' lo stesso testo
+ * senza tag, per il suggerimento: si calcola solo se serve (colonne con una larghezza),
+ * perche' la tabella si ridisegna a ogni movimento della maniglia.
+ */
+function contenutoCella(t: string | null | undefined, tipo: string | null | undefined): {
+  nodo: React.ReactNode;
+  piano: () => string;
+} {
+  const testo = t == null ? '' : String(t);
+  if (!testo) return { nodo: null, piano: () => '' };
+  if (tipo === 'Html' || looksLikeServerHtml(testo)) {
+    const html = serverHtml(testo, HTML_POLICY.cell);
+    return {
+      nodo: <span dangerouslySetInnerHTML={{ __html: html }} />,
+      // DOMParser: un documento inerte, che non carica immagini ne' esegue gestori. Gli
+      // a capo diventano spazi, se no «Via Roma 1<br/>Milano» si legge «Via Roma 1Milano».
+      piano: () =>
+        (new DOMParser().parseFromString(html.replace(/<br\s*\/?>/gi, ' '), 'text/html').body.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim(),
+    };
+  }
+  const piano = serverText(testo);
+  return { nodo: piano, piano: () => piano };
 }
 
 export interface CellaTabella {
@@ -71,8 +106,11 @@ export default function TabellaWidget({
 }: Props) {
   const n = colonne.length;
   const scelte = !schemaCambiato && n > 0;
+  const azioni = colonneAzione(colonne);
   const mostrate = scelte
-    ? colonneMostrate(vista, n, ordineIniziale)
+    ? colonneMostrate(vista, n, ordineIniziale, azioni)
+    // Schema cambiato: celle e intestazioni non si corrispondono piu', si mostra tutto
+    // com'e', comandi compresi.
     : Array.from({ length: n }, (_, i) => i);
   const ordinamento = scelte ? ordinamentoEffettivo(vista, ordinamentoLocale) : null;
   /** La colonna che si sta trascinando (spostamento), per accettare il rilascio. */
@@ -273,6 +311,8 @@ export default function TabellaWidget({
                   .filter(Boolean)
                   .join(' ');
                 const stile = stileColonna(i);
+                const tipo = colonne[i]?.tipo;
+                const testo = contenutoCella(cella.t, tipo);
                 return (
                   <td
                     key={i}
@@ -280,12 +320,12 @@ export default function TabellaWidget({
                     style={stile}
                     // Una colonna stretta taglia il testo coi puntini: quello intero resta
                     // sotto il puntatore.
-                    title={stile && cella.t ? cella.t : undefined}
+                    title={stile ? testo.piano() || undefined : undefined}
                   >
                     {/* Il valore di prima accanto a quello nuovo: e' l'unica cosa che
                         rende leggibile «e' cambiato», e arriva gia' formattato. */}
                     {cella.p !== undefined && cella.p !== null ? (
-                      <s className="valore-prima">{cella.p}</s>
+                      <s className="valore-prima">{contenutoCella(cella.p, tipo).nodo}</s>
                     ) : null}
                     {j === 0 && r.n ? <span className="segno-nuova">nuova</span> : null}
                     {/* La tr resta una riga di tabella per chi legge con lo screen reader:
@@ -304,10 +344,10 @@ export default function TabellaWidget({
                           }
                         }}
                       >
-                        {cella.t}
+                        {testo.nodo}
                       </span>
                     ) : (
-                      cella.t
+                      testo.nodo
                     )}
                   </td>
                 );
