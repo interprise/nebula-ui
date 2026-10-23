@@ -17,6 +17,8 @@ import * as api from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
 import type { ErrorItem } from '../../types/ui';
 import { RisultatoVista } from './RisultatoWidget';
+import DateDellaRicerca from './DateDellaRicerca';
+import type { CriterioData, SceltaData } from './DateDellaRicerca';
 import { oppostoDi, toniDi } from './risultato';
 import type { Opzioni, Risultato, Tono, Trasformazione } from './risultato';
 
@@ -48,6 +50,9 @@ export interface WidgetDaModificare {
   colonne?: Array<{ item?: string; etichetta?: string; tipo?: string | null; vista?: string | null; azione?: boolean }>;
   /** Chi lo vede nel catalogo e se arriva da solo (CONDIVISIONE H2). */
   condivisione?: { ambito?: string; mandato?: boolean } | null;
+  /** SXADV-6105.1: le date della ricerca e come si muovono adesso (le ferme non ci sono). */
+  criteriData?: CriterioData[];
+  date?: Record<string, { modo?: string; giorni?: number }> | null;
 }
 
 interface Props {
@@ -91,6 +96,8 @@ interface Bozza {
   mandato: boolean;
   /** SXADV-6001.1c: le colonne prese dal dettaglio, tutte (nomi degli item). */
   colonneDettaglio: string[];
+  /** SXADV-6105.1: chiave del criterio data -> come si muove. */
+  date: Record<string, SceltaData>;
 }
 
 /** Un campo del dettaglio da offrire come colonna (dashboard.ColonneDettaglio, D3). */
@@ -100,6 +107,28 @@ interface CampoDettaglio {
   tipo?: string | null;
   aggiunta?: boolean;
 }
+
+/**
+ * Le date come sono salvate, una voce per ogni criterio data: chi non c'e' fra le
+ * scelte e' fermo. I giorni partono da 30, come in «Aggiungi alla dashboard».
+ */
+const dateDi = (w: WidgetDaModificare): Record<string, SceltaData> => {
+  const out: Record<string, SceltaData> = {};
+  for (const c of w.criteriData || []) {
+    const d = w.date?.[c.chiave];
+    out[c.chiave] = {
+      modo: d?.modo || 'fissa',
+      giorni: typeof d?.giorni === 'number' && d.giorni > 0 ? d.giorni : 30,
+    };
+  }
+  return out;
+};
+
+/** Stessa scelta? I giorni contano solo per «oggi meno N giorni». */
+const stesseDate = (a: Record<string, SceltaData>, b: Record<string, SceltaData>) =>
+  Object.keys(a).length === Object.keys(b).length
+  && Object.keys(a).every((k) => !!b[k] && a[k].modo === b[k].modo
+    && (a[k].modo !== 'oggiMenoGiorni' || a[k].giorni === b[k].giorni));
 
 /** Le colonne del dettaglio gia' nel widget, nell'ordine in cui ci sono. */
 const dettaglioDi = (w: WidgetDaModificare) =>
@@ -151,6 +180,7 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     condivisione: w.condivisione?.ambito || 'privato',
     mandato: !!w.condivisione?.mandato,
     colonneDettaglio: dettaglioDi(w),
+    date: dateDi(w),
   };
 };
 
@@ -496,6 +526,8 @@ const ModificaWidget: React.FC<Props> = ({
         ...(stessiNomi(bozza.colonneDettaglio, dettaglioDi(widget))
           ? {}
           : { colonneDettaglio: JSON.stringify(bozza.colonneDettaglio) }),
+        // SXADV-6105.1: anche le date, solo se cambiate: assenti, il server non le tocca.
+        ...(stesseDate(bozza.date, dateDi(widget)) ? {} : { date: JSON.stringify(bozza.date) }),
       })) as unknown as Record<string, unknown>;
       if (resp.esito === 'ok') {
         // Anche a pannello gia' chiuso: il server ha salvato, e la Home deve mostrarlo.
@@ -849,6 +881,19 @@ const ModificaWidget: React.FC<Props> = ({
                   Mandalo nelle Home
                 </Checkbox>
               ) : null}
+            </Form.Item>
+          ) : null}
+
+          {(widget?.criteriData || []).length > 0 ? (
+            <Form.Item
+              label="Le date della ricerca"
+              extra="La lista con le date nuove arriva con l'aggiornamento che parte dopo il Salva."
+            >
+              <DateDellaRicerca
+                criteri={widget?.criteriData || []}
+                scelte={bozza.date}
+                onChange={(chiave, scelta) => cambia({ date: { ...bozza.date, [chiave]: scelta } })}
+              />
             </Form.Item>
           ) : null}
 

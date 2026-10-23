@@ -127,7 +127,15 @@ interface Widget {
    * larghezze, dal suo elemento della Home. null = com'era la lista all'approdo.
    */
   vista?: VistaTabella | null;
-  filtri?: Array<{ etichetta: string; valore: string; negato?: boolean; casella?: boolean }>;
+  /** `mobile`: una data che segue il calendario; `valore` e' gia' la regola («oggi»). */
+  filtri?: Array<{
+    etichetta: string;
+    valore: string;
+    negato?: boolean;
+    casella?: boolean;
+    mobile?: boolean;
+    valoreRicerca?: string;
+  }>;
   fotografia: Fotografia;
   /** La trasformazione salvata (G9), o null: il widget mostra la lista. */
   trasformazione?: Trasformazione | null;
@@ -1389,7 +1397,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
           ) : (w.filtri || []).length > 0 ? (
             <div className="dash-widget-filtri">
               {(w.filtri || []).map((f, i) => (
-                <Tag key={i}>
+                // SXADV-6105.2: la data che si sposta mostra la regola; il giorno battuto
+                // nella ricerca resta a portata di mouse.
+                <Tag key={i} title={f.mobile && f.valoreRicerca ? `Nella ricerca: ${f.valoreRicerca}` : undefined}>
                   {f.etichetta}
                   {f.negato ? ' (escluso)' : ''}
                   {f.casella ? '' : `: ${f.valore}`}

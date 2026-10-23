@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Form, Input, InputNumber, Select, Space, Tag, Spin, Typography } from 'antd';
+import { Modal, Form, Input, Select, Tag, Spin, Typography } from 'antd';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
 import type { ErrorItem } from '../types/ui';
 import { leggiOrdinamentoLocale, leggiOrdineColonne } from './dashboard/ordineColonne';
+import DateDellaRicerca from './dashboard/DateDellaRicerca';
+import { testoDelModo } from './dashboard/dateMobili';
+import type { CriterioData } from './dashboard/DateDellaRicerca';
 
 /** Quello che il server chiama "sorgente" del widget, per la parte che qui si mostra. */
 interface Sorgente {
@@ -13,7 +16,7 @@ interface Sorgente {
   colonne?: Array<{ etichetta?: string; azione?: boolean }>;
   listView?: string;
   /** I criteri di tipo data: su una dashboard possono seguire il calendario. */
-  criteriData?: Array<{ chiave: string; etichetta: string; valore: string; modoProposto: string }>;
+  criteriData?: CriterioData[];
 }
 
 /** « (visualizzaFE, Stampa)»: le etichette delle colonne di comando, se ce l'hanno. */
@@ -21,17 +24,6 @@ const pulsanti = (colonne: Array<{ etichetta?: string; azione?: boolean }>) => {
   const nomi = colonne.filter((c) => c.azione && c.etichetta).map((c) => c.etichetta);
   return nomi.length > 0 ? ` (${nomi.join(', ')})` : '';
 };
-
-/** Come si muove una data del widget. Le voci sono quelle di DateMobili, lato server. */
-const MODI_DATA = [
-  { value: 'fissa', label: 'resta questa data' },
-  { value: 'oggi', label: 'il giorno in cui si aggiorna' },
-  { value: 'ieri', label: 'il giorno prima' },
-  { value: 'inizioMese', label: 'il primo del mese' },
-  { value: 'fineMesePrecedente', label: 'fine mese scorso' },
-  { value: 'inizioAnno', label: 'il primo gennaio' },
-  { value: 'oggiMenoGiorni', label: 'oggi meno N giorni' },
-];
 
 interface Widget {
   idWidget?: number | null;
@@ -212,6 +204,22 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
   };
 
   const filtri = bozza?.sorgente.filtri || [];
+  // SXADV-6105.2: il filtro di una data che si sposta si legge come la scelta («Alla
+  // data: oggi»), come poi sul widget nella Home: il giorno battuto non e' piu' quello
+  // con cui il widget cerca.
+  // Due date con lo stesso campo (testata e sezione incorporata) non si distinguono dal
+  // nome: li' resta il valore della ricerca, come fa il server sul widget.
+  const dataDelFiltro = (f: { campo: string; casella?: boolean }) => {
+    const criteri = (bozza?.sorgente.criteriData || []).filter((x) => x.campo && x.campo === f.campo);
+    if (f.casella || criteri.length !== 1 || filtri.filter((x) => x.campo === f.campo).length !== 1)
+      return undefined;
+    const s = date[criteri[0].chiave];
+    return s && s.modo !== 'fissa' ? s : undefined;
+  };
+  const valoreDelFiltro = (f: { campo: string; valore: string; casella?: boolean }) => {
+    const s = dataDelFiltro(f);
+    return s ? testoDelModo(s) : f.valore;
+  };
   return (
     <Modal
       open={open}
@@ -245,76 +253,26 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
                   <Tag key={i} style={{ marginBottom: 4 }}>
                     {f.etichetta}
                     {f.negato ? ' (escluso)' : ''}
-                    {f.casella ? '' : `: ${f.valore}`}
+                    {f.casella ? '' : `: ${valoreDelFiltro(f)}`}
                   </Tag>
                 ))}
               </div>
             )}
             {bozza.sorgente.filtriLeggibili === false && (
               <Typography.Text type="secondary">
-                I valori sono quelli inseriti nella ricerca.
+                {filtri.some((f) => dataDelFiltro(f))
+                  ? 'Gli altri valori sono quelli inseriti nella ricerca.'
+                  : 'I valori sono quelli inseriti nella ricerca.'}
               </Typography.Text>
             )}
           </Form.Item>
           {(bozza.sorgente.criteriData || []).length > 0 && (
             <Form.Item label="Le date della ricerca">
-              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 6 }}>
-                Una data ferma mostrera' sempre gli stessi giorni: qui si decide quali
-                seguono il calendario a ogni aggiornamento.
-              </Typography.Text>
-              {(bozza.sorgente.criteriData || []).map((c) => {
-                const scelta = date[c.chiave] || { modo: 'fissa', giorni: 30 };
-                return (
-                  <Space key={c.chiave} wrap style={{ marginBottom: 6 }}>
-                    {/* Il valore battuto sta accanto all'etichetta e non solo dentro
-                        l'opzione «resta X»: su certe maschere le etichette sono
-                        «Data / da / a» ripetute tre volte, e senza il valore non si
-                        capisce quale data si sta rendendo mobile. */}
-                    <Typography.Text>
-                      {c.etichetta} <Typography.Text type="secondary">({c.valore})</Typography.Text>
-                    </Typography.Text>
-                    <Select
-                      size="small"
-                      style={{ minWidth: 220 }}
-                      value={scelta.modo}
-                      options={
-                        // Un modo che il server conosce e il client no comparirebbe
-                        // come chiave nuda: meglio mostrarlo per quello che e'.
-                        MODI_DATA.some((m) => m.value === scelta.modo)
-                          ? MODI_DATA.map((m) =>
-                              m.value === 'fissa' ? { ...m, label: `resta ${c.valore}` } : m
-                            )
-                          : [
-                              ...MODI_DATA.map((m) =>
-                                m.value === 'fissa' ? { ...m, label: `resta ${c.valore}` } : m
-                              ),
-                              { value: scelta.modo, label: `${scelta.modo} (non riconosciuto)` },
-                            ]
-                      }
-                      onChange={(modo) =>
-                        setDate((p) => ({ ...p, [c.chiave]: { ...scelta, modo } }))
-                      }
-                    />
-                    {scelta.modo === 'oggiMenoGiorni' && (
-                      // SXADV-6100.3: senza le frecce, come i campi numerici delle
-                      // maschere (NumberControl): nel campo piccolo coprivano il numero.
-                      <InputNumber
-                        size="small"
-                        controls={false}
-                        min={1}
-                        max={3650}
-                        value={scelta.giorni}
-                        onChange={(giorni) =>
-                          setDate((p) => ({
-                            ...p,
-                            [c.chiave]: { ...scelta, giorni: Number(giorni) || 1 },
-                          }))
-                        }
-                      />
-                    )}
-                  </Space>
-                );
-              })}
+              <DateDellaRicerca
+                criteri={bozza.sorgente.criteriData || []}
+                scelte={date}
+                onChange={(chiave, scelta) => setDate((p) => ({ ...p, [chiave]: scelta }))}
+              />
             </Form.Item>
           )}
           <Form.Item

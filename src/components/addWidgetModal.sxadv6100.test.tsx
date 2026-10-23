@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactElement } from 'react';
 import sorgenteModifica from './dashboard/ModificaWidget.tsx?raw';
 import sorgenteAggiungi from './AddWidgetModal.tsx?raw';
+// SXADV-6105: il campo dei giorni ora sta nel componente delle date, condiviso con «Modifica widget».
+import sorgenteDate from './dashboard/DateDellaRicerca.tsx?raw';
 
 // SXADV-6100.1 C6 e 6100.3 — la finestra «Aggiungi alla dashboard» (AddWidgetModal).
 // Oracolo: docs/sxadv-62-prove/SXADV6100_contratto.md. Chi prova non e' chi implementa.
@@ -128,6 +130,7 @@ vi.mock('../services/api', async (importOriginal) => ({
 
 const { default: AddWidgetModal } = await import('./AddWidgetModal');
 const { InputNumber, Typography } = await import('antd');
+const { default: DateDellaRicerca } = await import('./dashboard/DateDellaRicerca');
 
 // ───────────────────────────────────────────── il «DOM» finto (dopo gli import)
 const noop = () => {};
@@ -317,7 +320,14 @@ function testoDi(n: unknown): string {
 const testiTypography = () =>
   elements(tree).filter((e) => e.type === Typography.Text).map((e) => testoDi(e.props.children));
 const fraseColonne = () => testiTypography().find((t) => /colonne, come nella lista\./.test(t));
-const campiNumero = () => elements(tree).filter((e) => e.type === InputNumber);
+// SXADV-6105: il campo dei giorni e' un livello piu' giu', in DateDellaRicerca. Il
+// componente non ha hook: chiamarlo con le sue prop da' il disegno che React monterebbe.
+const campiNumero = () =>
+  elements(tree)
+    .flatMap((e) => (e.type === DateDellaRicerca
+      ? elements((DateDellaRicerca as unknown as (p: unknown) => unknown)(e.props))
+      : [e]))
+    .filter((e) => e.type === InputNumber);
 
 function bozza(colonne: Array<Record<string, unknown>>, criteriData: unknown[] = []) {
   return {
@@ -444,5 +454,6 @@ describe('SXADV-6100.3 «Modifica widget»: i campi numerici senza frecce (sul s
 
   it('AddWidgetModal: ogni InputNumber ha controls={false}', () => {
     for (const t of inputNumber(sorgenteAggiungi)) expect(t, t.slice(0, 120)).toMatch(/controls=\{false\}/);
+    for (const t of inputNumber(sorgenteDate)) expect(t, t.slice(0, 120)).toMatch(/controls=\{false\}/);
   });
 });
