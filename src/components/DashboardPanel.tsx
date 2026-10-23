@@ -261,7 +261,7 @@ interface Props {
    * non si cliccano.
    */
   /** Torna false se la scheda non ha potuto partire (sta gia' caricando). */
-  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => boolean;
+  onApriDettaglio?: (titolo: string, viewName: string, chiave: string, idWidget?: number) => boolean;
   /**
    * «Naviga» (SXADV-5999.2): apre nella scheda corrente la lista della ricerca del
    * widget, rifatta oggi (`dashboard.Naviga` con `newTask`). Senza, il bottone non c'e'.
@@ -273,6 +273,11 @@ interface Props {
    * false, e qui non parte niente. Assente = sempre si'.
    */
   puoAprire?: () => boolean;
+  /**
+   * «Torna al widget» (SXADV-5999.3): appena c'e' a schermo, il riquadro di questo
+   * widget si porta in vista e si evidenzia per un momento. Una volta per valore.
+   */
+  mostraWidget?: number | null;
 }
 
 /**
@@ -461,7 +466,7 @@ const ogni = (min?: number) => {
  * criterio del pezzo. Quello che si vede — intestazioni, testi delle celle, conteggio —
  * e' quello che il server ha gia' calcolato quando il widget e' stato aggiunto.
  */
-const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, puoAprire }) => {
+const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, puoAprire, mostraWidget }) => {
   const feedback = useFeedback();
 
   /**
@@ -509,7 +514,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         })) as unknown as Record<string, unknown>;
         if (resp.esito === 'ok' && typeof resp.viewName === 'string' && resp.viewName) {
           // La guardia resta chiusa solo se l'apertura e' partita davvero.
-          aperto = onApriDettaglio(w.titolo || 'Dettaglio', resp.viewName, chiave);
+          aperto = onApriDettaglio(w.titolo || 'Dettaglio', resp.viewName, chiave, w.idWidget);
           if (!aperto) return;
           window.setTimeout(() => { apertura.current = false; }, 20000);
           return;
@@ -556,6 +561,42 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
     [onNaviga, puoAprire, feedback, rifiuto],
   );
   const [widget, setWidget] = useState<Widget[] | null>(null);
+
+  /**
+   * «Torna al widget» (SXADV-5999.3): il widget evidenziato adesso, e quello gia'
+   * portato in vista, perche' un ricaricamento della dashboard non lo rifaccia.
+   */
+  const [inRitorno, setInRitorno] = useState<number | null>(null);
+  const ritornoFatto = useRef<number | null>(null);
+  useEffect(() => {
+    if (mostraWidget == null || ritornoFatto.current === mostraWidget) return;
+    if (!widget || !widget.some((w) => w.idWidget === mostraWidget)) return;
+    ritornoFatto.current = mostraWidget;
+    setInRitorno(mostraWidget);
+  }, [mostraWidget, widget]);
+  // Il riquadro in vista e l'evidenza a tempo dipendono solo da quale widget e':
+  // un ricaricamento della lista nel frattempo non deve fermarli.
+  useEffect(() => {
+    if (inRitorno == null) return;
+    // Come mostraPrimaVariazione: si riprova per qualche disegno, finche' il riquadro
+    // non c'e' nel DOM.
+    let tentativi = 12;
+    let frame = 0;
+    const cerca = () => {
+      const riquadro = document.querySelector(`[data-widget="${inRitorno}"]`);
+      if (riquadro) {
+        riquadro.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (tentativi-- > 0) frame = requestAnimationFrame(cerca);
+    };
+    frame = requestAnimationFrame(cerca);
+    const spegni = window.setTimeout(() => setInRitorno(null), 2000);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(spegni);
+    };
+  }, [inRitorno]);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
   /** Il widget aperto nel pannello «Modifica widget». */
@@ -1175,7 +1216,11 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         const conTabella = mostrate > 0 && !mostraRisultato(w.forma, w.risultato);
         const scelteColonne = conTabella && !foto.schemaCambiato && (w.colonne || []).length > 0;
         articoli.set(w.idWidget, (
-        <article key={w.idWidget} className="dash-widget" data-widget={w.idWidget}>
+        <article
+          key={w.idWidget}
+          className={`dash-widget${inRitorno === w.idWidget ? ' dash-widget-ritorno' : ''}`}
+          data-widget={w.idWidget}
+        >
           <header className="dash-widget-head">
             <Typography.Text strong ellipsis={{ tooltip: w.titolo }}>
               {w.titolo}

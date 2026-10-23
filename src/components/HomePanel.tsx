@@ -11,11 +11,16 @@ interface HomePanelProps {
   loginInfo: LoginInfo;
   onBannerClick?: (navigateTo: string) => void;
   /** Il clic su una riga di un widget: apre il record nella scheda (vedi DashboardPanel). */
-  onApriDettaglio?: (titolo: string, viewName: string, chiave: string) => boolean;
+  onApriDettaglio?: (titolo: string, viewName: string, chiave: string, idWidget?: number) => boolean;
   /** «Naviga» su un widget: apre la lista della sua ricerca nella scheda. */
   onNaviga?: (titolo: string, idWidget: number) => boolean;
   /** La scheda di lavoro puo' ricevere un'apertura adesso? (vedi DashboardPanel) */
   puoAprire?: () => boolean;
+  /**
+   * «Torna al widget» (SXADV-5999.3): la Home si apre sulla dashboard, anche con
+   * avvisi nuovi, e porta in vista questo widget. null/assente = apertura normale.
+   */
+  mostraWidget?: number | null;
 }
 
 type Cosa = 'dashboard' | 'avvisi';
@@ -25,7 +30,7 @@ const APERTURA_MS = 30000;
 
 const { Title, Text } = Typography;
 
-const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga, puoAprire }) => {
+const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga, puoAprire, mostraWidget }) => {
   // Memoizzato per davvero: era ricalcolato a ogni disegno, quindi il useMemo qui
   // sotto non teneva e a ogni ridisegno si rileggeva localStorage e si ricalcolava
   // il riconoscitore di ogni avviso, testo per testo (e hpText puo' essere lungo).
@@ -55,8 +60,12 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
   // sempre «dashboard». Qui si guarda finche' non si e' deciso, e la scelta salta
   // appena si vede il primo avviso nuovo — ma non dopo che l'utente ha scelto lui:
   // spostargli la pagina sotto il naso mentre legge sarebbe peggio.
-  const scelto = useRef(false);
+  // Chi torna a un widget ha gia' scelto la dashboard: gli avvisi non la scavalcano.
+  const scelto = useRef(mostraWidget != null);
   const deciso = useRef(false);
+  // Il ritorno al widget vale per l'apertura: passando agli avvisi e tornando sulla
+  // dashboard (che si rimonta) non si ripete.
+  const [ritorno, setRitorno] = useState<number | null>(mostraWidget ?? null);
   // L'istante del montaggio si prende in un effetto, non nel render: il render deve
   // restare puro (react-hooks/purity). Questo effetto e' dichiarato prima di quello
   // che lo legge, quindi al primo giro il valore c'e' gia'.
@@ -132,6 +141,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
           value={cosa}
           onChange={(v) => {
             scelto.current = true;
+            setRitorno(null);
             setCosa(v);
           }}
           options={[
@@ -152,7 +162,12 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
       </div>
 
       {cosa === 'dashboard' ? (
-        <DashboardPanel onApriDettaglio={onApriDettaglio} onNaviga={onNaviga} puoAprire={puoAprire} />
+        <DashboardPanel
+          onApriDettaglio={onApriDettaglio}
+          onNaviga={onNaviga}
+          puoAprire={puoAprire}
+          mostraWidget={ritorno}
+        />
       ) : hasContent ? (
         <div>
           {banners.map((b, i) => (

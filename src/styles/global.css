@@ -1998,6 +1998,12 @@ body[style*="cursor: wait"] * {
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-surface);
+  transition: box-shadow 0.4s ease, border-color 0.4s ease;
+}
+/* SXADV-5999.3: il widget a cui si e' tornati con «Torna al widget», per un momento. */
+.dash-widget.dash-widget-ritorno {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-primary) 35%, transparent);
 }
 .dash-widget-head {
   display: flex;

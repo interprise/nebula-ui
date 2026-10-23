@@ -132,6 +132,11 @@ interface TabState {
   // il loro pulsante nella barra non poteva sapere di essere quello aperto
   // (Gestione Profili Menu, SXADV-5784.1).
   functionAction?: string;
+  // Il widget della Home da cui si e' entrati nella scheda (clic su una riga o
+  // «Apri la lista completa»): finche' c'e', la banda delle briciole offre il
+  // ritorno a quel widget. Lo toglie il prossimo ingresso di primo livello
+  // (SXADV-5999.3).
+  daWidget?: DaWidget;
   ui?: UITree;
   toolbar?: ToolbarItem[];
   // Trail handed up by a pane that drives a viewstate of its own (TreeRenderer's
@@ -523,9 +528,14 @@ const HOME_KEY = 'home';
 // avviso, cartella del documentale). Si esegue nella scheda di lavoro, dopo averla resa
 // attiva: per questo e' un descrittore e non una funzione, perche' deve girare con i
 // gestori del disegno successivo, quando la scheda attiva e' gia' quella giusta.
+interface DaWidget {
+  idWidget: number;
+  titolo: string;
+}
+
 type IngressoDallaHome =
   | { tipo: 'menu'; menuId: string; label: string }
-  | { tipo: 'funzione'; label: string; action: string; params?: Record<string, string> }
+  | { tipo: 'funzione'; label: string; action: string; params?: Record<string, string>; daWidget?: DaWidget }
   | { tipo: 'azione'; action: string }
   | { tipo: 'cdms'; viewName: string; title: string; filter?: string };
 
@@ -590,7 +600,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // scorrevoli rinascerebbero in cima. Lo si fotografa QUI, all'unico punto da
   // cui cambia la scheda, finche' il DOM e' ancora quello della scheda lasciata.
   const scrollByTabRef = useRef<Record<string, { ui: UITree; snap: ScrollSnapshot }>>({});
+  // SXADV-5999.3: il widget da portare in vista alla prossima apertura della Home.
+  // Lo arma solo «Torna al widget» (tornaAlWidget, dopo il cambio di scheda); ogni
+  // altro cambio di scheda lo disarma — casetta, scheda «Home» della barra, cambio
+  // azienda — cosi' il ritorno non si ripete da solo.
+  const [mostraWidget, setMostraWidget] = useState<number | null>(null);
   const setActiveTab = useCallback((key: string) => {
+    setMostraWidget(null);
     const leaving = activeTabRef.current;
     const root = tabContentRef.current;
     const ui = tabsRef.current.find((t) => t.key === leaving)?.ui;
@@ -690,6 +706,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     label: string;
     menuId?: string;
     functionAction?: string;
+    daWidget?: DaWidget;
   }>>(new Map());
   const undoMenuChange = useCallback((tabKey: string | undefined) => {
     if (tabKey === undefined) return;
@@ -697,7 +714,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     if (!u) return;
     pendingMenuUndoRef.current.delete(tabKey);
     updateTabState(u.tabKey, {
-      label: u.label, menuId: u.menuId, functionAction: u.functionAction, loading: false, progressPct: undefined,
+      label: u.label, menuId: u.menuId, functionAction: u.functionAction, daWidget: u.daWidget, loading: false, progressPct: undefined,
     });
   }, [updateTabState]);
 
@@ -744,6 +761,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     feedback.info(`"${tab.label}" sta ancora lavorando: quando ha finito, riprova.`);
     return false;
   }, [getWorkTab, feedback, setActiveTab]);
+  // Dopo setActiveTab, che disarma: i due aggiornamenti vanno nello stesso disegno.
+  const tornaAlWidget = useCallback((idWidget: number) => {
+    setActiveTab(HOME_KEY);
+    setMostraWidget(idWidget);
+  }, [setActiveTab]);
   const entraDallaHome = useCallback((ingresso: IngressoDallaHome): boolean => {
     if (activeTabRef.current !== HOME_KEY) return false;
     const tab = getWorkTab();
@@ -1368,7 +1390,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // qui: si azzerano quando la videata nuova arriva (processResponseInner),
       // cosi' una navigazione che non avviene non li porta via.
       pendingMenuUndoRef.current.set(tab.key, {
-        tabKey: tab.key, label: tab.label, menuId: tab.menuId, functionAction: tab.functionAction,
+        tabKey: tab.key, label: tab.label, menuId: tab.menuId, functionAction: tab.functionAction, daWidget: tab.daWidget,
       });
       // Keep the current view mounted under a loading overlay while the new
       // screen loads, instead of blanking `ui` to undefined. Blanking made the
@@ -1376,7 +1398,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // the confirm dialog when the navigation hit an "unsaved changes" prompt
       // (SXADV-5470.0 / .1). processResponse installs the new view (and clears
       // loading) once it arrives.
-      updateTabState(tab.key, { label: menuLabel, menuId, functionAction: undefined, loading: true, progressPct: undefined });
+      updateTabState(tab.key, { label: menuLabel, menuId, functionAction: undefined, daWidget: undefined, loading: true, progressPct: undefined });
 
       document.body.style.cursor = 'wait';
       // If the navigation raises a confirmation ("annullare TUTTE le modifiche?"),
@@ -1740,7 +1762,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       formValuesRef.current[tab.key] = fv;
       panelFieldRowsRef.current[tab.key] = new Map();
       editNavpathRef.current = null;
-      updateTabState(tab.key, { label: opts.title, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
+      updateTabState(tab.key, { label: opts.title, daWidget: undefined, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
       document.body.style.cursor = 'wait';
       try {
         // Ingresso di primo livello (barra del documentale, cartella dell'albero):
@@ -1854,13 +1876,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // zero (newTask), cosi' il percorso non si accoda a quello di prima
   // (SXADV-5783).
   const openFunctionByAction = useCallback(
-    (label: string, action: string, params?: Record<string, string>): boolean => {
+    (label: string, action: string, params?: Record<string, string>, daWidget?: DaWidget): boolean => {
       const tab = getActiveTabState();
-      if (!tab) return entraDallaHome({ tipo: 'funzione', label, action, params });
+      if (!tab) return entraDallaHome({ tipo: 'funzione', label, action, params, daWidget });
       if (tab.loading) return false;
       // La scheda cambia funzione: la voce di menu di prima non e' piu' quella
-      // aperta, e il pulsante che la segnava non deve restare acceso.
-      updateTabState(tab.key, { label, menuId: undefined, functionAction: action });
+      // aperta, e il pulsante che la segnava non deve restare acceso. Il widget
+      // di provenienza c'e' solo se l'ingresso viene da un widget.
+      updateTabState(tab.key, { label, menuId: undefined, functionAction: action, daWidget });
       handleAction(action, { ...params, newTask: '1' });
       return true;
     },
@@ -1871,8 +1894,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Home, come ingresso di primo livello: la scheda prende il titolo del widget e la
   // history riparte da zero. Il record lo cerca ViewByKey con la chiave della riga.
   const handleApriDettaglio = useCallback(
-    (titolo: string, viewName: string, chiave: string) =>
-      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave }),
+    (titolo: string, viewName: string, chiave: string, idWidget?: number) =>
+      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave },
+        idWidget !== undefined ? { idWidget, titolo } : undefined),
     [openFunctionByAction],
   );
 
@@ -1880,7 +1904,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // nella scheda della Home e come ingresso di primo livello (vedi NavigaCommand).
   const handleNaviga = useCallback(
     (titolo: string, idWidget: number) =>
-      openFunctionByAction(titolo, 'dashboard.Naviga', { idWidget: String(idWidget) }),
+      openFunctionByAction(titolo, 'dashboard.Naviga', { idWidget: String(idWidget) }, { idWidget, titolo }),
     [openFunctionByAction],
   );
 
@@ -1896,7 +1920,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     const ingresso = atteso.ingresso;
     switch (ingresso.tipo) {
       case 'menu': void handleMenuClick(ingresso.menuId, ingresso.label); break;
-      case 'funzione': openFunctionByAction(ingresso.label, ingresso.action, ingresso.params); break;
+      case 'funzione': openFunctionByAction(ingresso.label, ingresso.action, ingresso.params, ingresso.daWidget); break;
       case 'azione': void handleAction(ingresso.action); break;
       case 'cdms': openCdmsView(ingresso.viewName, ingresso.title, ingresso.filter); break;
     }
@@ -2914,6 +2938,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 onApriDettaglio={handleApriDettaglio}
                 onNaviga={handleNaviga}
                 puoAprire={schedaDiLavoroLibera}
+                mostraWidget={mostraWidget}
               />
               {loginInfo.copyright && copyrightFits && (
                 <div className="view-copyright">&copy; {loginInfo.copyright}</div>
@@ -2937,8 +2962,26 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                         chrome scale: the band's own padding carries most of the
                         separation, so the margin no longer has to be 8px on top of
                         it (SXADV-5742). */}
-                    {(parsedBreadcrumbs.length > 0 || currentTab.ui?.attachmentsInfo) && (
+                    {(parsedBreadcrumbs.length > 0 || currentTab.ui?.attachmentsInfo || currentTab.daWidget) && (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 8px', marginBottom: 'var(--app-chrome-gap-sm)' }}>
+                        {/* SXADV-5999.3: entrati da un widget, si torna a quel widget
+                            della Home da qualunque punto del percorso. Primo a sinistra,
+                            prima delle briciole, che sono il percorso DENTRO la scheda. */}
+                        {currentTab.daWidget && (
+                          <a
+                            className="breadcrumb-back-link torna-al-widget"
+                            title={`Torna al widget «${currentTab.daWidget.titolo}» della Home`}
+                            style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '0 1 auto', color: '#1677ff', cursor: 'pointer', fontWeight: 600, padding: 'var(--app-chrome-band-pad-y) 12px var(--app-chrome-band-pad-y) 0', borderRight: parsedBreadcrumbs.length > 0 ? '1px solid var(--app-border)' : undefined }}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => tornaAlWidget(currentTab.daWidget!.idWidget)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter' && e.key !== ' ') return;
+                              e.preventDefault();
+                              tornaAlWidget(currentTab.daWidget!.idWidget);
+                            }}
+                          >« Torna al widget «{currentTab.daWidget.titolo}»</a>
+                        )}
                         {parsedBreadcrumbs.length > 0 ? (
                           <Breadcrumb
                             style={{ padding: 'var(--app-chrome-band-pad-y) 0', maxWidth: '100%', flex: 1, minWidth: 0 }}
