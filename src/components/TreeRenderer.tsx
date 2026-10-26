@@ -2,8 +2,10 @@ import React, { useState, useCallback, useMemo, useRef, useEffect, useContext } 
 import { Tree, Input, Typography } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { UITree, TreeNode } from '../types/ui';
-import { SidContext, PaneToolbarContext, PendingAddContext, useIsTabLabelEcho } from './ViewRenderer';
+import { SidContext, PaneToolbarContext, PendingAddContext, FormValuesContext, useIsTabLabelEcho } from './ViewRenderer';
+import { applyPendingValues, type PendingCaption } from './pendingEdits';
 import { paneReentersEdit } from './treeDetailRouting';
+import { recallTree, rememberTree } from './treeMemory';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
 import type { FieldCaption, FieldChange } from '../controls/types';
@@ -76,6 +78,21 @@ function collectNonLeafKeys(nodes: TreeNode[]): string[] {
   return keys;
 }
 
+/** Il digitato non salvato rimesso nei campi del pannello. La resa del
+ *  dettaglio porta alla radice il `listEdit` della sua lista incorporata, e
+ *  applyPendingValues la prenderebbe per una lista e la lascerebbe com'e':
+ *  il pannello e' un dettaglio, i segni si tolgono per il giro e si rimettono. */
+function withPendingValues(
+  pane: UITree,
+  formValues: Record<string, string | string[]>,
+  captions: Record<string, PendingCaption>,
+): UITree {
+  const { listEdit, layoutType, pageType } = pane;
+  const patched = applyPendingValues({ ...pane, listEdit: undefined, layoutType: undefined, pageType: undefined }, formValues, captions);
+  if (patched.rows === pane.rows) return pane;
+  return { ...pane, rows: patched.rows, listEdit, layoutType, pageType };
+}
+
 const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) => {
   // Inside a tab, a title that repeats the tab label is dropped (see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.title);
@@ -85,15 +102,30 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   // and answers NoSession). Hand the pane's own toolbar up to the tab.
   const setPaneToolbar = useContext(PaneToolbarContext);
   const consumePendingAdd = useContext(PendingAddContext);
-  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
-  const [searchText, setSearchText] = useState('');
-  const [loadedKeys, setLoadedKeys] = useState<string[]>([]);
-  const [treeData, setTreeData] = useState<TreeNode[]>(ui.treeNodes || []);
-  const [filteredData, setFilteredData] = useState<TreeNode[] | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Tornando su questa scheda l'albero riprende dove era (SXADV-6146.1).
+  // Il pannello ritrovato e' la resa del server: il digitato non ancora salvato
+  // sta nei valori della scheda e va rimesso nei campi, altrimenti si vedrebbe
+  // il valore vecchio e Salva manderebbe quello nuovo (come in SXADV-5989).
+  const getFormValues = useContext(FormValuesContext);
+  const [restored] = useState(() => {
+    const snap = recallTree(ui);
+    if (!snap?.detailUi) return snap;
+    return { ...snap, detailUi: withPendingValues(snap.detailUi, getFormValues(), snap.detailCaptions) };
+  });
+  const [expandedKeys, setExpandedKeys] = useState<string[]>(restored?.expandedKeys ?? []);
+  const [searchText, setSearchText] = useState(restored?.searchText ?? '');
+  const [loadedKeys, setLoadedKeys] = useState<string[]>(restored?.loadedKeys ?? []);
+  const [treeData, setTreeData] = useState<TreeNode[]>(restored?.treeData ?? ui.treeNodes ?? []);
+  const [filteredData, setFilteredData] = useState<TreeNode[] | null>(restored?.filteredData ?? null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(restored?.selectedKey ?? null);
   // Detail pane state
-  const [detailUi, setDetailUi] = useState<UITree | null>(null);
-  const detailFormValues = useRef<Record<string, string>>({});
+  const [detailUi, setDetailUi] = useState<UITree | null>(restored?.detailUi ?? null);
+  const detailFormValues = useRef<Record<string, string>>(restored?.detailFormValues ?? {});
+  const detailCaptions = useRef<Record<string, PendingCaption>>(restored?.detailCaptions ?? {});
+  // Richieste del pannello in volo: la loro risposta arriva a componente
+  // smontato e si perde, quindi lo stato da ricordare non sarebbe quello del
+  // server (nodo nuovo selezionato, pannello del nodo di prima).
+  const paneInFlight = useRef(0);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A node's label is a ViewInfo expression on the record (`#descrizione#`,
@@ -152,6 +184,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       // lo rifarebbe su view state nuovi, perdendo la riga nuova (SXADV-6052).
       if (selectedKey && ui.navigateView && reentersEdit) {
         (async () => {
+          paneInFlight.current++;
           try {
             const resp = await api.postAction('LocateAndNavigate', {
               navpath: selectedKey,
@@ -162,7 +195,8 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
             }, undefined, sid);
             if (resp.ui) {
               setDetailUi(resp.ui);
-              detailFormValues.current = extractDetailFormValues(resp.ui);
+        detailCaptions.current = {};
+        detailFormValues.current = extractDetailFormValues(resp.ui);
               // Anche qui il trail va rimesso: questo giro e' il rientro in
               // edit dopo un salvataggio, e senza di esso la via di ritorno
               // all'albero sparirebbe appena si salva (SXADV-5846).
@@ -172,15 +206,36 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
           } catch {
             // Fallback: show the read-only response
             setDetailUi(detailResponse);
-            detailFormValues.current = extractDetailFormValues(detailResponse);
+        detailCaptions.current = {};
+        detailFormValues.current = extractDetailFormValues(detailResponse);
+          } finally {
+            paneInFlight.current--;
           }
         })();
       } else {
         setDetailUi(detailResponse);
+        detailCaptions.current = {};
         detailFormValues.current = extractDetailFormValues(detailResponse);
       }
     }
   }, [detailResponse, reentersEdit, extractDetailFormValues, selectedKey, ui.navigateView, ui.viewName, sid, setPaneToolbar, applyNodeLabel]);
+
+  // Lo stato si ricorda per la resa che la scheda tiene: e' quella che
+  // ritrovera' tornando qui.
+  useEffect(() => {
+    rememberTree(ui, {
+      expandedKeys, loadedKeys, treeData, filteredData, searchText, selectedKey, detailUi,
+      detailFormValues: detailFormValues.current,
+      detailCaptions: detailCaptions.current,
+    });
+  }, [ui, expandedKeys, loadedKeys, treeData, filteredData, searchText, selectedKey, detailUi]);
+  // Uscita con una richiesta del pannello ancora in volo: si ricorda l'albero
+  // senza pannello ne' selezione, che e' quello che si sa per certo.
+  useEffect(() => () => {
+    if (paneInFlight.current === 0) return;
+    const snap = recallTree(ui);
+    if (snap) rememberTree(ui, { ...snap, selectedKey: null, detailUi: null, detailFormValues: {}, detailCaptions: {} });
+  }, [ui]);
 
   const navigateView = ui.navigateView;
   const treeViewName = ui.viewName;
@@ -230,6 +285,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
     // da Shell, quindi il flag si spegne qui (SXADV-5918).
     consumePendingAdd?.();
     document.body.style.cursor = 'wait';
+    paneInFlight.current++;
     try {
       const resp = await api.postAction('LocateAndNavigate', {
         navpath: key,
@@ -238,6 +294,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
       }, undefined, sid);
       if (resp.ui) {
         setDetailUi(resp.ui);
+        detailCaptions.current = {};
         detailFormValues.current = extractDetailFormValues(resp.ui);
         // Il trail arriva DENTRO la resa del pannello, non alla radice della
         // risposta. Buttarlo via era il motivo per cui da qui non si tornava
@@ -247,6 +304,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
         applyNodeLabel(resp);
       }
     } finally {
+      paneInFlight.current--;
       document.body.style.cursor = '';
     }
   }, [navigateView, treeViewName, sid, extractDetailFormValues, setPaneToolbar, applyNodeLabel, consumePendingAdd]);
@@ -274,6 +332,7 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   const handleDetailChange = useCallback((name: string, value: unknown, caption?: FieldCaption) => {
     const strValue = value == null ? '' : String(value);
     detailFormValues.current[name] = strValue;
+    if (caption !== undefined) detailCaptions.current[name] = caption;
     onChange(name, value, caption);
   }, [onChange]);
 
