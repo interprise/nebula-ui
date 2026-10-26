@@ -15,12 +15,13 @@ import { useUiMode } from '../hooks/uiMode';
 import { gridFontSizePx } from '../hooks/density';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { buildColumnFieldName, resolveListBasePath, resolveReloadNavpath } from './listEditPosting';
-import { oncePerEvent, rowClickOutcome, rowActivatableClass, ROW_ACTIVATABLE_CLASS } from './rowActivation';
+import { oncePerEvent, rowClickOutcome, rowActivatableClass, ROW_ACTIVATABLE_CLASS, addOpensDetail, detailOpensPage } from './rowActivation';
 import { decidePageSize, newAdaptiveMemory, type AdaptiveMemory } from './adaptivePageSize';
 import { isRestoringScroll } from './tabScrollMemory';
 import {
-  rememberRow, recallRow, findRememberedRow, pageOfRememberedRow, listOwnerOf,
+  rememberRow, recallRow, findRememberedRow, pageOfRememberedRow, listReturnKey,
   armReturn, armedReturn, disarmReturn, lastRecordPath, ROW_RETURN_ATTR,
+  newListMount, registerListMount,
 } from './rowSelectionMemory';
 import { focusNewPage } from '../services/focusRestore';
 import { listColumnWidth } from './listColumnWidth';
@@ -508,6 +509,7 @@ const PAGE_WAIT_MS = 5000;
 const SELECTOR_NAV_WIDTH = 30;
 type SelectorNavParams = ICellRendererParams & {
   onActionRef?: { current: (action: string, params?: Record<string, string>) => void };
+  openDetailRef?: { current: ((command: string, path: string) => void) | null };
 };
 const SelectorNavRenderer = (params: SelectorNavParams) => {
   const data = params.data as Record<string, unknown> | undefined;
@@ -519,7 +521,12 @@ const SelectorNavRenderer = (params: SelectorNavParams) => {
     <span
       className="selector-nav"
       title="Apri dettaglio"
-      onClick={(e) => { e.stopPropagation(); params.onActionRef?.current(command, { navpath: path }); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        const open = params.openDetailRef?.current;
+        if (open) open(command, path);
+        else params.onActionRef?.current(command, { navpath: path });
+      }}
     >
       <RightOutlined />
     </span>
@@ -921,8 +928,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      `ToolViewState.getPath()` è `parent + id + '.' + posizione`, quindi il path
      cambia navigando i record del padre — lo zoom si sarebbe spento passando al
      record successivo, e peggio: la testata sarebbe rimasta collassata mentre il
-     pulsante tornava "ingrandisci". Stesso motivo per cui `selKey` sopra usa
-     `viewName ?? path`. */
+     pulsante tornava "ingrandisci". Stesso motivo per cui la chiave di
+     listReturnKey usa `viewName ?? path`. */
   const gridId = ui.viewName ?? ui.path ?? null;
   /* Dentro un tab il comando di ingrandimento ce l'ha la barra dei tab, che
      ingrandisce l'area tenendo la barra: due pulsanti quasi uguali a poca
@@ -974,22 +981,22 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   });
   const isMultiEdit = !!ui.multiEdit;
   const isListEdit = !!ui.listEdit;
-  // Stable key for persisting the selected row across the remount that occurs
-  // when navigating into a detail and back (item 5455.1C).
-  const selKey = `${sid ?? ''}|${ui.viewName ?? ui.path ?? ''}`;
-  // La lista proprietaria di un ritorno armato: per una lista incorporata il
-  // padre del suo percorso, che resta lo stesso quando la lista rinasce col
-  // viewstate nuovo. Il dettaglio di un rigo puo' contenere una griglia della
-  // stessa vista (i Componenti del rigo, stessa selKey): senza il padre quella
-  // consumava il ritorno e la lista del tab non lo vedeva piu' (5957.2B).
-  const returnOwner = embedded ? listOwnerOf(ui.path) : null;
-  // Riga ricordata e ritorno armato stanno sotto vista + padre: aprendo un
-  // rigo dei Componenti il dettaglio non sovrascrive la riga ricordata da
-  // Righe fattura, a cui si torna dopo (5957.2B).
-  const memKey = returnOwner ? `${selKey}@${returnOwner}` : selKey;
+  // Riga ricordata e ritorno armato stanno sotto vista + padre (5455.1C,
+  // 5957.2B): vedi listReturnKey.
+  const { memKey, owner: returnOwner } = listReturnKey(sid, ui, !!embedded);
   // Ritorno armato dall'uscita verso un dettaglio: finche' c'e', il cursore lo
   // mette la lista sulla riga e non focusNewPage in testata (SXADV-5927).
-  const returnArmed = !isListEdit && !!armedReturn(memKey, returnOwner);
+  // Lo arma solo chi esce davvero verso una pagina di dettaglio, listEdit
+  // comprese (addOpensDetail, detailOpensPage), e vale solo per un montaggio
+  // nuovo della lista: se la risposta non ha cambiato pagina la lista e' la
+  // stessa che l'ha armato, e non lo vede (rowReturn.registerListMount).
+  // Identita' nuova anche quando la chiave cambia: React puo' riusare l'istanza
+  // per una lista di un'altra pagina nella stessa posizione (seconda revisione).
+  const [mountOf, setMountOf] = useState(() => ({ key: memKey, mount: newListMount() }));
+  if (mountOf.key !== memKey) setMountOf({ key: memKey, mount: newListMount() });
+  const mount = mountOf.mount;
+  useEffect(() => registerListMount(memKey, mount), [memKey, mount]);
+  const returnArmed = !!armedReturn(memKey, returnOwner, mount);
 
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
@@ -1034,6 +1041,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // selector column doesn't force the columnDefs memo to rebuild each render.
   const onActionRef = useRef(onAction);
   onActionRef.current = onAction;
+  // Il «>» della riga apre la pagina di dettaglio come il clic su una lista che
+  // naviga, e al ritorno deve rimettere il fuoco su quella riga (SXADV-5927).
+  // Assegnata dopo activateRow, da cui prende ricordo, evidenza e ritorno.
+  const openDetailRef = useRef<((command: string, path: string) => void) | null>(null);
 
   const editableColumns = useMemo(() => {
     const map = new Map<number, ListColumn['control']>();
@@ -1863,7 +1874,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         cellClass: 'selector-nav-cell',
         headerClass: 'selector-nav-header',
         cellRenderer: SelectorNavRenderer,
-        cellRendererParams: { onActionRef },
+        cellRendererParams: { onActionRef, openDetailRef },
       });
     }
 
@@ -1918,6 +1929,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         // make this a property of the record, so the panel's Elimina follows
         // the selected row (see CORE LayoutManager.startTableRowJSON).
         canDelete: r._prop_canDelete as boolean | undefined,
+        // Il «>» del rigo, per il «Dettaglio» del pannello (SXADV-5927).
+        detailCommand: r._selectorCommand as string | undefined,
       }));
     onRecordPaths(records);
   }, [rowData, isListEdit, onRecordPaths]);
@@ -2457,11 +2470,26 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (outcome === 'panel') {
       onSelectRecord?.(path);
     } else if (outcome === 'navigate' && command) {
-      // Al ritorno il fuoco va su questa riga (SXADV-5927).
-      if (!isListEdit) armReturn(memKey, 'row', returnOwner);
+      // Al ritorno il fuoco va su questa riga (SXADV-5927), anche su una
+      // listEdit senza pannello, se il clic apre davvero la pagina di dettaglio.
+      if (detailOpensPage({ isListEdit, isMultiEdit, inlineEdit: ui.inlineEdit })) {
+        armReturn(memKey, 'row', returnOwner);
+      }
       onAction(command, { navpath: path });
     }
-  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, onAction, markSelected, memKey, returnOwner]);
+  }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, ui.inlineEdit, selectorInfo, onSelectRecord, onAction, markSelected, memKey, returnOwner]);
+  openDetailRef.current = (command: string, path: string) => {
+    // Sul micro-detail il «>» non cambia pagina (NavigateDetailCommand): li'
+    // niente ritorno, ne' riga ricordata da riallineare.
+    if (detailOpensPage({ isListEdit, isMultiEdit, inlineEdit: ui.inlineEdit })) {
+      rememberRow(memKey, path);
+      alignedPathRef.current = null;
+      pagedForPathRef.current = null;
+      markSelected(path);
+      armReturn(memKey, 'row', returnOwner);
+    }
+    onAction(command, { navpath: path });
+  };
 
   // Lo stesso clic su una banda di continuazione arriva sia qui sia a
   // handleGridClick: si attiva una volta sola (SXADV-5920, vedi rowActivation).
@@ -2888,8 +2916,13 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // riallinea per una finestra di tempo, e si smette appena l'utente mette
   // mano alla griglia: da li' lo scorrimento e' suo.
   useEffect(() => {
-    if (isListEdit) return; // edit mode handled by the effect above
-    const armed = armedReturn(memKey, returnOwner);
+    // Un ritorno armato da questo stesso montaggio non vale: la pagina non e'
+    // cambiata. Se la risposta resta sulla pagina lo toglie Shell
+    // (rowReturn.settleReturns).
+    const armed = armedReturn(memKey, returnOwner, mount);
+    // Una listEdit la gestisce l'effetto sopra, salvo il ritorno da una pagina
+    // di dettaglio aperta dal suo «Nuovo» o dal clic su un rigo (SXADV-5927).
+    if (isListEdit && !armed) return;
     const stored = recallRow(memKey);
     // Il fuoco sulla riga si da' al ritorno armato dall'uscita verso il
     // dettaglio (SXADV-5927); un ridisegno qualsiasi della lista evidenzia e
@@ -3028,7 +3061,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       cancelAnimationFrame(raf);
       USER_SCROLL_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [rowData, memKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage, ui.path, returnOwner]);
+  }, [rowData, memKey, isListEdit, embedded, markSelected, getGridViewport, newRowOnThisPage, ui.path, returnOwner, mount]);
 
   // The server emits gridActions for embedded lists only. `ui.footer` (the
   // legacy below-the-grid Add) is deliberately no longer rendered — its command
@@ -3127,11 +3160,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
                 size="small"
                 icon={<PlusOutlined />}
                 onClick={() => {
-                  // Il Nuovo di una lista non listEdit apre il dettaglio del
-                  // rigo nuovo: al ritorno il fuoco va sull'ultima riga, quella
-                  // appena aggiunta (SXADV-5927). Le listEdit aggiungono nel
-                  // pannello e restano sulla pagina.
-                  if (!isListEdit) armReturn(memKey, 'new', returnOwner);
+                  // Il Nuovo che apre il dettaglio del rigo nuovo: al ritorno
+                  // il fuoco va sull'ultima riga, quella appena aggiunta
+                  // (SXADV-5927). Le listEdit in linea aggiungono nel pannello e
+                  // restano sulla pagina; quelle con inlineEdit="false" e una
+                  // detailViewName aprono la pagina come le altre.
+                  if (addOpensDetail({ isListEdit, inlineEdit: ui.inlineEdit, hasDetailView: ui.hasDetailView })) {
+                    armReturn(memKey, 'new', returnOwner);
+                  }
                   onAction(gridActions.addCommand!, gridPath ? { navpath: gridPath } : undefined);
                 }}
               >

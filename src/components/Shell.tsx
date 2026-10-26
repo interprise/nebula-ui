@@ -85,6 +85,7 @@ import { extractFormValues, applyPendingValues, type PendingCaption } from './pe
 import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
 import { effectiveMenuFilter, filterMenuTree } from './menuFilter';
 import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
+import { notePageChange, settleReturns } from '../services/rowReturn';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
@@ -786,7 +787,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // waiting on this answer never happens — un-arm it (SXADV-5659).
       // Stessa cosa per la riga da togliere: la cancellazione rifiutata
       // non avviene, e la riga deve restare in griglia.
-      onCancel: () => { pendingBreadcrumbsRef.current = null; pendingRowRemovalRef.current = null; undoMenuChange(tabKey); },
+      onCancel: () => {
+        pendingBreadcrumbsRef.current = null;
+        pendingRowRemovalRef.current = null;
+        undoMenuChange(tabKey);
+        // La domanda rifiutata ferma anche l'uscita verso il dettaglio: il
+        // ritorno armato da chi l'ha chiesta non arrivera' (SXADV-5927).
+        const sid = tabsRef.current.find((t) => t.key === tabKey)?.sid;
+        if (sid) settleReturns(sid);
+      },
       onAnswer: (prompt, answer) => {
         if (!prompt.mnemonic) return;
         // Answer token per CORE's message grammar (Session.addConfirmation):
@@ -922,6 +931,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // menu che l'ha lanciato (un Annulla molto dopo lo farebbe tornare).
         discardPendingFocus();
         pendingMenuUndoRef.current.delete(tabKey);
+        // Ne' un ritorno sul rigo armato su questa pagina (SXADV-5927).
+        settleReturns(sid);
         const add = asyncAddWaitRef.current;
         if (add && add.tabKey === tabKey) {
           asyncAddWaitRef.current = null;
@@ -990,6 +1001,22 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (!errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) {
           pendingBreadcrumbsRef.current = null;
           if (!errs.some((e) => e.type === 'ERROR')) backTrail = pendingBack.html;
+        }
+      }
+      // Ritorni sul rigo armati uscendo verso un dettaglio (SXADV-5927): la
+      // pagina e' cambiata se e' cambiata la briciola (ogni navigazione la
+      // allunga o la accorcia, un ricaricamento la lascia o non la manda).
+      // Una risposta finale che resta sulla pagina - Nuovo o Salva+ respinto,
+      // un ">" che non naviga - chiude i ritorni armati su questa pagina; una
+      // domanda non e' ancora un esito, e con un'altra richiesta in volo la
+      // risposta puo' non essere quella di chi ha armato.
+      {
+        const asks = (resp.errors ?? []).some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');
+        const sid = tabs.find((t) => t.key === tabKey)?.sid;
+        if (sid && !asks) {
+          const trail = backTrail ?? resp.breadcrumbs ?? resp.ui?.breadcrumbs;
+          if (trail !== undefined && trail !== existingUi?.breadcrumbs) notePageChange(sid);
+          else if (!api.isSidBusy(sid)) settleReturns(sid);
         }
       }
       // Clic di menu in sospeso (pendingMenuUndoRef): una domanda non e' ancora
@@ -1368,6 +1395,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             pendingBreadcrumbsRef.current = null;
             undoMenuChange(tabKey);
             discardPendingFocus();
+            // La risposta alla domanda non e' arrivata: il ritorno sul rigo
+            // armato da chi l'ha chiesta non arrivera' (SXADV-5927).
+            settleReturns(sid);
             feedback.failure(e);
           })
           .finally(() => { document.body.style.cursor = ''; });
@@ -1742,6 +1772,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // ripristino del fuoco armato dal campo che l'ha fatta partire.
         pendingBreadcrumbsRef.current = null;
         discardPendingFocus();
+        // Lo stesso per i ritorni sul rigo armati su questa pagina (SXADV-5927).
+        settleReturns(tab.sid);
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';

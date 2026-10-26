@@ -1,7 +1,7 @@
 import React from 'react';
 import { serverHtml, HTML_POLICY } from '../services/serverHtml';
 import { App, Button } from 'antd';
-import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, PlusCircleOutlined, PlusOutlined, UndoOutlined } from '@ant-design/icons';
+import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, PlusCircleOutlined, PlusOutlined, UndoOutlined, RightOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
@@ -84,6 +84,7 @@ const ROW_ACTION_ICONS: Record<RowToolbarAction['key'], React.ReactNode> = {
   saveNew: <PlusCircleOutlined />,
   cancel: <UndoOutlined />,
   new: <PlusOutlined />,
+  detail: <RightOutlined />,
 };
 
 // Skip the "Sel." selector column (and the DUMMY placeholder that stands in for

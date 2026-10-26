@@ -22,7 +22,9 @@ export function forgetAllRows(): void {
 
 // L'uscita armata verso un dettaglio sta nei servizi (la disarma anche l'API
 // a un ingresso di primo livello); qui si riesporta accanto alla riga ricordata.
-export { armReturn, armedReturn, disarmReturn, ROW_RETURN_ATTR } from '../services/rowReturn';
+export {
+  armReturn, armedReturn, disarmReturn, armedBySameMount, newListMount, registerListMount, ROW_RETURN_ATTR,
+} from '../services/rowReturn';
 export type { ReturnMode } from '../services/rowReturn';
 
 /** La riga di dati piu' in basso: e' quella appena aggiunta col Nuovo, che CORE
@@ -108,4 +110,23 @@ export function listOwnerOf(path: string | null | undefined): string | null {
   if (!path) return null;
   const cut = path.lastIndexOf(',');
   return cut < 0 ? null : path.slice(0, cut + 1);
+}
+
+/** Sotto quale chiave una lista ricorda la riga e il ritorno armato.
+ *
+ *  `selKey` (sid + vista) persiste la riga attraverso il rimontaggio quando si
+ *  entra in un dettaglio e si torna (5455.1C). Per una lista incorporata la
+ *  proprietaria del ritorno e' il padre del suo percorso, che resta lo stesso
+ *  quando la lista rinasce col viewstate nuovo: il dettaglio di un rigo puo'
+ *  contenere una griglia della stessa vista (i Componenti del rigo, stessa
+ *  selKey), che senza il padre consumava il ritorno e sovrascriveva la riga
+ *  ricordata di Righe fattura (5957.2B). */
+export function listReturnKey(
+  sid: string | null | undefined,
+  list: { viewName?: string; path?: string },
+  embedded: boolean,
+): { memKey: string; owner: string | null } {
+  const selKey = `${sid ?? ''}|${list.viewName ?? list.path ?? ''}`;
+  const owner = embedded ? listOwnerOf(list.path) : null;
+  return { memKey: owner ? `${selKey}@${owner}` : selKey, owner };
 }

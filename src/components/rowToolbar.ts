@@ -23,10 +23,22 @@ export interface RowToolbarInput {
   listPath?: string;
   /** Percorso della riga nel pannello: navpath di Salva e Salva+. */
   rowPath: string;
+  /** Il «Nuovo» della lista apre la pagina di dettaglio (listEdit con
+   *  inlineEdit="false" e una detailViewName, `addOpensDetail`): i righi nuovi
+   *  nascono li', e nel pannello, che serve solo a ritoccare alcuni campi dei
+   *  righi esistenti, Nuovo e Salva+ restano spenti (Luca, 26/10/2026,
+   *  SXADV-5927). */
+  addInDetail?: boolean;
+  /** Il comando che apre il dettaglio esteso del rigo (il suo «>»), quando la
+   *  lista ne ha uno che cambia pagina (`detailOpensPage`): il pannello porta
+   *  solo alcuni campi, e da li' si passa al dettaglio completo senza cercare la
+   *  freccia in griglia, anche per un rigo appena creato col Nuovo, come col
+   *  selettore del legacy (Luca, 26/10/2026, SXADV-5927). */
+  detailCommand?: string;
 }
 
 export interface RowToolbarAction {
-  key: 'save' | 'saveNew' | 'cancel' | 'new';
+  key: 'save' | 'saveNew' | 'cancel' | 'new' | 'detail';
   label: string;
   icon: string;
   action: string;
@@ -54,7 +66,10 @@ function pageItem(toolbar: readonly unknown[] | undefined, match: (id: string) =
 }
 
 export function rowToolbarActions(input: RowToolbarInput): RowToolbarAction[] {
-  const { pageToolbar, addCommand, embedded, listPath, rowPath } = input;
+  const { pageToolbar, addCommand, embedded, listPath, rowPath, addInDetail } = input;
+  // Dove il rigo nuovo nasce nella pagina di dettaglio, nel pannello Nuovo e
+  // Salva+ ci sono ma spenti.
+  const addOff = !!addInDetail;
 
   let add: { action: string; params: Record<string, string> } | null = null;
   if (addCommand) {
@@ -73,7 +88,7 @@ export function rowToolbarActions(input: RowToolbarInput): RowToolbarAction[] {
     const disabled = !!saveItem.disabled;
     out.push({ key: 'save', label: 'Salva', icon: 'database_save.png', action: saveCommand, params: { navpath: rowPath }, disabled });
     if (add) {
-      out.push({ key: 'saveNew', label: 'Salva+', icon: 'database_add.png', action: 'SaveAndNew', params: { navpath: rowPath }, disabled });
+      out.push({ key: 'saveNew', label: 'Salva+', icon: 'database_add.png', action: 'SaveAndNew', params: { navpath: rowPath }, disabled: disabled || addOff });
     }
     // Sempre acceso: l'Annulla in alto e' spento quando la Session non ha
     // modifiche, ma la riga puo' avere valori digitati e non ancora spediti, e
@@ -82,7 +97,10 @@ export function rowToolbarActions(input: RowToolbarInput): RowToolbarAction[] {
       out.push({ key: 'cancel', label: 'Annulla', icon: 'undo', action: 'CancelRow', params: { navpath: rowPath }, disabled: false });
     }
   }
-  if (add) out.push({ key: 'new', label: 'Nuovo', icon: 'add.png', action: add.action, params: add.params, disabled: false });
+  if (add) out.push({ key: 'new', label: 'Nuovo', icon: 'add.png', action: add.action, params: add.params, disabled: addOff });
+  if (input.detailCommand) {
+    out.push({ key: 'detail', label: 'Dettaglio', icon: 'detail', action: input.detailCommand, params: { navpath: rowPath }, disabled: false });
+  }
   return out;
 }
 

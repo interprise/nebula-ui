@@ -43,6 +43,17 @@ export function subscribeInFlight(fn: InFlightListener): () => void {
   return () => { inFlightListeners.delete(fn); };
 }
 
+// Le richieste in volo per sessione (sid): chi deve sapere se la risposta che
+// sta trattando e' l'ultima della SUA scheda non guarda le altre schede, ne' i
+// job seguiti, ne' il Ping (SXADV-5927: pulizia dei ritorni sul rigo).
+const inFlightBySid = new Map<string, number>();
+
+/** Una richiesta della sessione `sid` e' ancora in volo. Il contatore scende
+ *  prima che il chiamante applichi la risposta. */
+export function isSidBusy(sid: string): boolean {
+  return (inFlightBySid.get(sid) ?? 0) > 0;
+}
+
 function setInFlight(delta: number): void {
   inFlightCount = Math.max(0, inFlightCount + delta);
   for (const l of inFlightListeners) l(inFlightCount);
@@ -117,6 +128,8 @@ async function post(
 ): Promise<ServerResponse> {
   const body = buildFormData(params, formValues);
   setInFlight(1);
+  const sid = params.sid;
+  if (sid) inFlightBySid.set(sid, (inFlightBySid.get(sid) ?? 0) + 1);
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -130,6 +143,11 @@ async function post(
     return await parseResponse(resp);
   } finally {
     setInFlight(-1);
+    if (sid) {
+      const n = (inFlightBySid.get(sid) ?? 1) - 1;
+      if (n > 0) inFlightBySid.set(sid, n);
+      else inFlightBySid.delete(sid);
+    }
   }
 }
 

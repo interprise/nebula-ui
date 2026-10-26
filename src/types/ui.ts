@@ -160,6 +160,9 @@ export interface ListRecord {
    *  gate. Undefined on a server that predates it — fall back to the
    *  grid-wide `columns[].selector.canDelete`. */
   canDelete?: boolean;
+  /** Il comando del selettore del rigo («>»): apre il dettaglio esteso. Lo usa
+   *  il bottone «Dettaglio» del pannello (SXADV-5927). */
+  detailCommand?: string;
 }
 
 export interface ListColumn {

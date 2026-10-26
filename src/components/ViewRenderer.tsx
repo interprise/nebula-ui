@@ -22,6 +22,8 @@ import { DataVersionContext, useNestedDataVersion } from '../controls/dataVersio
 import ListRenderer from './ListRenderer';
 import EditPanel from './EditPanel';
 import { rowToolbarActions, pathAfterRemoval } from './rowToolbar';
+import { addOpensDetail, detailOpensPage } from './rowActivation';
+import { armReturn, listReturnKey, rememberRow } from './rowSelectionMemory';
 import { viewstateIdOf } from './listEditPosting';
 import { bareFieldName, echoText, type RowEcho } from './rowEcho';
 import type { FieldCaption } from '../controls/types';
@@ -1248,6 +1250,16 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // Salva / Salva+ / Nuovo del pannello: la toolbar della pagina sulla riga
   // selezionata (SXADV-6010).
   const pageToolbar = React.useContext(PageToolbarContext);
+  // «Dettaglio»: il «>» del rigo in gestione, dove apre davvero una pagina
+  // (SXADV-5927). Su un micro-detail in linea non multiEdit il pannello e' gia'
+  // il dettaglio, e il «>» non cambia pagina.
+  const selectedDetailCommand = React.useMemo(
+    () => (selectedPath && ui.hasDetailView
+      && detailOpensPage({ isListEdit, isMultiEdit: !!ui.multiEdit, inlineEdit: ui.inlineEdit })
+      ? records.find((r) => r.path === selectedPath)?.detailCommand
+      : undefined),
+    [records, selectedPath, ui.hasDetailView, isListEdit, ui.multiEdit, ui.inlineEdit],
+  );
   const rowActions = React.useMemo(
     () => (selectedPath
       ? rowToolbarActions({
@@ -1256,10 +1268,25 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         embedded: !!ui.gridActions,
         listPath: ui.gridActions?.path || ui.path,
         rowPath: selectedPath,
+        addInDetail: addOpensDetail({ isListEdit, inlineEdit: ui.inlineEdit, hasDetailView: ui.hasDetailView }),
+        detailCommand: selectedDetailCommand,
       })
       : []),
-    [pageToolbar, ui.gridActions, ui.path, selectedPath],
+    [pageToolbar, ui.gridActions, ui.path, isListEdit, ui.inlineEdit, ui.hasDetailView, selectedPath, selectedDetailCommand],
   );
+  // Il «Dettaglio» del pannello esce verso la pagina come il «>» in griglia: al
+  // ritorno il fuoco va su quel rigo, sotto la stessa chiave della lista
+  // (listReturnKey), riconosciuto da azione e navpath del bottone.
+  const sid = React.useContext(SidContext);
+  const onPanelAction = React.useCallback((action: string, params?: Record<string, string>) => {
+    const detail = rowActions.find((a) => a.key === 'detail');
+    if (detail && detail.action === action && detail.params.navpath === params?.navpath) {
+      const { memKey, owner } = listReturnKey(sid, ui, !!props.embedded);
+      rememberRow(memKey, detail.params.navpath);
+      armReturn(memKey, 'row', owner);
+    }
+    onAction(action, params);
+  }, [rowActions, sid, ui, props.embedded, onAction]);
 
   // Riga tolta dal pannello (Cancella, o Annulla di una riga nuova): il
   // pannello resta aperto e, quando arrivano le righe nuove, passa a quella
@@ -1430,7 +1457,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           rowPath={selectedPath ?? undefined}
           canDelete={selectedCanDelete}
           onChange={onPanelChange}
-          onAction={onAction}
+          onAction={onPanelAction}
           onClose={() => { flushSelected(selectedPath); setHidden(true); if (selectedPath) setEditRow?.(null, selectedPath); setFocusRequest(0); }}
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}

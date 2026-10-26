@@ -52,6 +52,42 @@ export function rowClickOutcome(o: {
   return o.command ? 'navigate' : 'none';
 }
 
+/** Il «Nuovo» della lista apre una pagina di dettaglio a se'?
+ *
+ *  Specchio di CORE AddCommand (`!isInlineEdited()`), come il legacy. Le liste
+ *  non listEdit si', sempre. Una listEdit in linea (anche multiEdit) aggiunge il
+ *  rigo nella lista, cioe' nel micro-detail; il dettaglio esteso si apre dal
+ *  selettore del rigo o dal bottone «Dettaglio» del pannello. Una listEdit con
+ *  `inlineEdit="false"` e una `detailViewName` apre la pagina di dettaglio: era
+ *  il caso delle Righe fattura passive su ALFA 2.021, dove tornando dalla pagina
+ *  il fuoco finiva sulla testata perche' il ritorno non era armato (SXADV-5927).
+ *  Verificato a schermo sul legacy il 26/10/2026.
+ */
+export function addOpensDetail(list: {
+  isListEdit: boolean;
+  inlineEdit?: boolean;
+  hasDetailView?: boolean;
+}): boolean {
+  if (!list.isListEdit) return true;
+  return list.inlineEdit === false && !!list.hasDetailView;
+}
+
+/** Il «>» (o il clic che naviga) di un rigo apre una pagina di dettaglio?
+ *
+ *  CORE NavigateDetailCommand cambia pagina solo se la lista non si modifica in
+ *  linea o e' multiEdit; su un micro-detail (listEdit in linea, non multiEdit)
+ *  sposta soltanto il percorso di post e la pagina resta. Solo dove la pagina
+ *  cambia si arma il ritorno sul rigo (SXADV-5927, revisione indipendente).
+ */
+export function detailOpensPage(list: {
+  isListEdit: boolean;
+  isMultiEdit: boolean;
+  inlineEdit?: boolean;
+}): boolean {
+  if (!list.isListEdit) return true;
+  return list.inlineEdit === false || list.isMultiEdit;
+}
+
 export const ROW_ACTIVATABLE_CLASS = 'row-activatable';
 
 /** Classe dei righi il cui clic fa qualcosa: il cursore a mano sta solo li'
