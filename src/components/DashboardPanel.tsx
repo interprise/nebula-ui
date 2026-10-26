@@ -310,7 +310,8 @@ const SID = 'D1';
  * «Aggiorna ora» non esegue piu' niente nella richiesta (SXADV-62 F2, 01/10): mette il
  * widget in testa alla coda del giro, che aggiorna un widget alla volta in tutto il
  * sistema (Luca: «non farei tanti aggiornamenti in parallelo»). Da qui si segue con
- * `dashboard.Stato`, che non legge le righe ed e' leggero.
+ * `dashboard.Stato`, che non legge le righe ed e' leggero. Con il giro spento il server
+ * aggiorna il widget da se' e risponde `in_corso` (SXADV-6152): si segue allo stesso modo.
  */
 /** Ogni quanto si guarda un widget in coda o in corso. */
 const PASSO_CODA_MS = 5000;
@@ -898,12 +899,15 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
     };
   }, [letta, controlla]);
   // Ogni 5 s solo mentre qualcosa e' in coda o in corso, e solo se il giro c'e': senza
-  // giro la coda non si muove, e chiedere ogni 5 s non la farebbe muovere (C5).
+  // giro la coda non si muove, e chiedere ogni 5 s non la farebbe muovere (C5). Un widget
+  // in corso invece arriva anche col giro spento: «Aggiorna ora» lo aggiorna da se'
+  // (SXADV-6152), e lo si segue come quelli del giro.
+  const inCorso = Object.values(attesa).some((a) => a.fase === 'corso');
   useEffect(() => {
-    if (!inAttesa || giroAttivo === false) return;
+    if (!inAttesa || (giroAttivo === false && !inCorso)) return;
     const t = window.setInterval(() => void controlla(), PASSO_CODA_MS);
     return () => window.clearInterval(t);
-  }, [inAttesa, giroAttivo, controlla]);
+  }, [inAttesa, inCorso, giroAttivo, controlla]);
 
   /**
    * Il «visto» da solo (contratto VISTO C1-C3): 5 s di fila di Home visibile, e quello
@@ -1306,7 +1310,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
                     type="text"
                     size="small"
                     // Con il giro spento la coda non si muove: una rotella che gira mentirebbe (C5).
-                    icon={<ReloadOutlined spin={!!attesa[w.idWidget] && giroAttivo !== false} />}
+                    // Un widget in corso si sta aggiornando davvero, giro o no (SXADV-6152).
+                    icon={<ReloadOutlined spin={!!attesa[w.idWidget]
+                      && (giroAttivo !== false || attesa[w.idWidget].fase === 'corso')} />}
                     aria-label="Aggiorna ora"
                     disabled={!!attesa[w.idWidget]}
                     onClick={() => void aggiorna(w)}
