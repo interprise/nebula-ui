@@ -29,6 +29,7 @@ import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
 import { solvePromptBand, type LeadingPrompt } from './promptBand';
 import { panelRowSwitch } from './addWait';
+import { staleSelection } from './editRowLifetime';
 import { sectionZoomTooltip } from './zoomLabels';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
@@ -734,7 +735,7 @@ export const PathContext = React.createContext<string | undefined>(undefined);
 // Provided once by Shell so a deeply-embedded listEdit panel can set the edit
 // navpath on selection (so Save/reload post navpath = that row) without
 // threading the callback through every RowRenderer/renderContainerControl.
-export const EditRowContext = React.createContext<((navpath: string | null) => void) | undefined>(undefined);
+export const EditRowContext = React.createContext<((navpath: string | null, releasing?: string) => void) | undefined>(undefined);
 
 // Provided once by Shell: manda al server, indicando la riga, le modifiche
 // digitate e non ancora spedite. Il pannello di riga lo chiama quando cambia
@@ -1178,7 +1179,16 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // Innocuo quando le modifiche sono gia' partite con un'altra richiesta -
   // Shell svuota l'insieme dei campi sporchi a ogni invio, e senza campi
   // sporchi il flush non manda niente.
-  React.useEffect(() => () => { flushRef.current?.(); }, []);
+  // Poi la riga in modifica se ne va con la lista: tornando (altra scheda,
+  // nodo dell'albero riselezionato) la lista ha viewstate nuovi, e il Nuovo
+  // portava al server la riga di prima: "Sessione non valida" (SXADV-6146).
+  const setEditRowRef = React.useRef(setEditRow);
+  React.useEffect(() => { setEditRowRef.current = setEditRow; }, [setEditRow]);
+  React.useEffect(() => () => {
+    flushRef.current?.();
+    const sel = selectedPathRef.current;
+    if (sel) setEditRowRef.current?.(null, sel);
+  }, []);
 
   const recordPaths = React.useMemo(() => records.map((r) => r.path), [records]);
   const editDataByPath = React.useMemo(() => {
@@ -1279,18 +1289,23 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // azzera anche il navpath di riga — altrimenti resterebbe puntato a un record
   // che non c'e' piu' e i post successivi (Salva, ricarica di un campo) lo
   // manderebbero al server. Rete di sicurezza: la cancellazione dal pannello
-  // chiude gia' il pannello da sola.
+  // chiude gia' il pannello da sola. Vale anche per la lista vuota: il Nuovo
+  // del documento dopo il Salva del precedente arriva sulla stessa vista con
+  // la lista senza righe, e la riga del documento di prima restava la riga in
+  // modifica: il Nuovo della lista finiva in "Sessione non valida" (SXADV-6144).
   React.useEffect(() => {
-    if (pendingRemovalRef.current) return;
     // Dalla ref, non dallo stato: l'effetto qui sopra puo' aver appena scelto
     // la riga dopo una rimozione, e lo stato di questo giro e' ancora quello
     // vecchio.
     const sel = selectedPathRef.current;
-    if (sel && records.length > 0 && !recordPaths.includes(sel)) {
+    if (staleSelection(sel, recordPaths, !!pendingRemovalRef.current)) {
+      selectedPathRef.current = null;
       setSelectedPath(null);
-      setEditRow?.(null);
+      // Rilascio, non azzeramento: con due liste nella pagina la riga in
+      // modifica puo' gia' essere quella dell'altra.
+      setEditRow?.(null, sel ?? undefined);
     }
-  }, [recordPaths, records.length, selectedPath, setEditRow]);
+  }, [recordPaths, selectedPath, setEditRow]);
 
   // Step to the previous/next record from the panel — pure client-side reselection.
   const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
@@ -1416,7 +1431,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
           canDelete={selectedCanDelete}
           onChange={onPanelChange}
           onAction={onAction}
-          onClose={() => { flushSelected(selectedPath); setHidden(true); setEditRow?.(null); setFocusRequest(0); }}
+          onClose={() => { flushSelected(selectedPath); setHidden(true); if (selectedPath) setEditRow?.(null, selectedPath); setFocusRequest(0); }}
           onNavigate={navigateRecord}
           hasPrev={currentIndex > 0}
           hasNext={currentIndex >= 0 && currentIndex < recordPaths.length - 1}

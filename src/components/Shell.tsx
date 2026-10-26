@@ -94,7 +94,8 @@ import { headerColor } from './headerColor';
 import { centroIngranaggio } from './contextChangeGear';
 import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
-import { withRowPostPath } from './rowPostPath';
+import { withRowNavpath, withRowPostPath } from './rowPostPath';
+import { releasedEditRow } from './editRowLifetime';
 import { markPanelField, scopePanelValues, type PanelFieldRows } from './panelFieldScope';
 
 const { Header, Content } = Layout;
@@ -1646,12 +1647,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (isNav) {
         editNavpathRef.current = null;
         pendingAddRef.current = false;
-      } else if (editNavpathRef.current && !serverParams.navpath) {
-        serverParams.navpath = editNavpathRef.current;
       }
       // La riga del pannello anche quando il navpath dice altro (il Nuovo manda
       // la lista): e' la riga a cui il server deve dare i valori digitati.
-      const sentParams = withRowPostPath(serverParams, editNavpathRef.current, tab.sid);
+      const sentParams = withRowPostPath(
+        withRowNavpath(serverParams, editNavpathRef.current, tab.sid),
+        editNavpathRef.current,
+        tab.sid,
+      );
       // Il record nuovo lo crea "Nuovo", ma anche "Salva +" (SaveAndNew, dalla
       // barra di navigazione record): senza armare anche quello il pannello
       // restava sul record appena salvato invece di spostarsi su quello nuovo
@@ -2002,8 +2005,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Track which row is being edited in listEdit mode (navpath sent with Save/Post)
   // Use a ref to avoid triggering re-renders on every row switch
   const editNavpathRef = useRef<string | null>(null);
+  // `releasing`: chi chiama e' una lista che se ne va e lascia la sua riga,
+  // che si azzera solo se nessun altro l'ha gia' sostituita (SXADV-6146).
   const handleEditRow = useCallback(
-    (navpath: string | null) => {
+    (navpath: string | null, releasing?: string) => {
+      if (releasing !== undefined) {
+        editNavpathRef.current = releasedEditRow(editNavpathRef.current, releasing);
+        return;
+      }
       editNavpathRef.current = navpath;
     },
     []

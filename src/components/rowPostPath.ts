@@ -22,3 +22,18 @@ export function withRowPostPath(
   if (sid && !editNavpath.startsWith(`${sid}-`)) return params;
   return { ...params, postPath: editNavpath };
 }
+
+/** I parametri di una richiesta senza navpath, con la riga in modifica come
+ *  navpath (Salva, Post: il server si posiziona sulla riga del pannello). Stessa
+ *  regola della sessione di {@link withRowPostPath}: una riga di un'altra
+ *  scheda mandata con questo `sid` e' un percorso che il server non trova
+ *  (SXADV-6146). */
+export function withRowNavpath(
+  params: Record<string, string>,
+  editNavpath: string | null | undefined,
+  sid?: string,
+): Record<string, string> {
+  if (!editNavpath || params.navpath) return params;
+  if (sid && !editNavpath.startsWith(`${sid}-`)) return params;
+  return { ...params, navpath: editNavpath };
+}
