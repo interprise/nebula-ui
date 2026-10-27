@@ -3,9 +3,10 @@ import { serverHtml, serverText, HTML_POLICY, looksLikeServerHtml } from '../ser
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, type IRowNode, themeAlpine } from 'ag-grid-community';
 import { applyRowEcho, pruneEcho, type EchoEntry, type RowEcho } from './rowEcho';
-import { Button, Pagination, Space, Tooltip, Typography } from 'antd';
-import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
-import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
+import { Button, Dropdown, Pagination, Space, Tooltip, Typography } from 'antd';
+import { CheckOutlined, PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
+import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData, ListTotals } from '../types/ui';
+import { buildTotalsRow, totalsRowLines } from './listTotals';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
 import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
@@ -59,6 +60,102 @@ const HeaderLabel = ({ displayName, labelHtml }: { displayName: string; labelHtm
     ? <span className="list-header-label" dangerouslySetInnerHTML={{ __html: labelHtml }} />
     : <span>{displayName}</span>;
 
+/** Somma e Media della lista (SXADV-5490): lo stato arriva dal server in `ui.totals`,
+ *  l'azione la manda la ListRenderer. Contesto e non parametro dell'intestazione:
+ *  i valori cambiano a ogni pagina, e rifare le colonne per questo non serve. */
+const ListTotalsContext = React.createContext<{
+  totals?: ListTotals;
+  toggle: (name: string, agg: 'sum' | 'avg') => void;
+} | null>(null);
+
+/** Il «Σ» nell'intestazione di una colonna Importo/Numero: menu Somma / Media. */
+const TotalsHeaderButton = ({ name }: { name: string }) => {
+  const ctx = useContext(ListTotalsContext);
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLSpanElement | null>(null);
+  // Listener NATIVI: AG Grid ordina sul click nativo della cella d'intestazione,
+  // che arriva prima del click di React. Fermato qui non ordina; per questo il
+  // menu si apre a mano invece che dal trigger del Dropdown.
+  useEffect(() => {
+    const el = btnRef.current;
+    if (!el) return;
+    const stop = (e: Event) => e.stopPropagation();
+    const toggleOpen = (e: Event) => { e.stopPropagation(); e.preventDefault(); setOpen((o) => !o); };
+    el.addEventListener('mousedown', stop);
+    el.addEventListener('click', toggleOpen);
+    return () => {
+      el.removeEventListener('mousedown', stop);
+      el.removeEventListener('click', toggleOpen);
+    };
+  }, []);
+  const col = ctx?.totals?.columns?.[name];
+  if (!ctx || !col) return null;
+  const active = col.active ?? [];
+  const disabled = !col.available;
+  const mark = (on: boolean) => (on ? <CheckOutlined /> : <span style={{ display: 'inline-block', width: 14 }} />);
+  const items = [
+    { key: 'sum', label: 'Somma', icon: mark(active.includes('sum')), disabled },
+    { key: 'avg', label: 'Media', icon: mark(active.includes('avg')), disabled },
+    ...(disabled && col.reason ? [{
+      key: 'reason',
+      disabled: true,
+      label: <div className="list-totals-reason" style={{ maxWidth: 280, whiteSpace: 'normal', fontSize: 12 }}>{col.reason}</div>,
+    }] : []),
+  ];
+  return (
+    <Dropdown
+      open={open}
+      // Nessun trigger del Dropdown (il default e' hover): apre solo il clic nativo.
+      trigger={[]}
+      onOpenChange={(o) => setOpen(o)}
+      // Il menu sta in un portale, ma gli eventi sintetici di React risalgono
+      // lo stesso fino all'intestazione: senza questo, scegliere Somma ordina.
+      popupRender={(menu) => (
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>{menu}</div>
+      )}
+      menu={{
+        items,
+        onClick: ({ key }) => {
+          setOpen(false);
+          if (key === 'sum' || key === 'avg') ctx.toggle(name, key);
+        },
+      }}
+    >
+      <span
+        ref={btnRef}
+        role="button"
+        aria-label="Somma e media"
+        data-totals-column={name}
+        className={`list-totals-btn${active.length > 0 ? ' list-totals-on' : ''}`}
+        title={disabled ? col.reason : 'Somma e media'}
+        style={{ cursor: 'pointer', marginLeft: 4, padding: '0 2px', fontWeight: active.length > 0 ? 700 : 400, opacity: disabled ? 0.45 : 1 }}
+      >
+        Σ
+      </span>
+    </Dropdown>
+  );
+};
+
+/** L'etichetta di serie piu' il «Σ», per le colonne ordinate da AG Grid. */
+const HeaderLabelWithTotals = ({ displayName, labelHtml, totalsName }: { displayName: string; labelHtml?: string; totalsName?: string }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+    <HeaderLabel displayName={displayName} labelHtml={labelHtml} />
+    {totalsName && <TotalsHeaderButton name={totalsName} />}
+  </span>
+);
+
+/** La cella della riga dei totali: testo del server, su piu' righe se Σ e ⌀. */
+const TotalsCellRenderer = (params: ICellRendererParams) => {
+  const field = params.colDef?.field ?? '';
+  const idx = field.startsWith('col_') ? field.slice(4) : '';
+  const title = params.data?.[`_totalsTitle_${idx}`] as string | undefined;
+  const text = params.value as string | undefined;
+  if (!text) return null;
+  // 'pre', not 'pre-line': a total wider than its column must not break after the
+  // Σ prefix (the second line is hidden by the row height); it spills instead.
+  return <span className="list-totals-cell" title={title ?? text} style={{ whiteSpace: 'pre', fontWeight: 600 }}>{text}</span>;
+};
+
 /** Custom header for server-sorted columns — dispatches SortColumn without AG Grid's sort.
  *  Also renders a configureIcon (green/red dot) when in configuring mode. */
 const ServerSortHeader = (props: {
@@ -67,9 +164,11 @@ const ServerSortHeader = (props: {
   sortExpression?: string;
   sortDir?: string;
   configureIcon?: { included: boolean; itemId: string };
+  totalsName?: string;
 }) => {
-  const { displayName, labelHtml, sortExpression, sortDir, configureIcon } = props;
+  const { displayName, labelHtml, sortExpression, sortDir, configureIcon, totalsName } = props;
   const label = <HeaderLabel displayName={displayName} labelHtml={labelHtml} />;
+  const totalsBtn = totalsName ? <TotalsHeaderButton name={totalsName} /> : null;
   const icon = configureIcon && (
     <span
       className={`configure-icon ${configureIcon.included ? 'configure-on' : 'configure-off'}`}
@@ -87,6 +186,7 @@ const ServerSortHeader = (props: {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         {label}
+        {totalsBtn}
         {icon}
       </span>
     );
@@ -106,6 +206,7 @@ const ServerSortHeader = (props: {
       {label}
       {sortDir === 'asc' && <span style={{ fontSize: 10 }}>&#9650;</span>}
       {sortDir === 'desc' && <span style={{ fontSize: 10 }}>&#9660;</span>}
+      {totalsBtn}
       {icon}
     </div>
   );
@@ -162,6 +263,7 @@ const HEADER_LABEL_SLACK = 6; // absorbs zoom-dependent rasterization drift
    freccia compare dopo, e la colonna non si rimisura. */
 const HEADER_SORT_ICON_WIDTH = 14;   // freccia (10px) + gap (4px)
 const HEADER_CONFIG_ICON_WIDTH = 17; // pallino (13px) + margine (4px)
+const HEADER_TOTALS_ICON_WIDTH = 14; // «Σ» (10px) + margine (4px), SXADV-5490
 let headerMeasureCtx: CanvasRenderingContext2D | null | undefined;
 let headerMeasureFont: { size: number; font: string } | null = null;
 function headerLabelMinWidth(text: string): number {
@@ -248,10 +350,16 @@ const GRID_HEADER_HEIGHT = 28;
  *  sized for its longest WORD (see headerLabelMinWidth, which is the minimum
  *  the widths are fitted to). AG Grid keeps the configured 28px as the floor,
  *  so single-line headers are unchanged (SXADV-5770.1A/1B). */
+/** La riga dei totali (SXADV-5490) ha il suo renderer in ogni colonna. */
+const totalsCellSelector: ColDef['cellRendererSelector'] = (params) =>
+  params.node?.rowPinned ? { component: TotalsCellRenderer } : undefined;
+
 const WRAPPING_HEADER_COLDEF: Pick<ColDef, 'wrapHeaderText' | 'autoHeaderHeight'> = {
   wrapHeaderText: true,
   autoHeaderHeight: true,
 };
+
+const DEFAULT_COLDEF: ColDef = { ...WRAPPING_HEADER_COLDEF, cellRendererSelector: totalsCellSelector };
 
 /** Cell content that must NOT wrap: values that are a single token in a column
  *  already sized to fit them (numbers, dates, flags) and the interactive ones,
@@ -1011,6 +1119,29 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   useEffect(() => registerListMount(memKey, mount), [memKey, mount]);
   const returnArmed = !!armedReturn(memKey, returnOwner, mount);
 
+  // Somma e Media (SXADV-5490). Le colonne che le hanno cambiano solo con una resa
+  // intera: una chiave stabile, cosi' cambio pagina e totali non rifanno le colonne.
+  const totalsNamesKey = ui.totals?.columns ? Object.keys(ui.totals.columns).sort().join('|') : '';
+  const totalsNames = useMemo(() => new Set(totalsNamesKey ? totalsNamesKey.split('|') : []), [totalsNamesKey]);
+  const totalsRef = useRef(ui.totals);
+  totalsRef.current = ui.totals;
+  const toggleTotals = useCallback((name: string, agg: 'sum' | 'avg') => {
+    const t = totalsRef.current;
+    if (!t) return;
+    onActionRefForTotals.current(t.command, { option1: name, option2: agg, ...(t.path ? { navpath: t.path } : {}) });
+  }, []);
+  const onActionRefForTotals = useRef(onAction);
+  onActionRefForTotals.current = onAction;
+  const totalsContext = useMemo(() => ({ totals: ui.totals, toggle: toggleTotals }), [ui.totals, toggleTotals]);
+  const pinnedBottomRowData = useMemo(() => {
+    const row = buildTotalsRow(ui.totals, ui.columns);
+    return row ? [row] : undefined;
+  }, [ui.totals, ui.columns]);
+  const totalsLines = totalsRowLines(ui.totals);
+  const rowHeightOf = useCallback((params: { data?: Record<string, unknown> }) => (
+    params.data?._isTotalsRow ? Math.max(GRID_ROW_HEIGHT, 4 + 17 * totalsLines) : continuationRowFloor(params)
+  ), [totalsLines]);
+
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
   const allDataLocal = (() => {
@@ -1271,8 +1402,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         // piu' cio' che condivide la riga dell'intestazione con l'etichetta.
         const headerLabel = listHeaderLabel(hdr.text);
         const longestWord = headerLabel.text.split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
+        // Colonna con Somma e Media (SXADV-5490): il nome del suo controllo, se il
+        // server la elenca fra le totalizzabili.
+        const totalsName = colCtrl?.name && totalsNames.has(colCtrl.name as string) ? colCtrl.name as string : undefined;
         const headerDecorWidth = (!allDataLocal && hdr.sortExpression ? HEADER_SORT_ICON_WIDTH : 0)
-          + (hdr.configureIcon ? HEADER_CONFIG_ICON_WIDTH : 0);
+          + (hdr.configureIcon ? HEADER_CONFIG_ICON_WIDTH : 0)
+          + (totalsName ? HEADER_TOTALS_ICON_WIDTH : 0);
         const hdrMinWidth = headerLabelMinWidth(longestWord) + headerDecorWidth;
         // Larghezza di partenza: proporzione del server (colspan), con un
         // pavimento per intestazione, contenuto dichiarato e bande di
@@ -1430,14 +1565,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               sortExpression: !allDataLocal ? hdr.sortExpression : undefined,
               sortDir: hdr.sortDir,
               configureIcon: hdr.configureIcon,
+              totalsName,
             },
           } : {
             // Sempre, anche senza markup: AG Grid crea il componente interno solo
             // quando monta l'intestazione, e la griglia resta montata passando a
             // un'altra lista che riusa la stessa col_N (SXADV-5771).
             headerComponentParams: {
-              innerHeaderComponent: HeaderLabel,
-              innerHeaderComponentParams: { labelHtml: headerLabel.html },
+              innerHeaderComponent: totalsName ? HeaderLabelWithTotals : HeaderLabel,
+              innerHeaderComponentParams: { labelHtml: headerLabel.html, totalsName },
             },
           }),
         });
@@ -1926,7 +2062,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
 
     return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, ui.path, sid, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec]);
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, ui.path, sid, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec, totalsNames]);
 
   // Report the ordered records (main rows: path + onboard edit data) so the
   // edit panel hydrates on selection and steps prev/next — all client-side,
@@ -2509,6 +2645,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const firstActivation = useMemo(() => oncePerEvent(), []);
 
   const handleRowClicked = (event: RowClickedEvent) => {
+    // La riga dei totali non e' un record (SXADV-5490).
+    if (event.node?.rowPinned || event.data?._isTotalsRow) return;
     const src = event.event as MouseEvent | undefined;
     const target = src?.target as HTMLElement | undefined;
     if (target?.closest(ROW_ACTIVATION_IGNORE)) {
@@ -2522,6 +2660,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const handleCellKeyDown = useCallback((event: { event?: Event; data?: Record<string, unknown> }) => {
     const keyEvent = event.event as KeyboardEvent | undefined;
     if (!keyEvent || !isListEdit) return;
+    if (event.data?._isTotalsRow) return;
 
     if (keyEvent.key === 'Enter') {
       const path = event.data?._selectorPath as string | undefined;
@@ -2554,6 +2693,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (target.closest(ROW_ACTIVATION_IGNORE)) {
       return;
     }
+    // La riga dei totali, fissata in fondo, non apre niente (SXADV-5490).
+    if (target.closest('.ag-row-pinned, .ag-floating-bottom')) return;
     const api = gridApiRef.current;
     if (!api) return;
     const rowEl = target.closest('.ag-row') as HTMLElement | null;
@@ -3403,12 +3544,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         })()}
         onClick={handleGridClick}
       >
+        <ListTotalsContext.Provider value={totalsContext}>
         <AgGridReact
           modules={[AllCommunityModule]}
           theme={gridTheme}
           columnDefs={columnDefs}
-          defaultColDef={WRAPPING_HEADER_COLDEF}
+          defaultColDef={DEFAULT_COLDEF}
           rowData={rowData}
+          pinnedBottomRowData={pinnedBottomRowData}
           onRowDataUpdated={onRowDataUpdated}
           components={cellEditorComponents}
           onGridReady={(params) => { gridApiRef.current = params.api; injectContinuationHeaders(); measureColsOverflow(); }}
@@ -3428,7 +3571,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           getRowClass={getRowClass}
           rowClassRules={selectedRowClassRules}
           rowHeight={GRID_ROW_HEIGHT}
-          getRowHeight={continuationRowFloor}
+          getRowHeight={rowHeightOf}
           suppressRowClickSelection
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
@@ -3439,6 +3582,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // danno già il paginatore e la toolbar (SXADV-5688.1).
           suppressOverlays={['noRows']}
         />
+        </ListTotalsContext.Provider>
       </div>
 
       {/* Pagination. Only the embedded detail pager lives here: it is the sole

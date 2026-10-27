@@ -2397,6 +2397,9 @@ function renderContainerControl(
           // by the detailPageOnly slim response (Shell). When present with
           // totalPages > 1, ListRenderer shows an interactive pager.
           paging: control.paging as UITree['paging'],
+          // Somma e Media della griglia (SXADV-5490): copiate a mano come ogni
+          // altra chiave, o la griglia incorporata non le vedrebbe mai.
+          totals: control.totals as UITree['totals'],
         };
         return <ViewRenderer ui={embeddedUi} onAction={onAction} onChange={onChange} onGridChange={onGridChange} embedded />;
       }

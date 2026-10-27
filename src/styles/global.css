@@ -2349,3 +2349,6 @@ body[style*="cursor: wait"] * {
   flex-direction: column;
   gap: 6px;
 }
+
+/* SXADV-5490: un totale piu' largo della sua colonna sconfina, non si taglia. */
+.ag-floating-bottom .ag-cell { overflow: visible; }

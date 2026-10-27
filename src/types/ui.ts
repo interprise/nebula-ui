@@ -334,6 +334,8 @@ export interface UITree {
   columns?: ListColumn[];
   continuationHeaders?: ListHeader[][];
   listActions?: ListAction[];
+  /** Somma e Media sulle colonne (SXADV-5490): stato e valori, dal server. */
+  totals?: ListTotals;
   pageOnly?: boolean;
   // Slim pagination update for a single embedded one-to-many detail grid.
   // Carries `path` (the embedded child view state) + `rows` + `paging`; the
@@ -581,3 +583,30 @@ export const ELTYPE_INDENT = 6;
 export const ELTYPE_FILLER = 7;
 export const ELTYPE_CONTAINER = 8;
 export const ELTYPE_DUMMY = 9;
+
+/** Totali di una colonna di lista (SXADV-5490, CORE ListTotals.describe). */
+export interface ListColumnTotals {
+  /** Calcolabili adesso; false = la colonna non esiste in SQL e la lista va oltre la pagina. */
+  available: boolean;
+  /** Perché no, da mostrare all'utente (solo con available=false). */
+  reason?: string;
+  /** Aggregati accesi, nell'ordine sum, avg. */
+  active: Array<'sum' | 'avg'>;
+  /** Testi già formattati dal server. */
+  sum?: string;
+  avg?: string;
+  /** Righe in valute diverse: niente numero. */
+  mixedCurrencies?: boolean;
+  /** La query è fallita. */
+  error?: string;
+}
+
+export interface ListTotals {
+  command: string;
+  path?: string;
+  /** page = sugli oggetti della pagina; query = sull'intera ricerca. */
+  scope?: 'page' | 'query';
+  rows?: number;
+  /** Per controlName della colonna (= ui.columns[i].control.name). */
+  columns: Record<string, ListColumnTotals>;
+}

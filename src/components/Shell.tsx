@@ -272,6 +272,7 @@ function applyDetailPage(
   path: string,
   rows: UIRow[],
   paging: UITree['paging'],
+  totals?: UITree['totals'],
 ): UITree {
   let changed = false;
   // Embedded detail grid rows travel under the `rows` key, which collides with
@@ -297,6 +298,8 @@ function applyDetailPage(
         ...ctl,
         paging,
         header: { ...oldHeader, position: paging?.position, recordCount: paging?.totalRows },
+        // Somma e Media della griglia (SXADV-5490) viaggiano con la sua pagina.
+        ...(totals !== undefined ? { totals } : {}),
       };
       // The embedded grid's rows live under `rows` or `contentRows` depending on
       // the render path; replace whichever this control uses.
@@ -1095,7 +1098,12 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 const rowPos = (row.cells[0] as unknown as { pos?: number }).pos;
                 return rowPos === pos ? updatedRow : row;
               });
-              update.ui = { ...existingTab.ui, rows: newRows };
+              update.ui = {
+                ...existingTab.ui,
+                rows: newRows,
+                // Il rigo postato puo' cambiare Somma e Media (SXADV-5490).
+                ...(resp.ui.totals !== undefined ? { totals: resp.ui.totals } : {}),
+              };
             }
           }
         } else if (resp.ui.pageOnly) {
@@ -1106,6 +1114,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               ...existingTab.ui,
               rows: resp.ui.rows,
               paging: resp.ui.paging,
+              // Somma e Media (SXADV-5490): il server le rimanda a ogni pagina, e
+              // con l'azione ListTotals questa e' anche la risposta che le accende.
+              totals: resp.ui.totals,
             };
           }
         } else if (resp.ui.detailPageOnly) {
@@ -1113,7 +1124,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           // cached detail-form tree, leaving the rest of the form untouched.
           const existingTab = tabs.find(t => t.key === tabKey);
           if (existingTab?.ui && resp.ui.path) {
-            update.ui = applyDetailPage(existingTab.ui, resp.ui.path, resp.ui.rows, resp.ui.paging);
+            update.ui = applyDetailPage(existingTab.ui, resp.ui.path, resp.ui.rows, resp.ui.paging, resp.ui.totals);
           }
         } else {
           update.ui = resp.ui;
