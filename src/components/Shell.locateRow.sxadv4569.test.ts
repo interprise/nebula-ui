@@ -320,3 +320,53 @@ describe('Shell: LocateRow col pannello di riga aperto (SXADV-4569)', () => {
     expect((r as { located?: unknown })?.located).toEqual(resp.located);
   });
 });
+
+// FilterRows come LocateRow: chiude l'ambito del rigo e azzera il rigo del pannello.
+describe('Shell: FilterRows col pannello di riga aperto (SXADV-4569)', () => {
+  const filterParams = { navpath: LIST, option1: 'rossi' };
+
+  it('niente digitato: FilterRows da solo, senza postPath, col navpath della lista', async () => {
+    apriPannello();
+    await azione('FilterRows', filterParams);
+    expect(server.postAction.map((c) => c.action)).toEqual(['FilterRows']);
+    expect(server.postAction[0].params.postPath).toBeUndefined();
+    expect(server.postAction[0].params.navpath).toBe(LIST);
+  });
+
+  it('digitato non spedito: prima Post sul rigo del pannello, poi FilterRows senza postPath', async () => {
+    apriPannello();
+    scriviNelPannello('esito.S1-9', 'OK');
+    await azione('FilterRows', filterParams);
+    expect(server.postAction.map((c) => c.action)).toEqual(['Post', 'FilterRows']);
+    expect(server.postAction[0].params.navpath).toBe(ROW);
+    expect(server.postAction[1].params.postPath).toBeUndefined();
+    expect(server.postAction[1].params._afterFlush).toBeUndefined();
+  });
+
+  it('flush bloccato da un ERROR: FilterRows non parte', async () => {
+    apriPannello();
+    scriviNelPannello('esito.S1-9', 'OK');
+    server.next.push({ errors: [{ type: 'ERROR', message: 'Esito obbligatorio' }] });
+    await azione('FilterRows', filterParams);
+    expect(server.postAction.map((c) => c.action)).toEqual(['Post']);
+  });
+
+  it('dopo FilterRows il rigo del pannello e\' azzerato', async () => {
+    apriPannello();
+    await azione('FilterRows', filterParams);
+    await azione('Post');
+    const post = server.postAction.at(-1)!;
+    expect(post.params.navpath).toBeUndefined();
+    expect(post.params.postPath).toBeUndefined();
+  });
+
+  it('restituisce la risposta di FilterRows (anche dopo il flush)', async () => {
+    apriPannello();
+    scriviNelPannello('esito.S1-9', 'OK');
+    const resp = { filtered: { count: 3 } };
+    server.next.push({}, resp);
+    const r = await azione('FilterRows', filterParams);
+    expect((r as { filtered?: unknown })?.filtered).toEqual(resp.filtered);
+  });
+});
+

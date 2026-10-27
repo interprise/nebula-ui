@@ -1,15 +1,22 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Button, Input, Select, type InputRef } from 'antd';
-import { DownOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons';
+import { Button, Input, Select, Tag, type InputRef } from 'antd';
+import { CloseOutlined, DownOutlined, FilterOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons';
+import type { TextFilter } from '../types/ui';
 import { useFeedback } from '../hooks/feedback';
 import {
   EMPTY_SEARCH,
+  FILTER_DIRTY_MESSAGE,
+  FILTER_UNSUPPORTED_MESSAGE,
   MAX_CONTINUATIONS,
+  filterLabel,
+  filterParams,
   locateParams,
   notFoundMessage,
+  readFiltered,
   readLocated,
   searchKey,
   stoppedMessage,
+  tooManyMessage,
   type SearchColumn,
   type SearchMemory,
 } from './listSearch';
@@ -23,6 +30,10 @@ interface ListSearchBoxProps {
   onFound: (position: number) => void;
   /** Le colonne della tendina «dove cercare»; con meno di due non c'e' tendina. */
   columns?: readonly SearchColumn[];
+  /** Manda FilterRows al server e restituisce la risposta; assente = niente filtro. */
+  applyFilter?: (params: Record<string, string>) => unknown;
+  /** Il filtro attivo sulla lista, come lo dice il server. */
+  filter?: TextFilter | null;
 }
 
 const STEP_STYLE: React.CSSProperties = { width: 18, minWidth: 18, height: 18 };
@@ -32,7 +43,9 @@ const STEP_STYLE: React.CSSProperties = { width: 18, minWidth: 18, height: 18 };
  * contiene il testo, e a fine lista riprende dall'inizio; la ricerca la fa il
  * server su tutte le pagine (vedi listSearch.ts).
  */
-const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound, columns = [] }) => {
+const ListSearchBox: React.FC<ListSearchBoxProps> = ({
+  listPath, locate, onFound, columns = [], applyFilter, filter,
+}) => {
   const feedback = useFeedback();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -95,6 +108,31 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
     }
   }, [text, chosen, listPath, locate, onFound, feedback]);
 
+  // Il «Cerca» messo a filtro: la lista tiene solo i righi col testo (FilterRows,
+  // lato server su tutto l'elenco). Testo vuoto = togli il filtro.
+  const runFilter = useCallback(async (remove: boolean) => {
+    const key = remove ? '' : searchKey(text);
+    if (!applyFilter || busyRef.current || (!remove && !key)) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const result = readFiltered(await applyFilter(filterParams(listPath, key, chosen)));
+      if (!result) return;
+      // Le posizioni sono cambiate: «trova il successivo» ricomincia.
+      memoryRef.current = EMPTY_SEARCH;
+      if (result.unsupported) feedback.info(FILTER_UNSUPPORTED_MESSAGE);
+      else if (result.dirty) feedback.info(FILTER_DIRTY_MESSAGE);
+      else if (result.tooMany !== undefined) feedback.info(tooManyMessage(result.tooMany));
+      else if (!remove && result.count === 0) feedback.info(notFoundMessage(key));
+    } catch (e) {
+      feedback.failure(e);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [text, chosen, listPath, applyFilter, feedback]);
+  const filterColumnLabel = filter?.col ? columns.find((c) => c.name === filter.col)?.label ?? filter.col : undefined;
+
   const input = (
     <Input
       ref={inputRef}
@@ -139,6 +177,19 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void run(false)}
           />
+          {applyFilter && (
+            <Button
+              type="text"
+              size="small"
+              icon={<FilterOutlined />}
+              title="Mostra solo i righi che lo contengono"
+              aria-label="Filtra la lista"
+              disabled={busy || !searchKey(text)}
+              style={STEP_STYLE}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void runFilter(false)}
+            />
+          )}
         </span>
       )}
       // Nelle bande strette (griglie in un pannello) il campo si stringe
@@ -146,10 +197,30 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
       style={{ width: 240, minWidth: 120, flexShrink: 1 }}
     />
   );
-  if (columns.length < 2) return input;
+  const filterTag = filter && (
+    <Tag
+      className="list-search-filter"
+      color="processing"
+      style={{ marginInlineEnd: 0, whiteSpace: 'nowrap' }}
+    >
+      Filtro: {filterLabel(filter.text, filterColumnLabel)}
+      {/* Un pulsante vero, non la x di Tag: si raggiunge col Tab e ha un nome. */}
+      <Button
+        type="text"
+        size="small"
+        icon={<CloseOutlined />}
+        title="Togli il filtro"
+        aria-label="Togli il filtro"
+        disabled={busy}
+        style={{ ...STEP_STYLE, marginInlineStart: 4 }}
+        onClick={() => void runFilter(true)}
+      />
+    </Tag>
+  );
+  if (columns.length < 2 && !filterTag) return input;
   return (
     <span className="list-search-group" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', minWidth: 0, flexShrink: 1 }}>
-      <Select
+      {columns.length >= 2 && <Select
         className="list-search-column"
         size="small"
         aria-label="Dove cercare"
@@ -167,8 +238,9 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
         ]}
         popupMatchSelectWidth={false}
         style={{ width: 150, minWidth: 90, flexShrink: 1 }}
-      />
+      />}
       {input}
+      {filterTag}
     </span>
   );
 };

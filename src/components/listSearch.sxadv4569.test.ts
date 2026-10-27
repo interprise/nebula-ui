@@ -10,6 +10,12 @@ import {
   showsListSearch,
   stoppedMessage,
   searchColumns,
+  readFiltered,
+  filterParams,
+  tooManyMessage,
+  filterLabel,
+  FILTER_DIRTY_MESSAGE,
+  FILTER_UNSUPPORTED_MESSAGE,
 } from './listSearch';
 
 // SXADV-4569 — «Cerca» di una lista: le regole pure del client.
@@ -356,5 +362,81 @@ describe('searchColumns: colonne non cercabili (searchable: false)', () => {
       { name: 'descrizione', text: 'Descrizione' },
     ] as { name?: string; text?: string; type?: string; searchable?: boolean }[], id, () => false);
     expect(out.map((c) => c.name)).toEqual(['codice', 'descrizione']);
+  });
+});
+
+describe('filtro: readFiltered', () => {
+  it('count e tooMany da resp.filtered', () => {
+    expect(readFiltered({ filtered: { count: 12 } })).toEqual({ count: 12, tooMany: undefined });
+    expect(readFiltered({ filtered: { tooMany: 25000 } })).toEqual({ count: undefined, tooMany: 25000 });
+    expect(readFiltered({ filtered: { count: 0 } })?.count).toBe(0);
+  });
+  it('null se manca filtered (o non e\' un oggetto)', () => {
+    expect(readFiltered({})).toBeNull();
+    expect(readFiltered(undefined)).toBeNull();
+    expect(readFiltered(null)).toBeNull();
+    expect(readFiltered({ filtered: null })).toBeNull();
+    expect(readFiltered({ filtered: 3 })).toBeNull();
+  });
+  it('filtered vuoto (lista senza cursore): oggetto senza numeri', () => {
+    const r = readFiltered({ filtered: {} });
+    expect(r).not.toBeNull();
+    expect(r?.count).toBeUndefined();
+    expect(r?.tooMany).toBeUndefined();
+  });
+  it('numeri come stringhe non valgono', () => {
+    expect(readFiltered({ filtered: { count: '3', tooMany: '9' } })).toEqual({ count: undefined, tooMany: undefined });
+  });
+});
+
+describe('filtro: filterParams', () => {
+  const LIST = 'S1-0.2,S1-3';
+  it('option1 = searchKey(text), navpath = la lista', () => {
+    expect(filterParams(LIST, '  rossi   mario ')).toEqual({ navpath: LIST, option1: 'rossi mario' });
+  });
+  it('col solo con colonna e testo non vuoti', () => {
+    expect(filterParams(LIST, 'rossi', 'descrizione')).toEqual({ navpath: LIST, option1: 'rossi', col: 'descrizione' });
+    expect(filterParams(LIST, 'rossi', '')).toEqual({ navpath: LIST, option1: 'rossi' });
+    expect(filterParams(LIST, '', 'descrizione')).toEqual({ navpath: LIST, option1: '' });
+    expect(filterParams(LIST, '   ', 'descrizione')).toEqual({ navpath: LIST, option1: '' });
+  });
+  it('niente from, done, dir (non e\' una ricerca)', () => {
+    const p = filterParams(LIST, 'rossi', 'x');
+    expect(p.from).toBeUndefined();
+    expect(p.done).toBeUndefined();
+    expect(p.dir).toBeUndefined();
+  });
+});
+
+describe('filtro: tooManyMessage e filterLabel', () => {
+  it('tooManyMessage contiene il numero formattato it-IT', () => {
+    expect(tooManyMessage(25000)).toContain((25000).toLocaleString('it-IT'));
+    expect(tooManyMessage(1234567)).toContain((1234567).toLocaleString('it-IT'));
+  });
+  it('filterLabel: il testo, e la colonna se data', () => {
+    expect(filterLabel('rossi')).toContain('rossi');
+    const l = filterLabel('rossi', 'Descrizione');
+    expect(l).toContain('rossi');
+    expect(l).toContain('Descrizione');
+    expect(filterLabel('rossi', '')).toBe(filterLabel('rossi'));
+  });
+});
+
+describe('filtro: readFiltered dirty / unsupported', () => {
+  it('dirty:true e unsupported:true solo quando veri', () => {
+    expect(readFiltered({ filtered: { dirty: true } })).toMatchObject({ dirty: true });
+    expect(readFiltered({ filtered: { unsupported: true } })).toMatchObject({ unsupported: true });
+  });
+  it('false o assenti: la chiave non c\'e\'', () => {
+    for (const f of [{ count: 1 }, { dirty: false, unsupported: false, count: 1 }, { dirty: 'true', unsupported: 1 }]) {
+      const r = readFiltered({ filtered: f })!;
+      expect('dirty' in r).toBe(false);
+      expect('unsupported' in r).toBe(false);
+    }
+  });
+  it('i messaggi esistono e sono distinti', () => {
+    expect(FILTER_DIRTY_MESSAGE).toBeTruthy();
+    expect(FILTER_UNSUPPORTED_MESSAGE).toBeTruthy();
+    expect(FILTER_DIRTY_MESSAGE).not.toBe(FILTER_UNSUPPORTED_MESSAGE);
   });
 });

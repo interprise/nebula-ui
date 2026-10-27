@@ -1321,6 +1321,17 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // del documento dopo il Salva del precedente arriva sulla stessa vista con
   // la lista senza righe, e la riga del documento di prima restava la riga in
   // modifica: il Nuovo della lista finiva in "Sessione non valida" (SXADV-6144).
+  // Filtro del «Cerca» messo o tolto: le stesse posizioni sono altri record, e
+  // il pannello passerebbe in silenzio al record che ha preso il posto del suo.
+  // Si lascia il rigo come fa un cambio pagina; il digitato e' gia' partito col
+  // Post che la Shell manda prima del FilterRows (SXADV-4569).
+  const releaseSelection = React.useCallback(() => {
+    const sel = selectedPathRef.current;
+    if (!sel) return;
+    selectedPathRef.current = null;
+    setSelectedPath(null);
+    setEditRow?.(null, sel);
+  }, [setEditRow]);
   React.useEffect(() => {
     // Dalla ref, non dallo stato: l'effetto qui sopra puo' aver appena scelto
     // la riga dopo una rimozione, e lo stato di questo giro e' ancora quello
@@ -1441,6 +1452,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         onEditRow={props.onEditRow}
         onSelectRecord={isListEdit ? onSelectRecord : undefined}
         onRecordPaths={isListEdit ? setRecords : undefined}
+        onRowsReplaced={isListEdit ? releaseSelection : undefined}
         pendingAdd={isListEdit ? consumePendingAdd : undefined}
         embedded={props.embedded}
         panelShown={showPanel}

@@ -138,5 +138,52 @@ export function searchColumns(
   return out;
 }
 
+/** La risposta al filtro (FilterRows), letta da `resp.filtered`. */
+export interface FilterResult {
+  /** Righi rimasti con il filtro messo (o tolto). */
+  count?: number;
+  /** Il filtro non si e' messo: l'elenco ha questi righi, troppi. */
+  tooMany?: number;
+  /** Il filtro non si e' messo: ci sono modifiche non salvate. */
+  dirty?: boolean;
+  /** Il filtro non si e' messo: lista fatta in memoria, non si rilegge. */
+  unsupported?: boolean;
+}
+
+export function readFiltered(resp: unknown): FilterResult | null {
+  const raw = (resp as { filtered?: unknown } | null | undefined)?.filtered;
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  return {
+    count: typeof r.count === 'number' ? r.count : undefined,
+    tooMany: typeof r.tooMany === 'number' ? r.tooMany : undefined,
+    ...(r.dirty === true ? { dirty: true } : {}),
+    ...(r.unsupported === true ? { unsupported: true } : {}),
+  };
+}
+
+/** I parametri di FilterRows: testo vuoto = togli il filtro. */
+export function filterParams(listPath: string, text: string, column = ''): Record<string, string> {
+  const params: Record<string, string> = { navpath: listPath, option1: searchKey(text) };
+  if (column && params.option1) params.col = column;
+  return params;
+}
+
+/** Il messaggio quando l'elenco e' troppo lungo per filtrarlo. */
+export function tooManyMessage(rows: number): string {
+  return `L'elenco ha ${rows.toLocaleString('it-IT')} righi: troppi per filtrarli. Restringi prima la ricerca, poi usa il filtro.`;
+}
+
+/** Il filtro rifiutato perche' ci sono modifiche non salvate. */
+export const FILTER_DIRTY_MESSAGE = 'Ci sono modifiche non salvate: salva o annulla, poi usa il filtro.';
+
+/** Il filtro rifiutato su una lista che non si rilegge. */
+export const FILTER_UNSUPPORTED_MESSAGE = 'Questa lista non si puo\' filtrare: usa le frecce per trovare i righi.';
+
+/** L'etichetta del filtro attivo: «rossi», o «rossi» in Cognome. */
+export function filterLabel(text: string, columnLabel?: string): string {
+  return columnLabel ? `«${text}» in ${columnLabel}` : `«${text}»`;
+}
+
 /** Quante continuazioni al piu' segue il client per una sola ricerca. */
 export const MAX_CONTINUATIONS = 50;

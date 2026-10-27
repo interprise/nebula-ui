@@ -1669,7 +1669,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // lo scriveva su un altro rigo (MD-VALORI-RESIDUI-DOPO-SALVA).
       const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
       const isNav = navActions.includes(action);
-      const endsRowScope = isNav || action === 'DetailPage' || action === 'LocateRow';
+      const endsRowScope = isNav || action === 'DetailPage' || action === 'LocateRow' || action === 'FilterRows';
       const openRow = editNavpathRef.current;
       if (endsRowScope && openRow && params._afterFlush !== '1') {
         const rows = panelFieldRows(tab.key);
@@ -1706,7 +1706,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // Navigation actions have their own positioning — clear edit state instead.
       // Il Cerca (LocateRow) puo' cambiare pagina come loro: il rigo trovato, se ha
       // il pannello, lo riapre da se' (onSelectRecord).
-      if (isNav || action === 'LocateRow') {
+      if (isNav || action === 'LocateRow' || action === 'FilterRows') {
         editNavpathRef.current = null;
         pendingAddRef.current = false;
       }

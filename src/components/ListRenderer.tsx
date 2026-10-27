@@ -28,7 +28,7 @@ import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import { layoutButtonsPlacement } from './layoutButtonsPlacement';
 import ListSearchBox from './ListSearchBox';
-import { pathAtPosition, searchColumns, showsListSearch } from './listSearch';
+import { pathAtPosition, readFiltered, searchColumns, showsListSearch } from './listSearch';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
 import {
@@ -896,6 +896,10 @@ interface ListRendererProps {
   /** listEdit: report the ordered record paths (main rows) so the panel can
    *  navigate prev/next between records. */
   onRecordPaths?: (records: ListRecord[]) => void;
+  /** Il filtro del «Cerca» ha rifatto l'elenco (messo o tolto): i percorsi dei
+   *  righi sono posizioni, quindi il rigo del pannello non e' piu' quello di
+   *  prima e va lasciato (SXADV-4569). */
+  onRowsReplaced?: () => void;
   /** Read-and-clear "was Nuovo/Add just dispatched?" (Shell's pendingAddRef).
    *  Gates auto-opening the panel on the server's newly-added edit-path row —
    *  without it, a multiEdit list (where virtually every row is "in edit path")
@@ -921,7 +925,7 @@ interface ListRendererProps {
   isEchoLive?: (wire: string) => boolean;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, pendingAdd, embedded, panelShown, editablePanelPaths, editingPath, rowEcho, isEchoLive }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, onRowsReplaced, pendingAdd, embedded, panelShown, editablePanelPaths, editingPath, rowEcho, isEchoLive }) => {
   // A grid inside a tab does not repeat the tab's own label (the documents
   // "Righe fattura" case — see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
@@ -3088,7 +3092,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const searchPath = gridPath;
   const recordCount = pageInfo?.totalRows
     ?? rowData.filter((r) => r._selectorPath && !r._isContinuationRow && !r._isBreakRow).length;
-  const showSearch = !!searchPath && showsListSearch(recordCount);
+  // Il «Cerca» messo a filtro, come lo dice il server: `paging` dopo un cambio
+  // pagina o un filtro (e allora vale lui, anche quando il filtro non c'e'
+  // piu'), `gridActions` o `header` nella resa intera. Con un filtro il campo
+  // resta anche su una lista rimasta con un rigo o vuota: e' da li' che si toglie.
+  const textFilter = (ui.paging
+    ? ui.paging.textFilter
+    : gridActions?.textFilter ?? meta?.textFilter ?? ui.textFilter) ?? null;
+  const showSearch = !!searchPath && (showsListSearch(recordCount) || !!textFilter);
   const [locateTarget, setLocateTarget] = useState<{ position: number; at: number } | null>(null);
   const revealTimerRef = useRef<number | undefined>(undefined);
   const onLocated = useCallback((position: number) => {
@@ -3112,6 +3123,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, []);
   const locate = useCallback((params: Record<string, string>) => onAction('LocateRow', params), [onAction]);
+  const applyFilter = useCallback(async (params: Record<string, string>) => {
+    const resp = await onAction('FilterRows', params);
+    if (readFiltered(resp)?.count !== undefined) onRowsReplaced?.();
+    return resp;
+  }, [onAction, onRowsReplaced]);
   // La tendina «dove cercare»: le colonne mostrate, dalle intestazioni del server.
   const searchCols = useMemo(() => searchColumns(
     ui.headers,
@@ -3179,7 +3195,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return () => cancelAnimationFrame(raf);
   }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, revealRow]);
   const searchBox = showSearch && (
-    <ListSearchBox listPath={searchPath as string} locate={locate} onFound={onLocated} columns={searchCols} />
+    <ListSearchBox
+      listPath={searchPath as string}
+      locate={locate}
+      onFound={onLocated}
+      columns={searchCols}
+      applyFilter={applyFilter}
+      filter={textFilter}
+    />
   );
 
   // The container never claims more than the available width: horizontal

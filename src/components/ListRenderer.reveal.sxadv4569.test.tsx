@@ -254,6 +254,8 @@ function mount(n: number) {
     if (typeof c === 'function') cleanups.push(c as () => void);
   };
   return {
+    props,
+    tree: () => tree,
     api,
     rowEls,
     querySelector,
@@ -395,5 +397,148 @@ describe('ListRenderer: il rigo trovato si porta a vista (SXADV-4569)', () => {
     frames();
     vi.advanceTimersByTime(1000);
     expect(oldRow.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ListRenderer: applyFilter manda FilterRows (SXADV-4569)', () => {
+  it('ListSearchBox riceve applyFilter, che chiama onAction(\'FilterRows\', params) e si risolve nella risposta', async () => {
+    const v = mount(5);
+    const resp = { filtered: { count: 2 } };
+    v.props.onAction.mockImplementation((() => resp) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    expect(box).toBeDefined();
+    const applyFilter = box!.props.applyFilter as (p: Record<string, string>) => unknown;
+    expect(typeof applyFilter).toBe('function');
+    const params = { navpath: LIST, option1: 'rossi', col: 'nome' };
+    await expect(Promise.resolve(applyFilter(params))).resolves.toBe(resp);
+    expect(v.props.onAction).toHaveBeenCalledWith('FilterRows', params);
+  });
+
+  it('risposta asincrona di onAction: applyFilter si risolve nella risposta, non nella Promise', async () => {
+    const v = mount(5);
+    const resp = { filtered: { count: 1 } };
+    v.props.onAction.mockImplementation((async () => resp) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    const r = (box!.props.applyFilter as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'x' });
+    await expect(Promise.resolve(r)).resolves.toBe(resp);
+  });
+
+  it('il locate resta LocateRow', () => {
+    const v = mount(5);
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    (box!.props.locate as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'x' });
+    expect(v.props.onAction).toHaveBeenCalledWith('LocateRow', { navpath: LIST, option1: 'x' });
+  });
+});
+
+
+// Il filtro rifa l'elenco dalla pagina 1: i percorsi posizionali dei righi sono
+// altri record. ListRenderer lo dice con onRowsReplaced, solo quando il server
+// ha messo o tolto il filtro (filtered.count presente), mai su un rifiuto.
+describe('ListRenderer: onRowsReplaced dopo FilterRows (SXADV-4569)', () => {
+  async function filterWith(resp: unknown, opts: { withCallback?: boolean; async?: boolean } = {}) {
+    const v = mount(5);
+    const onRowsReplaced = vi.fn();
+    if (opts.withCallback !== false) (v.props as Record<string, unknown>).onRowsReplaced = onRowsReplaced;
+    v.props.onAction.mockImplementation((opts.async ? async () => resp : () => resp) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    if (!box) throw new Error('ListSearchBox non trovato');
+    const r = (box.props.applyFilter as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'rossi' });
+    const settled = await Promise.resolve(r);
+    return { onRowsReplaced, settled, v };
+  }
+
+  it('filtro messo (count > 0): chiamato una volta', async () => {
+    const { onRowsReplaced } = await filterWith({ filtered: { count: 3 } });
+    expect(onRowsReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('filtro messo con zero righi (count 0): chiamato, lo zero non e\' "assente"', async () => {
+    const { onRowsReplaced } = await filterWith({ filtered: { count: 0 } });
+    expect(onRowsReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('risposta asincrona con count: chiamato dopo la risposta', async () => {
+    const { onRowsReplaced } = await filterWith({ filtered: { count: 2 } }, { async: true });
+    expect(onRowsReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('non chiamato prima che la risposta arrivi', async () => {
+    const v = mount(5);
+    const onRowsReplaced = vi.fn();
+    (v.props as Record<string, unknown>).onRowsReplaced = onRowsReplaced;
+    let resolve!: (x: unknown) => void;
+    v.props.onAction.mockImplementation((() => new Promise((r) => { resolve = r; })) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    const p = Promise.resolve((box!.props.applyFilter as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: '' }));
+    await Promise.resolve();
+    expect(onRowsReplaced).not.toHaveBeenCalled();
+    resolve({ filtered: { count: 5 } });
+    await p;
+    expect(onRowsReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['dirty', { filtered: { dirty: true } }],
+    ['unsupported', { filtered: { unsupported: true } }],
+    ['tooMany', { filtered: { tooMany: 120000 } }],
+    ['risposta null', null],
+    ['risposta undefined', undefined],
+    ['risposta senza filtered', { ui: { rows: [] } }],
+    ['filtered non oggetto', { filtered: true }],
+    ['count non numerico', { filtered: { count: '3' } }],
+  ])('%s: non chiamato, e applyFilter si risolve comunque nella risposta', async (_label, resp) => {
+    const { onRowsReplaced, settled } = await filterWith(resp);
+    expect(onRowsReplaced).not.toHaveBeenCalled();
+    expect(settled).toBe(resp);
+  });
+
+  it('senza onRowsReplaced (lista non listEdit): nessuna eccezione, risposta restituita', async () => {
+    const resp = { filtered: { count: 2 } };
+    const { settled } = await filterWith(resp, { withCallback: false });
+    expect(settled).toBe(resp);
+  });
+
+  it('onAction che rifiuta: il rifiuto arriva a chi chiama, onRowsReplaced non chiamato', async () => {
+    const v = mount(5);
+    const onRowsReplaced = vi.fn();
+    (v.props as Record<string, unknown>).onRowsReplaced = onRowsReplaced;
+    const err = new Error('rete');
+    v.props.onAction.mockImplementation((async () => { throw err; }) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    const r = (box!.props.applyFilter as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'x' });
+    await expect(Promise.resolve(r)).rejects.toBe(err);
+    expect(onRowsReplaced).not.toHaveBeenCalled();
+  });
+
+  it('il locate (LocateRow) non chiama onRowsReplaced, nemmeno con una risposta che porta filtered', async () => {
+    const v = mount(5);
+    const onRowsReplaced = vi.fn();
+    (v.props as Record<string, unknown>).onRowsReplaced = onRowsReplaced;
+    v.props.onAction.mockImplementation((() => ({ filtered: { count: 1 }, located: { found: true, position: 0 } })) as unknown as () => undefined);
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    await Promise.resolve((box!.props.locate as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'x' }));
+    expect(onRowsReplaced).not.toHaveBeenCalled();
+  });
+
+  it('onRowsReplaced cambiato fra i disegni: si chiama quello corrente', async () => {
+    const v = mount(5);
+    const first = vi.fn();
+    const second = vi.fn();
+    (v.props as Record<string, unknown>).onRowsReplaced = first;
+    v.props.onAction.mockImplementation((() => ({ filtered: { count: 1 } })) as unknown as () => undefined);
+    v.render();
+    (v.props as Record<string, unknown>).onRowsReplaced = second;
+    v.render();
+    const box = findEl(v.tree(), (e) => e.type === ListSearchBox);
+    await Promise.resolve((box!.props.applyFilter as (p: Record<string, string>) => unknown)({ navpath: LIST, option1: 'x' }));
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 });

@@ -209,6 +209,12 @@ export interface ListHeader {
   searchable?: boolean;
 }
 
+/** Il «Cerca» messo a filtro (SXADV-4569): `col` = content della colonna, assente = tutte. */
+export interface TextFilter {
+  text: string;
+  col?: string;
+}
+
 export interface ListMeta {
   title?: string;
   subtitle?: string; // applied-filter description under the title (SXADV-5484)
@@ -220,6 +226,8 @@ export interface ListMeta {
    *  one that opens the list — carries its paging numbers in this header and has
    *  no `paging` object at all (SXADV-5742). */
   adaptivePageSize?: boolean;
+  /** Il «Cerca» messo a filtro sulla lista (SXADV-4569): testo e colonna. */
+  textFilter?: TextFilter;
   /** Colonne da bloccare a sinistra nella modalità un-record-per-riga. Due
    *  sintassi: un numero (`pinnedCols="3"`, 0 = nessun blocco) oppure un elenco
    *  di `content`/`tag` separati da virgola (`pinnedCols="codice,descrizione"`),
@@ -243,6 +251,8 @@ export interface GridActions {
   /** Come si chiama questa griglia (il prompt dell'item che la incorpora).
    *  Vuoto dentro un tab, che l'etichetta ce l'ha gia' sopra. */
   title?: string;
+  /** Vedi `ListMeta.textFilter`: la griglia incorporata non ha l'header. */
+  textFilter?: TextFilter;
 }
 
 export interface ListFooter {
@@ -341,6 +351,9 @@ export interface UITree {
   // Tree view
   treeNodes?: TreeNode[];
   navigateView?: string;
+  /** Il «Cerca» messo a filtro su una lista a pagina intera, alla radice: c'e'
+   *  anche quando la vista non ha l'header (headerShown="false"). */
+  textFilter?: TextFilter;
   paging?: {
     currentPage: number;
     totalPages: number;
@@ -355,6 +368,8 @@ export interface UITree {
     /** Vedi `header.pinnedCols`: ripetuto qui perché i due oggetti vivono su
      *  percorsi di render diversi. */
     pinnedCols?: number | string;
+    /** Vedi `header.textFilter`. */
+    textFilter?: TextFilter;
   };
 }
 

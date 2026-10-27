@@ -63,7 +63,7 @@ vi.mock('react', async (importOriginal) => {
   return { ...actual, ...over, default: { ...actual, ...over } };
 });
 
-const { default: ViewRenderer, AddWaitContext, FlushEditsContext } = await import('./ViewRenderer');
+const { default: ViewRenderer, AddWaitContext, FlushEditsContext, EditRowContext } = await import('./ViewRenderer');
 
 /** Il valore di un contesto senza Provider: il motore legge _currentValue. */
 function withContext<T>(ctx: unknown, value: T, fn: () => void) {
@@ -155,6 +155,13 @@ function mount(onAction: (a: string, p?: Record<string, string>) => unknown = vi
     },
     panel: () => find(tree, 'EditPanel'),
     listRenderer,
+    /** Come ListRenderer dopo un FilterRows con filtered.count. */
+    rowsReplaced() {
+      const f = listRenderer().props.onRowsReplaced as (() => void) | undefined;
+      if (!f) throw new Error('onRowsReplaced non passato a ListRenderer');
+      f();
+      tree = render();
+    },
   };
 }
 
@@ -265,5 +272,94 @@ describe('ListView onPanelAction restituisce la risposta (SXADV-4569)', () => {
     const v = mount(() => resp);
     const listAction = v.listRenderer().props.onAction as (a: string, p?: Record<string, string>) => unknown;
     expect(listAction('LocateRow', { navpath: 'S1-3', option1: 'x' })).toBe(resp);
+  });
+});
+
+// Revisione SXADV-4569: il filtro del «Cerca» rifa l'elenco dalla pagina 1 e
+// i percorsi posizionali restano ma sono altri record. ListRenderer chiama
+// onRowsReplaced (solo su filtered.count); ListView lascia il rigo: pannello
+// chiuso e setEditRow(null, rigoLasciato). Il legame fra la risposta e la
+// chiamata e' provato in ListRenderer.reveal.sxadv4569.test.tsx; qui il lato
+// ListView, e il passaggio intero con la stessa logica di decisione.
+describe('ListView onRowsReplaced lascia il rigo (SXADV-4569)', () => {
+  it('lista listEdit: ListRenderer riceve onRowsReplaced', () => {
+    const v = mount();
+    expect(typeof v.listRenderer().props.onRowsReplaced).toBe('function');
+  });
+
+  it('pannello aperto su un rigo: onRowsReplaced lo chiude e chiama setEditRow(null, rigo)', () => {
+    const setEditRow = vi.fn();
+    withContext(EditRowContext, setEditRow, () => {
+      const v = mount();
+      v.select(ROW_B);
+      expect(v.panel()).toBeDefined();
+      setEditRow.mockClear();
+      v.rowsReplaced();
+      expect(v.panel()).toBeUndefined();
+      expect(setEditRow).toHaveBeenCalledTimes(1);
+      expect(setEditRow).toHaveBeenCalledWith(null, ROW_B);
+      expect(v.listRenderer().props.editingPath ?? null).toBeNull();
+    });
+  });
+
+  it('nessun rigo selezionato: onRowsReplaced non fa nulla', () => {
+    const setEditRow = vi.fn();
+    withContext(EditRowContext, setEditRow, () => {
+      const v = mount();
+      setEditRow.mockClear();
+      expect(() => v.rowsReplaced()).not.toThrow();
+      expect(setEditRow).not.toHaveBeenCalled();
+      expect(v.panel()).toBeUndefined();
+    });
+  });
+
+  it('due chiamate di fila: setEditRow una volta sola', () => {
+    const setEditRow = vi.fn();
+    withContext(EditRowContext, setEditRow, () => {
+      const v = mount();
+      v.select(ROW_A);
+      setEditRow.mockClear();
+      v.rowsReplaced();
+      v.rowsReplaced();
+      expect(setEditRow).toHaveBeenCalledTimes(1);
+      expect(setEditRow).toHaveBeenCalledWith(null, ROW_A);
+    });
+  });
+
+  it('dopo il rilascio un clic su un rigo riapre il pannello su quel rigo', () => {
+    const setEditRow = vi.fn();
+    withContext(EditRowContext, setEditRow, () => {
+      const v = mount();
+      v.select(ROW_A);
+      v.rowsReplaced();
+      setEditRow.mockClear();
+      v.select(ROW_A);
+      expect(v.panel()?.props.rowPath).toBe(ROW_A);
+      expect(setEditRow).toHaveBeenCalledWith(ROW_A);
+    });
+  });
+
+  it('senza EditRowContext: nessuna eccezione, il pannello si chiude', () => {
+    const v = mount();
+    v.select(ROW_A);
+    expect(() => v.rowsReplaced()).not.toThrow();
+    expect(v.panel()).toBeUndefined();
+  });
+
+  it('lista non listEdit: onRowsReplaced non passato', () => {
+    rt.slots = [];
+    const plain = { ...ui, listEdit: false } as unknown as UITree;
+    rt.active = true;
+    try {
+      const outer = (ViewRenderer as unknown as (p: unknown) => ReactNode)({ ui: plain, onAction: vi.fn(), onChange: vi.fn() });
+      const lv = find(outer, 'ListView');
+      rt.i = 0;
+      const tree = lv ? (lv.type as (p: unknown) => ReactNode)(lv.props) : outer;
+      const lr = find(tree, 'ListRenderer');
+      expect(lr).toBeDefined();
+      expect(lr!.props.onRowsReplaced).toBeUndefined();
+    } finally {
+      rt.active = false;
+    }
   });
 });

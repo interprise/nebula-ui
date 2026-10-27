@@ -77,6 +77,8 @@ interface Props {
   locate: (params: Record<string, string>) => unknown;
   onFound: (position: number) => void;
   columns?: readonly { name: string; label: string }[];
+  applyFilter?: (params: Record<string, string>) => unknown;
+  filter?: { text: string; col?: string } | null;
 }
 
 type AnyEl = ReactElement<Record<string, unknown>>;
@@ -933,6 +935,268 @@ describe('ListSearchBox (SXADV-4569)', () => {
       box.enter();
       await flush();
       expect(lastParams(locate).col).toBeUndefined();
+    });
+  });
+
+  describe('il Cerca a filtro', () => {
+    const COLS = [
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+    ];
+    const byLabel = (box: ReturnType<typeof mount>, label: string) =>
+      findEl(box.root, (e) => e.props['aria-label'] === label);
+    const press = (box: ReturnType<typeof mount>, label: string) => {
+      const b = byLabel(box, label);
+      if (!b) throw new Error(`pulsante "${label}" non trovato`);
+      (b.props.onClick as (e?: unknown) => void)({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+      box.render();
+    };
+    const choose = (box: ReturnType<typeof mount>, value: string) => {
+      const sel = findEl(box.root, (e) => e.props['aria-label'] === 'Dove cercare');
+      (sel!.props.onChange as (v: string, o?: unknown) => void)(value, undefined);
+      box.render();
+    };
+
+    it('senza applyFilter nessun pulsante «Filtra la lista»', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn() });
+      box.type('rossi');
+      expect(byLabel(box, 'Filtra la lista')).toBeUndefined();
+    });
+
+    it('con applyFilter il pulsante c\'e\' nel suffisso, disabilitato a campo vuoto o di soli spazi', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn() });
+      expect(findEl(box.el.props.suffix, (e) => e.props['aria-label'] === 'Filtra la lista')).toBeDefined();
+      expect(byLabel(box, 'Filtra la lista')!.props.disabled).toBe(true);
+      box.type('   ');
+      expect(byLabel(box, 'Filtra la lista')!.props.disabled).toBe(true);
+      box.type('rossi');
+      expect(byLabel(box, 'Filtra la lista')!.props.disabled).toBeFalsy();
+    });
+
+    it('il mousedown del pulsante fa preventDefault', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn() });
+      box.type('rossi');
+      const ev = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+      (byLabel(box, 'Filtra la lista')!.props.onMouseDown as (e: unknown) => void)(ev);
+      expect(ev.preventDefault).toHaveBeenCalled();
+    });
+
+    it('manda filterParams con la colonna scelta', async () => {
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 3 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter, columns: COLS });
+      choose(box, 'descrizione');
+      box.type('  rossi ');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(callsOf(applyFilter)[0][0]).toEqual({ navpath: LIST, option1: 'rossi', col: 'descrizione' });
+    });
+
+    it('a tutte le colonne non manda col', async () => {
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 3 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter, columns: COLS });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(callsOf(applyFilter)[0][0]).toEqual({ navpath: LIST, option1: 'rossi' });
+    });
+
+    it('disabilitato durante una ricerca, e nessun filtro concorrente', async () => {
+      let release: (v: unknown) => void = () => {};
+      const locate = vi.fn(() => new Promise((r) => { release = r; }));
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 1 } }));
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      box.enter();
+      await flush();
+      box.render();
+      expect(byLabel(box, 'Filtra la lista')!.props.disabled).toBe(true);
+      // Anche se il clic arrivasse: busyRef condiviso, niente richiesta.
+      (byLabel(box, 'Filtra la lista')!.props.onClick as () => void)();
+      await flush();
+      expect(applyFilter).not.toHaveBeenCalled();
+      release(found(1));
+      await flush();
+      box.render();
+      expect(byLabel(box, 'Filtra la lista')!.props.disabled).toBeFalsy();
+    });
+
+    it('nessuna ricerca concorrente con un filtro in corso', async () => {
+      let release: (v: unknown) => void = () => {};
+      const applyFilter = vi.fn(() => new Promise((r) => { release = r; }));
+      const locate = vi.fn(async () => found(1));
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      box.enter();
+      box.enter(true);
+      await flush();
+      expect(locate).not.toHaveBeenCalled();
+      release({ filtered: { count: 2 } });
+      await flush();
+    });
+
+    it('tooMany: info(tooManyMessage)', async () => {
+      const { tooManyMessage } = await import('./listSearch');
+      const applyFilter = vi.fn(async () => ({ filtered: { tooMany: 25000 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(fb.info).toHaveBeenCalledWith(tooManyMessage(25000));
+    });
+
+    it('count 0: info(notFoundMessage)', async () => {
+      const { notFoundMessage } = await import('./listSearch');
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 0 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(fb.info).toHaveBeenCalledWith(notFoundMessage('rossi'));
+    });
+
+    it('count > 0: nessun messaggio', async () => {
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 4 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(fb.info).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['count', { count: 4 }],
+      ['count 0', { count: 0 }],
+      ['tooMany', { tooMany: 25000 }],
+    ])('dopo un filtro (%s) la memoria si azzera: LocateRow riparte da -1', async (_n, filtered) => {
+      const answers = [found(57), found(2)];
+      const locate = vi.fn(async () => answers.shift());
+      const applyFilter = vi.fn(async () => ({ filtered }));
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      box.enter();
+      await flush();
+      press(box, 'Filtra la lista');
+      await flush();
+      box.enter();
+      await flush();
+      expect((callsOf(locate)[1][0] as Record<string, string>).from).toBe('-1');
+    });
+
+    it('errore del filtro: failure, e il campo non resta bloccato', async () => {
+      const applyFilter = vi.fn()
+        .mockImplementationOnce(async () => { throw new Error('rete'); })
+        .mockImplementation(async () => ({ filtered: { count: 1 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(fb.failure).toHaveBeenCalledTimes(1);
+      press(box, 'Filtra la lista');
+      await flush();
+      expect(applyFilter).toHaveBeenCalledTimes(2);
+    });
+
+    it('filtro attivo: Tag «Filtro: …» col testo, e il gruppo c\'e\' anche senza colonne', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), filter: { text: 'rossi' } });
+      expect(box.root.props.placeholder).toBeUndefined(); // la radice e' il gruppo, non l'Input
+      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).includes('list-search-filter'));
+      expect(tag).toBeDefined();
+      const text = JSON.stringify(tag!.props.children, (_k, v) => (v && typeof v === 'object' && v.$$typeof ? undefined : v));
+      expect(text).toContain('Filtro');
+      expect(text).toContain('rossi');
+      expect(byLabel(box, 'Togli il filtro')).toBeDefined();
+    });
+
+    it('filtro attivo su una colonna: il Tag nomina la colonna con la sua etichetta', async () => {
+      const { filterLabel } = await import('./listSearch');
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), columns: COLS, filter: { text: 'rossi', col: 'descrizione' } });
+      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).includes('list-search-filter'));
+      const children = ([] as unknown[]).concat(tag!.props.children as unknown[]);
+      expect(children).toContain(filterLabel('rossi', 'Descrizione'));
+    });
+
+    it('con una sola colonna e un filtro attivo: gruppo, ma niente tendina', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), columns: [COLS[0]], filter: { text: 'x' } });
+      expect(findEl(box.root, (e) => e.props['aria-label'] === 'Dove cercare')).toBeUndefined();
+      expect(byLabel(box, 'Togli il filtro')).toBeDefined();
+      expect(box.el.props['aria-label']).toBe('Cerca nella lista');
+    });
+
+    it('senza filtro nessun Tag e nessun «Togli il filtro»', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), filter: null });
+      expect(byLabel(box, 'Togli il filtro')).toBeUndefined();
+    });
+
+    it('«Togli il filtro» manda option1 vuoto senza col, anche con una colonna scelta e testo nel campo', async () => {
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 100 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter, columns: COLS, filter: { text: 'rossi', col: 'descrizione' } });
+      choose(box, 'descrizione');
+      box.type('bianchi');
+      press(box, 'Togli il filtro');
+      await flush();
+      expect(callsOf(applyFilter)[0][0]).toEqual({ navpath: LIST, option1: '' });
+      expect(fb.info).not.toHaveBeenCalled();
+    });
+
+    it('«Togli il filtro» funziona anche a campo vuoto', async () => {
+      const applyFilter = vi.fn(async () => ({ filtered: { count: 100 } }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter, filter: { text: 'rossi' } });
+      press(box, 'Togli il filtro');
+      await flush();
+      expect(applyFilter).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('il filtro: esiti dirty / unsupported (revisione)', () => {
+    const press = (box: ReturnType<typeof mount>) => {
+      const b = findEl(box.root, (e) => e.props['aria-label'] === 'Filtra la lista');
+      (b!.props.onClick as () => void)();
+      box.render();
+    };
+    const run = async (filtered: Record<string, unknown>) => {
+      const applyFilter = vi.fn(async () => ({ filtered }));
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter });
+      box.type('rossi');
+      press(box);
+      await flush();
+      return fb.info.mock.calls.map((c) => c[0]);
+    };
+
+    it.each([
+      ['unsupported', { unsupported: true }, 'U'],
+      ['dirty', { dirty: true }, 'D'],
+      ['unsupported prima di dirty', { unsupported: true, dirty: true, tooMany: 25000, count: 0 }, 'U'],
+      ['dirty prima di tooMany e count 0', { dirty: true, tooMany: 25000, count: 0 }, 'D'],
+      ['tooMany prima di count 0', { tooMany: 25000, count: 0 }, 'T'],
+      ['count 0', { count: 0 }, 'N'],
+    ])('%s: un solo messaggio, quello giusto', async (_n, filtered, which) => {
+      const ls = await import('./listSearch');
+      const expected = {
+        U: ls.FILTER_UNSUPPORTED_MESSAGE,
+        D: ls.FILTER_DIRTY_MESSAGE,
+        T: ls.tooManyMessage(25000),
+        N: ls.notFoundMessage('rossi'),
+      }[which as 'U' | 'D' | 'T' | 'N'];
+      expect(await run(filtered)).toEqual([expected]);
+    });
+
+    it('dirty / unsupported: dopo, il LocateRow riparte comunque da -1', async () => {
+      for (const filtered of [{ dirty: true }, { unsupported: true }]) {
+        fb.info.mockReset();
+        const answers = [found(57), found(2)];
+        const locate = vi.fn(async () => answers.shift());
+        const applyFilter = vi.fn(async () => ({ filtered }));
+        const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+        box.type('rossi');
+        box.enter();
+        await flush();
+        press(box);
+        await flush();
+        box.enter();
+        await flush();
+        expect((callsOf(locate)[1][0] as Record<string, string>).from).toBe('-1');
+      }
     });
   });
 });

@@ -64,6 +64,7 @@ function block(html: string, cls: string): string | null {
   return html.slice(start);
 }
 
+const LIST_PATH = 'S1-0.2,S1-3';
 const hasSearch = (html: string | null) => !!html && /placeholder="Cerca"/.test(html);
 
 describe('ListRenderer: il campo Cerca (SXADV-4569)', () => {
@@ -179,3 +180,70 @@ describe('ListRenderer: searchable:false dalle intestazioni del server (SXADV-45
     expect(html).toContain('Tutte le colonne');
   });
 });
+
+describe('ListRenderer: il filtro di testo attivo (SXADV-4569)', () => {
+  const TF = { text: 'rossi' };
+  it('nessun record ma filtro attivo (paging.textFilter): il campo c\'e\', col Tag', () => {
+    const html = render(list({ paging: { currentPage: 1, totalPages: 0, totalRows: 0, pageSize: 100, position: 0, textFilter: TF } }, 0));
+    expect(html).toContain('aria-label="Cerca nella lista"');
+    expect(html).toContain('Filtro');
+    expect(html).toContain('rossi');
+  });
+
+  it('un record e filtro attivo nell\'intestazione (ui.header.textFilter): il campo c\'e\'', () => {
+    const html = render(list({ header: { recordCount: 1, pageSize: 100, position: 0, textFilter: TF } }, 1));
+    expect(html).toContain('aria-label="Cerca nella lista"');
+    expect(html).toContain('Filtro');
+  });
+
+  it('un record senza filtro: niente campo (invariato)', () => {
+    const html = render(list({ header: { recordCount: 1, pageSize: 100, position: 0 } }, 1));
+    expect(html).not.toContain('aria-label="Cerca nella lista"');
+  });
+
+  it('paging senza textFilter vince sull\'intestazione: il filtro non c\'e\' piu\'', () => {
+    const html = render(list({
+      header: { recordCount: 3, pageSize: 100, position: 0, textFilter: TF },
+      paging: { currentPage: 1, totalPages: 1, totalRows: 3, pageSize: 100, position: 0 },
+    }, 3));
+    expect(html).toContain('aria-label="Cerca nella lista"');
+    expect(html).not.toContain('Togli il filtro');
+  });
+
+  it('filtro attivo: c\'e\' «Togli il filtro» e il pulsante «Filtra la lista»', () => {
+    const html = render(list({ header: { recordCount: 3, pageSize: 100, position: 0, textFilter: TF } }, 3));
+    expect(html).toContain('Togli il filtro');
+    expect(html).toContain('Filtra la lista');
+  });
+});
+
+describe('ListRenderer: textFilter alla radice per le viste senza header (SXADV-4569)', () => {
+  const TF = { text: 'rossi' };
+  it('senza header ne\' paging: ui.textFilter fa comparire campo e Tag anche con 0 righi', () => {
+    const html = render(list({ textFilter: TF }, 0));
+    expect(html).toContain('aria-label="Cerca nella lista"');
+    expect(html).toContain('Togli il filtro');
+  });
+  it('header.textFilter vince su ui.textFilter', () => {
+    const html = render(list({ header: { recordCount: 3, pageSize: 100, position: 0, textFilter: { text: 'bianchi' } }, textFilter: TF }, 3));
+    expect(html).toContain('bianchi');
+    expect(html).not.toContain('rossi');
+  });
+  it('gridActions.textFilter vince su header e radice', () => {
+    const html = render(list({
+      gridActions: { path: LIST_PATH, addCommand: 'Add', textFilter: { text: 'verdi' } },
+      header: { recordCount: 3, pageSize: 100, position: 0, textFilter: { text: 'bianchi' } },
+      textFilter: TF,
+    }, 3));
+    expect(html).toContain('verdi');
+    expect(html).not.toContain('bianchi');
+  });
+  it('con paging vale solo paging: senza textFilter li\' il filtro non c\'e\', anche se la radice lo dice', () => {
+    const html = render(list({
+      paging: { currentPage: 1, totalPages: 1, totalRows: 3, pageSize: 100, position: 0 },
+      textFilter: TF,
+    }, 3));
+    expect(html).not.toContain('Togli il filtro');
+  });
+});
+
