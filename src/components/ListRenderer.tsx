@@ -504,6 +504,8 @@ const ALIGN_WINDOW_MS = 1500;
 const PAGE_WAIT_MS = 5000;
 // Quanto il «Cerca» aspetta la pagina del rigo trovato (SXADV-4569).
 const LOCATE_WAIT_MS = 5000;
+/** Quando riportare a vista il rigo trovato dopo l'apertura del pannello di riga. */
+const REVEAL_AFTER_PANEL_MS = 300;
 
 /** Leftmost navigate-to-detail column for listEdit+detailView lists (the
  *  legacy "selector"). Field click edits in the panel; this icon opens the
@@ -3088,7 +3090,27 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     ?? rowData.filter((r) => r._selectorPath && !r._isContinuationRow && !r._isBreakRow).length;
   const showSearch = !!searchPath && showsListSearch(recordCount);
   const [locateTarget, setLocateTarget] = useState<{ position: number; at: number } | null>(null);
-  const onLocated = useCallback((position: number) => setLocateTarget({ position, at: performance.now() }), []);
+  const revealTimerRef = useRef<number | undefined>(undefined);
+  const onLocated = useCallback((position: number) => {
+    // Il rigo della ricerca precedente non si riporta piu' a vista.
+    window.clearTimeout(revealTimerRef.current);
+    setLocateTarget({ position, at: performance.now() });
+  }, []);
+  // Il rigo trovato a vista anche FUORI dalla griglia: nei tab e nelle aree
+  // divise la griglia e' spesso alta quanto il contenuto e scorre l'area che
+  // la contiene, dove ensureIndexVisible non arriva. Si ripete dopo che il
+  // pannello di riga si e' aperto, perche' aprendosi restringe la griglia.
+  useEffect(() => () => window.clearTimeout(revealTimerRef.current), []);
+  const revealRow = useCallback((index: number) => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed()) return;
+    api.ensureIndexVisible(index);
+    const el = gridContainerRef.current?.querySelector<HTMLElement>(
+      `.ag-center-cols-container .ag-row[row-index="${index}"]`);
+    // nearest: si scorre solo se serve, e di quanto basta; un rigo piu' largo
+    // dell'area non sposta lo scorrimento orizzontale.
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, []);
   const locate = useCallback((params: Record<string, string>) => onAction('LocateRow', params), [onAction]);
   // La tendina «dove cercare»: le colonne mostrate, dalle intestazioni del server.
   const searchCols = useMemo(() => searchColumns(
@@ -3133,6 +3155,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       alignedPathRef.current = null;
       markSelected(path);
       api.ensureIndexVisible(index, 'middle');
+      requestAnimationFrame(() => revealRow(index));
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = window.setTimeout(() => revealRow(index), REVEAL_AFTER_PANEL_MS);
       const outcome = rowClickOutcome({
         isListEdit,
         isMultiEdit,
@@ -3152,7 +3177,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);
-  }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord]);
+  }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, revealRow]);
   const searchBox = showSearch && (
     <ListSearchBox listPath={searchPath as string} locate={locate} onFound={onLocated} columns={searchCols} />
   );
