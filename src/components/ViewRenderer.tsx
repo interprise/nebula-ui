@@ -1209,7 +1209,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
   // I nomi a filo dei campi del pannello: dopo un Nuovo quelli ancora sporchi
   // si scartano invece di spedirli (vedi onSelectRecord).
   const panelNamesRef = React.useRef<readonly string[]>([]);
-  const onSelectRecord = React.useCallback((path: string, opts?: { fromAdd?: boolean }) => {
+  const onSelectRecord = React.useCallback((path: string, opts?: { fromAdd?: boolean; focusPanel?: boolean }) => {
     // Prima di lasciare il record precedente, spedisci quello che si e'
     // digitato su di lui: la chiave dei valori non dice la riga, il navpath si.
     // Tranne dopo un Nuovo con il pannello ancora in attesa: quello che si era
@@ -1230,7 +1230,8 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     selectedPathRef.current = path;
     setHidden(false);
     setSelectedPath(path);
-    setFocusRequest((n) => (opts?.fromAdd ? n + 1 : 0));
+    // Anche il rigo trovato dal «Cerca» si scrive subito (SXADV-4569).
+    setFocusRequest((n) => (opts?.fromAdd || opts?.focusPanel ? n + 1 : 0));
     // Set the tab's edit navpath so Save/reload post with navpath = this row —
     // without it the server has no edit path and drops the row's field edits
     // (Shell.handleAction injects editNavpathRef as navpath when omitted).
@@ -1285,7 +1286,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
       rememberRow(memKey, detail.params.navpath);
       armReturn(memKey, 'row', owner);
     }
-    onAction(action, params);
+    return onAction(action, params);
   }, [rowActions, sid, ui, props.embedded, onAction]);
 
   // Riga tolta dal pannello (Cancella, o Annulla di una riga nuova): il

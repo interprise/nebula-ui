@@ -27,6 +27,8 @@ import { focusNewPage } from '../services/focusRestore';
 import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import { layoutButtonsPlacement } from './layoutButtonsPlacement';
+import ListSearchBox from './ListSearchBox';
+import { pathAtPosition, showsListSearch } from './listSearch';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
 import {
@@ -500,6 +502,8 @@ const ALIGN_WINDOW_MS = 1500;
 /** Quanto il ritorno su una lista di un tab aspetta la pagina del rigo che ha
  *  chiesto al server (SXADV-5957.2B). */
 const PAGE_WAIT_MS = 5000;
+// Quanto il «Cerca» aspetta la pagina del rigo trovato (SXADV-4569).
+const LOCATE_WAIT_MS = 5000;
 
 /** Leftmost navigate-to-detail column for listEdit+detailView lists (the
  *  legacy "selector"). Field click edits in the panel; this icon opens the
@@ -878,12 +882,15 @@ function* mainRowMarkupValues(rows: readonly UIRow[]): Generator<unknown> {
 
 interface ListRendererProps {
   ui: UITree;
-  onAction: (action: string, params?: Record<string, string>) => void;
+  /** Shell.handleAction: la risposta del server serve al «Cerca» (SXADV-4569). */
+  onAction: (action: string, params?: Record<string, string>) => unknown;
   onChange?: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
   onEditRow?: (navpath: string | null) => void;
-  /** listEdit: a record row was selected — the bottom edit panel renders it. */
-  onSelectRecord?: (navpath: string, opts?: { fromAdd?: boolean }) => void;
+  /** listEdit: a record row was selected — the bottom edit panel renders it.
+   *  `focusPanel`: il cursore va sul primo campo del pannello (il rigo trovato
+   *  dal «Cerca», SXADV-4569). */
+  onSelectRecord?: (navpath: string, opts?: { fromAdd?: boolean; focusPanel?: boolean }) => void;
   /** listEdit: report the ordered record paths (main rows) so the panel can
    *  navigate prev/next between records. */
   onRecordPaths?: (records: ListRecord[]) => void;
@@ -3070,6 +3077,80 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const gridPath = gridActions?.path || ui.path;
   const hasGridActions = !!gridActions && !!(gridActions.addCommand || gridActions.xlsCommand || gridActions.printCommand);
 
+  // «Cerca» (SXADV-4569): il server trova il rigo e porta la lista sulla sua
+  // pagina; qui, quando quella pagina c'e', la riga si evidenzia, si porta a
+  // vista e si apre come al clic: sulle liste col pannello di riga il cursore
+  // va sul primo campo scrivibile (l'Esito di un contatto nel tab Eventi di una
+  // campagna); sulle altre il cursore resta nel campo. Il bersaglio scade se la
+  // pagina non arriva (il pannello di un albero non riceve i cambi pagina).
+  const searchPath = gridPath;
+  const recordCount = pageInfo?.totalRows
+    ?? rowData.filter((r) => r._selectorPath && !r._isContinuationRow && !r._isBreakRow).length;
+  const showSearch = !!searchPath && showsListSearch(recordCount);
+  const [locateTarget, setLocateTarget] = useState<{ position: number; at: number } | null>(null);
+  const onLocated = useCallback((position: number) => setLocateTarget({ position, at: performance.now() }), []);
+  const locate = useCallback((params: Record<string, string>) => onAction('LocateRow', params), [onAction]);
+  useEffect(() => {
+    if (!locateTarget) return undefined;
+    if (performance.now() - locateTarget.at > LOCATE_WAIT_MS) { setLocateTarget(null); return undefined; }
+    const paths: string[] = [];
+    for (const r of rowData) {
+      const p = r._selectorPath as string | undefined;
+      if (p && !r._isContinuationRow) paths.push(p);
+    }
+    const path = pathAtPosition(paths, locateTarget.position);
+    // La pagina del rigo non e' ancora qui: riprova al prossimo rowData.
+    if (!path) return undefined;
+    let raf = 0;
+    let tries = 0;
+    const attempt = () => {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed()) {
+        if (tries++ < 10) raf = requestAnimationFrame(attempt);
+        return;
+      }
+      let rowIndex: number | null = null;
+      let command: string | undefined;
+      api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
+        if (rowIndex == null && n.data?._selectorPath === path && !n.data?._isContinuationRow && n.rowIndex != null) {
+          rowIndex = n.rowIndex;
+          command = n.data._selectorCommand as string | undefined;
+        }
+      });
+      if (rowIndex == null) {
+        if (tries++ < 10) raf = requestAnimationFrame(attempt);
+        return;
+      }
+      const index: number = rowIndex;
+      setLocateTarget(null);
+      rememberRow(memKey, path);
+      alignedPathRef.current = null;
+      markSelected(path);
+      api.ensureIndexVisible(index, 'middle');
+      const outcome = rowClickOutcome({
+        isListEdit,
+        isMultiEdit,
+        hasGridCheckbox,
+        hasPanelTemplate: !!ui.panelTemplateKey,
+        command,
+        canEdit: !!selectorInfo.canEdit,
+        canUpdate: !!selectorInfo.canUpdate,
+      });
+      if (outcome === 'panel') {
+        onSelectRecord?.(path, { focusPanel: true });
+        return;
+      }
+      // Niente pannello: il fuoco resta nel campo, e Invio trova il rigo
+      // successivo come un «trova» qualsiasi; la riga trovata e' quella
+      // evidenziata, e si apre col clic.
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord]);
+  const searchBox = showSearch && (
+    <ListSearchBox listPath={searchPath as string} locate={locate} onFound={onLocated} />
+  );
+
   // The container never claims more than the available width: horizontal
   // overflow is AG Grid's job (internal scroll, per-column minWidths keep the
   // scroll width honest). The old colspan-based container minWidth pushed wide
@@ -3101,12 +3182,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // riga da soli (layoutButtonsPlacement).
   const showsGridTitle = !!gridActions?.title && !titleEchoesTab;
   const gridBandHasContent = hasGridActions || showsGridTitle;
+  // Il «Cerca» segue la regola dei comandi di layout: nella banda dei bottoni
+  // di griglia se c'e', altrimenti in coda alle azioni di lista, altrimenti in
+  // una banda sua.
   const layoutPlacement = layoutButtonsPlacement({
-    hasLayoutButtons: canFlatten || canZoom,
+    hasLayoutButtons: canFlatten || canZoom || showSearch,
     gridBandHasContent,
     hasListActions: !!ui.listActions && ui.listActions.length > 0,
   });
-  const layoutButtons = layoutPlacement !== 'none' && (
+  const layoutButtons = layoutPlacement !== 'none' && (canFlatten || canZoom) && (
     <Space size="small" style={{ marginLeft: 'auto' }}>
       {canFlatten && (
         <Tooltip
@@ -3200,6 +3284,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               lo scriveva il legacy ("Azioni" sotto la testata di Eventi
               Clienti). Il server non lo manda quando la griglia sta dentro un
               tab, che l'etichetta ce l'ha gia'. */}
+          {layoutPlacement === 'grid-band' && searchBox && (
+            <span style={{ marginLeft: hasGridActions ? 8 : 0 }}>{searchBox}</span>
+          )}
           {showsGridTitle && (
             <span className="grid-actions-title">{gridActions!.title}</span>
           )}
@@ -3218,6 +3305,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               {act.label}
             </Button>
           ))}
+          {layoutPlacement === 'action-bar' && searchBox}
           {layoutPlacement === 'action-bar' && layoutButtons}
         </div>
       )}

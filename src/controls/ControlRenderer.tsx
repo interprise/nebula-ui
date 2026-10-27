@@ -61,7 +61,7 @@ const ControlRenderer: React.FC<ControlRendererProps> = ({ control, pageType, on
   const doAction = useCallback((action: string, params?: Record<string, string>) => {
     const p = { ...params };
     if (viewPath && !p.navpath) p.navpath = viewPath;
-    onAction(action, p);
+    return onAction(action, p);
   }, [onAction, viewPath]);
 
   const Component = control.type ? controls[control.type] : undefined;
