@@ -76,7 +76,32 @@ interface Props {
   listPath: string;
   locate: (params: Record<string, string>) => unknown;
   onFound: (position: number) => void;
+  columns?: readonly { name: string; label: string }[];
 }
+
+type AnyEl = ReactElement<Record<string, unknown>>;
+
+/** Il primo elemento dell'albero che soddisfa `pred` (figli, suffix, prefix). */
+function findEl(n: unknown, pred: (e: AnyEl) => boolean): AnyEl | undefined {
+  if (!n || typeof n !== 'object') return undefined;
+  if (Array.isArray(n)) { for (const x of n) { const f = findEl(x, pred); if (f) return f; } return undefined; }
+  const e = n as AnyEl;
+  if (!e.props) return undefined;
+  if (pred(e)) return e;
+  for (const k of ['children', 'suffix', 'prefix', 'addonBefore', 'addonAfter']) {
+    const f = findEl(e.props[k], pred);
+    if (f) return f;
+  }
+  return undefined;
+}
+
+/** L'Input «Cerca», alla radice o dentro il gruppo con la tendina. */
+const inputOf = (root: AnyEl): AnyEl => {
+  // Da aria-label: il segnaposto cambia con la colonna scelta.
+  const i = findEl(root, (e) => e.props['aria-label'] === 'Cerca nella lista');
+  if (!i) throw new Error('Input «Cerca» non trovato');
+  return i;
+};
 
 /** Un'istanza montata: render() rilegge l'elemento dopo ogni cambio di stato. */
 function mount(props: Props) {
@@ -94,14 +119,16 @@ function mount(props: Props) {
   };
   render();
   return {
-    get el() { return el; },
+    /** L'Input «Cerca» (non la radice, se c'e' la tendina). */
+    get el() { return inputOf(el); },
+    get root() { return el; },
     type(text: string) {
-      (el.props.onChange as (e: unknown) => void)({ target: { value: text } });
+      (inputOf(el).props.onChange as (e: unknown) => void)({ target: { value: text } });
       render();
     },
     enter(shiftKey = false) {
       const ev = { preventDefault: vi.fn(), stopPropagation: vi.fn(), key: 'Enter', shiftKey };
-      (el.props.onPressEnter as (e: unknown) => void)(ev);
+      (inputOf(el).props.onPressEnter as (e: unknown) => void)(ev);
       render();
       return ev;
     },
@@ -114,7 +141,8 @@ function mount(props: Props) {
         if (e.props?.['aria-label'] === label) return e;
         return seek(e.props?.children);
       };
-      const b = seek(el.props.suffix) ?? seek(el.props.addonAfter) ?? seek(el.props.prefix);
+      const inp = inputOf(el);
+      const b = seek(inp.props.suffix) ?? seek(inp.props.addonAfter) ?? seek(inp.props.prefix);
       if (!b) throw new Error(`pulsante "${label}" non trovato`);
       return b;
     },
@@ -742,6 +770,169 @@ describe('ListSearchBox (SXADV-4569)', () => {
       box.render();
       expect(box.button('Rigo precedente').props.disabled).toBeFalsy();
       expect(box.button('Rigo successivo').props.disabled).toBeFalsy();
+    });
+  });
+
+  describe('la tendina «dove cercare»', () => {
+    const COLS = [
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+      { name: 'citta', label: 'Città' },
+    ];
+    const selectOf = (root: AnyEl) => findEl(root, (e) => e.props['aria-label'] === 'Dove cercare');
+    const choose = (box: ReturnType<typeof mount>, value: string) => {
+      const sel = selectOf(box.root);
+      if (!sel) throw new Error('tendina non trovata');
+      (sel.props.onChange as (v: string, o?: unknown) => void)(value, undefined);
+      box.render();
+    };
+    const lastParams = (locate: { mock: { calls: unknown } }) => callsOf(locate).at(-1)![0] as Record<string, string>;
+
+    it('senza colonne, o con una sola: niente tendina, solo l\'Input', () => {
+      for (const columns of [undefined, [], [COLS[0]]]) {
+        const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), columns });
+        expect(selectOf(box.root)).toBeUndefined();
+        expect(box.root.props.placeholder).toBe('Cerca');
+      }
+    });
+
+    it('con due o piu\' colonne: tendina «Dove cercare», prima voce «Tutte le colonne» (value \'\')', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), columns: COLS });
+      const sel = selectOf(box.root);
+      expect(sel).toBeDefined();
+      const options = sel!.props.options as { value: string; label: unknown }[];
+      expect(options[0]).toMatchObject({ value: '', label: 'Tutte le colonne' });
+      expect(options.slice(1).map((o) => [o.value, o.label])).toEqual(COLS.map((c) => [c.name, c.label]));
+      expect(sel!.props.value).toBe('');
+    });
+
+    it('a tutte le colonne non si manda col', async () => {
+      const locate = vi.fn(async () => found(5));
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), columns: COLS });
+      box.type('rossi');
+      box.enter();
+      await flush();
+      expect(lastParams(locate).col).toBeUndefined();
+    });
+
+    it('scelta una colonna, le ricerche mandano col (anche all\'indietro e nelle continuazioni)', async () => {
+      const answers = [found(5), more(800, 200), found(450, 551)];
+      const locate = vi.fn(async () => answers.shift());
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), columns: COLS });
+      choose(box, 'descrizione');
+      expect(selectOf(box.root)!.props.value).toBe('descrizione');
+      box.type('rossi');
+      box.enter();
+      await flush();
+      expect(callsOf(locate)[0][0]).toMatchObject({ col: 'descrizione', from: '-1' });
+      box.enter(true);
+      await flush();
+      expect(callsOf(locate)[1][0]).toMatchObject({ col: 'descrizione', from: '5', dir: '-1' });
+      expect(callsOf(locate)[2][0]).toMatchObject({ col: 'descrizione', from: '800', done: '200', dir: '-1' });
+    });
+
+    it('scegliere una colonna azzera la memoria: lo stesso testo riparte da -1', async () => {
+      const answers = [found(57), found(9)];
+      const locate = vi.fn(async () => answers.shift());
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), columns: COLS });
+      box.type('rossi');
+      box.enter();
+      await flush();
+      choose(box, 'citta');
+      box.enter();
+      await flush();
+      expect(lastParams(locate)).toMatchObject({ from: '-1', col: 'citta' });
+    });
+
+    it('tornare a «Tutte le colonne» azzera anche quello e non manda col', async () => {
+      const answers = [found(57), found(9)];
+      const locate = vi.fn(async () => answers.shift());
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), columns: COLS });
+      choose(box, 'citta');
+      box.type('rossi');
+      box.enter();
+      await flush();
+      choose(box, '');
+      box.enter();
+      await flush();
+      const p = lastParams(locate);
+      expect(p.from).toBe('-1');
+      expect(p.col).toBeUndefined();
+    });
+
+    it('scegliere una colonna rimette il fuoco nell\'input (dopo che la tendina si e\' chiusa)', async () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), columns: COLS });
+      const ref = box.el.props.ref as { current: unknown } | undefined;
+      expect(ref && typeof ref === 'object').toBe(true);
+      const focus = vi.fn();
+      ref!.current = { focus };
+      choose(box, 'codice');
+      await flush();
+      expect(focus).toHaveBeenCalled();
+    });
+
+    it('segnaposto: «Cerca» a tutte le colonne, «Cerca in <etichetta>» con una colonna scelta', () => {
+      const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), columns: COLS });
+      expect(box.el.props.placeholder).toBe('Cerca');
+      choose(box, 'citta');
+      expect(box.el.props.placeholder).toBe('Cerca in Città');
+      choose(box, 'descrizione');
+      expect(box.el.props.placeholder).toBe('Cerca in Descrizione');
+      choose(box, '');
+      expect(box.el.props.placeholder).toBe('Cerca');
+    });
+
+    it('segnaposto: la colonna scelta che sparisce torna a «Cerca»', () => {
+      const props: Props = { listPath: LIST, locate: vi.fn(), onFound: vi.fn(), columns: COLS };
+      const box = mount(props);
+      choose(box, 'citta');
+      props.columns = [COLS[0], COLS[1]];
+      box.render();
+      expect(box.el.props.placeholder).toBe('Cerca');
+    });
+
+    it('la colonna scelta sparisce dalle colonne: si torna a tutte, niente col', async () => {
+      const locate = vi.fn(async () => found(1));
+      const props: Props = { listPath: LIST, locate, onFound: vi.fn(), columns: COLS };
+      const box = mount(props);
+      choose(box, 'descrizione');
+      props.columns = [COLS[0], COLS[2]];
+      box.render();
+      expect(selectOf(box.root)!.props.value).toBe('');
+      box.type('rossi');
+      box.enter();
+      await flush();
+      expect(lastParams(locate).col).toBeUndefined();
+    });
+
+    it('la colonna sparita che poi ricompare non torna scelta da sola (si era tornati a tutte)', async () => {
+      const locate = vi.fn(async () => found(1));
+      const props: Props = { listPath: LIST, locate, onFound: vi.fn(), columns: COLS };
+      const box = mount(props);
+      choose(box, 'descrizione');
+      props.columns = [COLS[0], COLS[2]];
+      box.render();
+      props.columns = COLS;
+      box.render();
+      expect(selectOf(box.root)!.props.value).toBe('');
+      box.type('rossi');
+      box.enter();
+      await flush();
+      expect(lastParams(locate).col).toBeUndefined();
+    });
+
+    it('le colonne scese sotto due: la tendina sparisce e non si manda col', async () => {
+      const locate = vi.fn(async () => found(1));
+      const props: Props = { listPath: LIST, locate, onFound: vi.fn(), columns: COLS };
+      const box = mount(props);
+      choose(box, 'codice');
+      props.columns = [COLS[1]];
+      box.render();
+      expect(selectOf(box.root)).toBeUndefined();
+      box.type('rossi');
+      box.enter();
+      await flush();
+      expect(lastParams(locate).col).toBeUndefined();
     });
   });
 });

@@ -28,7 +28,7 @@ import { listColumnWidth } from './listColumnWidth';
 import { canOfferOneLine, columnsOverflow } from './oneLineOffer';
 import { layoutButtonsPlacement } from './layoutButtonsPlacement';
 import ListSearchBox from './ListSearchBox';
-import { pathAtPosition, showsListSearch } from './listSearch';
+import { pathAtPosition, searchColumns, showsListSearch } from './listSearch';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
 import {
@@ -3090,6 +3090,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const [locateTarget, setLocateTarget] = useState<{ position: number; at: number } | null>(null);
   const onLocated = useCallback((position: number) => setLocateTarget({ position, at: performance.now() }), []);
   const locate = useCallback((params: Record<string, string>) => onAction('LocateRow', params), [onAction]);
+  // La tendina «dove cercare»: le colonne mostrate, dalle intestazioni del server.
+  const searchCols = useMemo(() => searchColumns(
+    ui.headers,
+    (raw) => listHeaderLabel(raw).text,
+    (idx) => isBooleanType(ui.columns?.[idx]?.control?.type as string | undefined),
+  ), [ui.headers, ui.columns]);
   useEffect(() => {
     if (!locateTarget) return undefined;
     if (performance.now() - locateTarget.at > LOCATE_WAIT_MS) { setLocateTarget(null); return undefined; }
@@ -3148,7 +3154,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return () => cancelAnimationFrame(raf);
   }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord]);
   const searchBox = showSearch && (
-    <ListSearchBox listPath={searchPath as string} locate={locate} onFound={onLocated} />
+    <ListSearchBox listPath={searchPath as string} locate={locate} onFound={onLocated} columns={searchCols} />
   );
 
   // The container never claims more than the available width: horizontal

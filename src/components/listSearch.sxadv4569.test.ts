@@ -9,6 +9,7 @@ import {
   searchKey,
   showsListSearch,
   stoppedMessage,
+  searchColumns,
 } from './listSearch';
 
 // SXADV-4569 — «Cerca» di una lista: le regole pure del client.
@@ -236,5 +237,124 @@ describe('locateParams all\'indietro', () => {
     const { dir, ...rest } = bwd;
     expect(dir).toBe('-1');
     expect(rest).toEqual(fwd);
+  });
+});
+
+describe('locateParams: col', () => {
+  const LIST = 'S1-3';
+  it('column vuota (o assente): niente col', () => {
+    expect(locateParams(LIST, 'x', EMPTY_SEARCH).col).toBeUndefined();
+    expect(locateParams(LIST, 'x', EMPTY_SEARCH, undefined, false, '').col).toBeUndefined();
+    expect('col' in locateParams(LIST, 'x', EMPTY_SEARCH, undefined, true, '')).toBe(false);
+  });
+
+  it('column data: col=<column>, in avanti e all\'indietro', () => {
+    expect(locateParams(LIST, 'x', EMPTY_SEARCH, undefined, false, 'descrizione').col).toBe('descrizione');
+    expect(locateParams(LIST, 'x', EMPTY_SEARCH, undefined, true, 'descrizione')).toMatchObject({ col: 'descrizione', dir: '-1' });
+  });
+
+  it('anche nelle continuazioni', () => {
+    expect(locateParams(LIST, 'x', EMPTY_SEARCH, { position: 199, scanned: 200 }, false, 'citta'))
+      .toEqual({ navpath: LIST, option1: 'x', from: '199', done: '200', col: 'citta' });
+  });
+
+  it('la logica di from non cambia con col', () => {
+    expect(locateParams(LIST, 'x', { text: 'x', lastFound: 7 }, undefined, false, 'citta').from).toBe('7');
+    expect(locateParams(LIST, 'y', { text: 'x', lastFound: 7 }, undefined, false, 'citta').from).toBe('-1');
+  });
+});
+
+describe('searchColumns', () => {
+  const id = (raw: string) => raw;
+  const never = () => false;
+
+  it('nome ed etichetta nell\'ordine delle intestazioni', () => {
+    expect(searchColumns([
+      { name: 'codice', text: 'Codice' },
+      { name: 'descrizione', text: 'Descrizione' },
+    ], id, never)).toEqual([
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+    ]);
+  });
+
+  it('headers assenti o vuoti: nessuna colonna', () => {
+    expect(searchColumns(undefined, id, never)).toEqual([]);
+    expect(searchColumns([], id, never)).toEqual([]);
+  });
+
+  it('toglie il selettore e le intestazioni senza name', () => {
+    expect(searchColumns([
+      { type: 'selector', name: 'sel', text: 'Sel' },
+      { text: 'Senza nome' },
+      { name: '', text: 'Nome vuoto' },
+      { name: 'codice', text: 'Codice' },
+    ], id, never)).toEqual([{ name: 'codice', label: 'Codice' }]);
+  });
+
+  it('nomi ripetuti: tiene il primo', () => {
+    expect(searchColumns([
+      { name: 'codice', text: 'Codice' },
+      { name: 'descrizione', text: 'Descrizione' },
+      { name: 'codice', text: 'Codice bis' },
+    ], id, never)).toEqual([
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+    ]);
+  });
+
+  it('isBoolean riceve l\'indice delle intestazioni ORIGINALI, selettore compreso', () => {
+    const seen: number[] = [];
+    const out = searchColumns([
+      { type: 'selector', name: 'sel', text: '' },
+      { name: 'codice', text: 'Codice' },
+      { name: 'attivo', text: 'Attivo' },
+      { name: 'descrizione', text: 'Descrizione' },
+    ], id, (idx) => { seen.push(idx); return idx === 2; });
+    expect(out).toEqual([
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+    ]);
+    expect(seen).toContain(1);
+    expect(seen).toContain(2);
+    expect(seen).toContain(3);
+  });
+
+  it('etichetta vuota dopo label(text).trim(): via', () => {
+    const label = (raw: string) => raw.replace(/<[^>]*>/g, '');
+    expect(searchColumns([
+      { name: 'icona', text: '<img src="x.png">' },
+      { name: 'spazi', text: '   ' },
+      { name: 'manca' },
+      { name: 'codice', text: '<b>Codice</b> ' },
+    ], label, never)).toEqual([{ name: 'codice', label: 'Codice' }]);
+  });
+
+  it('l\'etichetta e\' quella di label(), ripulita agli estremi', () => {
+    expect(searchColumns([{ name: 'tel', text: 'Telefono: <img src="t.png">' }],
+      (raw) => raw.replace(/<[^>]*>/g, ''), never)).toEqual([{ name: 'tel', label: 'Telefono:' }]);
+  });
+});
+
+describe('searchColumns: colonne non cercabili (searchable: false)', () => {
+  const id = (raw: string) => raw;
+  it('scarta le intestazioni con searchable === false, tiene quelle senza il campo o true', () => {
+    expect(searchColumns([
+      { name: 'codice', text: 'Codice' },
+      { name: 'note', text: 'Note', searchable: false },
+      { name: 'descrizione', text: 'Descrizione', searchable: true },
+    ] as { name?: string; text?: string; type?: string; searchable?: boolean }[], id, () => false)).toEqual([
+      { name: 'codice', label: 'Codice' },
+      { name: 'descrizione', label: 'Descrizione' },
+    ]);
+  });
+
+  it('una non cercabile in mezzo: le altre restano, nell\'ordine', () => {
+    const out = searchColumns([
+      { name: 'codice', text: 'Codice' },
+      { name: 'stato', text: 'Stato', searchable: false },
+      { name: 'descrizione', text: 'Descrizione' },
+    ] as { name?: string; text?: string; type?: string; searchable?: boolean }[], id, () => false);
+    expect(out.map((c) => c.name)).toEqual(['codice', 'descrizione']);
   });
 });

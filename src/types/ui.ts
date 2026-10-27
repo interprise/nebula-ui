@@ -205,6 +205,8 @@ export interface ListHeader {
   type?: string; // 'selector' for row selector column
   colspan?: number;
   configureIcon?: { included: boolean; itemId: string };
+  /** `false` = il Cerca (LocateRow) non guarda questa colonna (SXADV-4569). */
+  searchable?: boolean;
 }
 
 export interface ListMeta {

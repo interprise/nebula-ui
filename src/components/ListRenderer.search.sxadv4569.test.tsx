@@ -127,3 +127,55 @@ describe('ListRenderer: il campo Cerca (SXADV-4569)', () => {
     expect(html).not.toContain('placeholder="Cerca"');
   });
 });
+
+describe('ListRenderer: la tendina «dove cercare» dalle intestazioni (SXADV-4569)', () => {
+  const two = [
+    { text: 'Codice', colspan: 1, name: 'codice' },
+    { text: 'Descrizione', colspan: 1, name: 'descrizione' },
+  ];
+
+  it('due colonne con nome ed etichetta: la tendina c\'e\' (voce «Tutte le colonne»)', () => {
+    const html = render(list({ headers: two }, 3));
+    expect(html).toContain('placeholder="Cerca"');
+    expect(html).toContain('Tutte le colonne');
+  });
+
+  it('una colonna sola con nome: niente tendina', () => {
+    const html = render(list({ headers: [two[0], { text: 'Descrizione', colspan: 1 }] }, 3));
+    expect(html).toContain('placeholder="Cerca"');
+    expect(html).not.toContain('Tutte le colonne');
+  });
+
+  it('due colonne ma una e\' un Si/No (ui.columns): niente tendina', () => {
+    const html = render(list({
+      headers: [two[0], { text: 'Attivo', colspan: 1, name: 'attivo' }],
+      columns: [{ control: { type: 'text' } }, { control: { type: 'boolean' } }],
+    }, 3));
+    expect(html).toContain('placeholder="Cerca"');
+    expect(html).not.toContain('Tutte le colonne');
+  });
+});
+
+describe('ListRenderer: searchable:false dalle intestazioni del server (SXADV-4569)', () => {
+  it('due colonne di cui una non cercabile: niente tendina', () => {
+    const html = render(list({
+      headers: [
+        { text: 'Codice', colspan: 1, name: 'codice' },
+        { text: 'Nota', colspan: 1, name: 'nota', searchable: false },
+      ],
+    }, 3));
+    expect(html).toContain('placeholder="Cerca"');
+    expect(html).not.toContain('Tutte le colonne');
+  });
+
+  it('tre colonne di cui una non cercabile: tendina con le due cercabili', () => {
+    const html = render(list({
+      headers: [
+        { text: 'Codice', colspan: 1, name: 'codice' },
+        { text: 'Nota', colspan: 1, name: 'nota', searchable: false },
+        { text: 'Descrizione', colspan: 1, name: 'descrizione' },
+      ],
+    }, 3));
+    expect(html).toContain('Tutte le colonne');
+  });
+});

@@ -62,6 +62,7 @@ export function locateParams(
   memory: SearchMemory,
   cont?: { position: number; scanned: number },
   backward = false,
+  column = '',
 ): Record<string, string> {
   const key = searchKey(text);
   // Maiuscole e accenti non contano, come nel confronto del server.
@@ -70,6 +71,7 @@ export function locateParams(
   const params: Record<string, string> = { navpath: listPath, option1: key, from: String(from) };
   if (cont) params.done = String(cont.scanned);
   if (backward) params.dir = '-1';
+  if (column) params.col = column;
   return params;
 }
 
@@ -104,6 +106,36 @@ export function stoppedMessage(text: string): string {
  */
 export function showsListSearch(recordCount: number): boolean {
   return recordCount > 1;
+}
+
+/** Una colonna in cui si puo' cercare: `name` e' il content del ViewItem. */
+export interface SearchColumn {
+  name: string;
+  label: string;
+}
+
+/**
+ * Le colonne della tendina «dove cercare»: quelle della prima riga
+ * d'intestazione con un nome e un'etichetta, una volta sola per nome, senza
+ * quelle che il server non guarda (`searchable: false`, caselle Si'/No). `label` e' gia' il testo dell'intestazione senza markup.
+ */
+export function searchColumns(
+  headers: readonly { name?: string; text?: string; type?: string; searchable?: boolean }[] | undefined,
+  label: (raw: string) => string,
+  isBoolean: (idx: number) => boolean,
+): SearchColumn[] {
+  const out: SearchColumn[] = [];
+  const seen = new Set<string>();
+  (headers ?? []).forEach((h, idx) => {
+    // `searchable: false` lo dice il server: contenitori, Hint, colonne che
+    // LocateRow salta.
+    if (h.type === 'selector' || !h.name || h.searchable === false || seen.has(h.name) || isBoolean(idx)) return;
+    const text = label(h.text ?? '').trim();
+    if (!text) return;
+    seen.add(h.name);
+    out.push({ name: h.name, label: text });
+  });
+  return out;
 }
 
 /** Quante continuazioni al piu' segue il client per una sola ricerca. */

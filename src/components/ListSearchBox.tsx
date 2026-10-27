@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Button, Input } from 'antd';
+import { Button, Input, Select, type InputRef } from 'antd';
 import { DownOutlined, LoadingOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons';
 import { useFeedback } from '../hooks/feedback';
 import {
@@ -10,6 +10,7 @@ import {
   readLocated,
   searchKey,
   stoppedMessage,
+  type SearchColumn,
   type SearchMemory,
 } from './listSearch';
 
@@ -20,6 +21,8 @@ interface ListSearchBoxProps {
   locate: (params: Record<string, string>) => unknown;
   /** Il server ha trovato il rigo a questa posizione e ha portato la lista sulla sua pagina. */
   onFound: (position: number) => void;
+  /** Le colonne della tendina «dove cercare»; con meno di due non c'e' tendina. */
+  columns?: readonly SearchColumn[];
 }
 
 const STEP_STYLE: React.CSSProperties = { width: 18, minWidth: 18, height: 18 };
@@ -29,12 +32,26 @@ const STEP_STYLE: React.CSSProperties = { width: 18, minWidth: 18, height: 18 };
  * contiene il testo, e a fine lista riprende dall'inizio; la ricerca la fa il
  * server su tutte le pagine (vedi listSearch.ts).
  */
-const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound }) => {
+const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound, columns = [] }) => {
   const feedback = useFeedback();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  /** La colonna scelta, '' = tutte. */
+  const [column, setColumn] = useState('');
   const memoryRef = useRef<SearchMemory>(EMPTY_SEARCH);
+  /** La colonna in cui si e' cercato l'ultima volta: un'altra = ricerca nuova. */
+  const memoryColumnRef = useRef('');
   const busyRef = useRef(false);
+  const inputRef = useRef<InputRef>(null);
+
+  // Una colonna sparita (lista ridisegnata con altre colonne) torna a «tutte»,
+  // e resta tale se poi ricompare; la ricerca ricomincia.
+  // (Stato corretto durante il render, lo schema di React per lo stato che
+  // dipende dalle props.) La memoria non va toccata: e' legata alla colonna.
+  const present = !column || columns.some((c) => c.name === column);
+  const chosen = present ? column : '';
+  const chosenLabel = columns.find((c) => c.name === chosen)?.label;
+  if (!present) setColumn('');
 
   const run = useCallback(async (backward = false) => {
     const key = searchKey(text);
@@ -42,7 +59,9 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
     busyRef.current = true;
     setBusy(true);
     try {
-      let params = locateParams(listPath, key, memoryRef.current, undefined, backward);
+      if (memoryColumnRef.current !== chosen) memoryRef.current = EMPTY_SEARCH;
+      memoryColumnRef.current = chosen;
+      let params = locateParams(listPath, key, memoryRef.current, undefined, backward, chosen);
       let stoppedAt = -1;
       // Una lista enorme si guarda a giri: il server si ferma al tetto di tempo
       // e dice da dove ripartire.
@@ -52,7 +71,7 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
         if (!result) return;
         if (result.more) {
           stoppedAt = result.position;
-          params = locateParams(listPath, key, memoryRef.current, result, backward);
+          params = locateParams(listPath, key, memoryRef.current, result, backward, chosen);
           continue;
         }
         if (result.found) {
@@ -74,14 +93,15 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
       busyRef.current = false;
       setBusy(false);
     }
-  }, [text, listPath, locate, onFound, feedback]);
+  }, [text, chosen, listPath, locate, onFound, feedback]);
 
-  return (
+  const input = (
     <Input
+      ref={inputRef}
       className="list-search"
       size="small"
       allowClear
-      placeholder="Cerca"
+      placeholder={chosenLabel ? `Cerca in ${chosenLabel}` : 'Cerca'}
       aria-label="Cerca nella lista"
       aria-keyshortcuts="Enter Shift+Enter"
       value={text}
@@ -121,8 +141,35 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({ listPath, locate, onFound
           />
         </span>
       )}
-      style={{ width: 240 }}
+      // Nelle bande strette (griglie in un pannello) il campo si stringe
+      // invece di spingere la banda oltre il bordo.
+      style={{ width: 240, minWidth: 120, flexShrink: 1 }}
     />
+  );
+  if (columns.length < 2) return input;
+  return (
+    <span className="list-search-group" style={{ display: 'inline-flex', gap: 4, alignItems: 'center', minWidth: 0, flexShrink: 1 }}>
+      <Select
+        className="list-search-column"
+        size="small"
+        aria-label="Dove cercare"
+        value={chosen}
+        onChange={(v: string) => {
+          // Un'altra colonna e' un'altra ricerca: si ricomincia dall'inizio.
+          memoryRef.current = EMPTY_SEARCH;
+          setColumn(v);
+          // Dopo che la tendina si e' chiusa: rc-select si riprende il fuoco.
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        options={[
+          { value: '', label: 'Tutte le colonne' },
+          ...columns.map((c) => ({ value: c.name, label: c.label })),
+        ]}
+        popupMatchSelectWidth={false}
+        style={{ width: 150, minWidth: 90, flexShrink: 1 }}
+      />
+      {input}
+    </span>
   );
 };
 
