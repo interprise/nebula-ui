@@ -52,7 +52,11 @@ export function extractFormValues(ui: UITree): Record<string, string | string[]>
     const rows = viewRows(ctrl);
     if (rows && !isList(ctrl)) walkRows(rows);
   };
-  if (ui.rows) walkRows(ui.rows);
+  // Anche alla radice: una lista a pagina intera listEdit ha il rigo 0 "in
+  // modifica" per il server, con i controlli nominati; raccolti qui partivano
+  // con ogni Post e scrivevano CAP e nome di quel rigo su quello del pannello
+  // (trovato con SXADV-4569 su Comuni: il flush prima di pagina successiva).
+  if (ui.rows && !isList(ui)) walkRows(ui.rows);
   return values;
 }
 
