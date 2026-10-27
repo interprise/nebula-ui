@@ -1,9 +1,10 @@
-import { useContext, useState } from 'react';
+import { useCallback, useContext, useSyncExternalStore } from 'react';
 import { Button, Upload } from 'antd';
 import { SearchOutlined, PlusOutlined, UploadOutlined, DownloadOutlined, LinkOutlined } from '@ant-design/icons';
 import type { ControlComponent } from '../types';
 import { triggerDownload, uploadFile } from '../../services/api';
-import { SidContext } from '../../components/ViewRenderer';
+import { SidContext, ViewNameContext } from '../../components/ViewRenderer';
+import { getPendingUpload, setPendingUpload, subscribePendingUpload } from '../../services/pendingUpload';
 import { useFeedback } from '../../hooks/feedback';
 
 /** Un bottone la cui didascalia e' una lettera o due non e' un'azione
@@ -165,38 +166,35 @@ export const AddControl: ControlComponent = ({ control, onAction }) => {
   );
 };
 
-/** Shared file-picker behaviour for `upload` (FileUploadUIControl) and
- *  `uploadButton` (UploadButtonUIControl). Both mapped to the same legacy
- *  ExtJS component (`Ext.ux.form.FileUploadField`, ui.js `"upload"`), which
- *  on `fileselected` did:
- *    1. POST the file alone, multipart, to `ctl.action || 'FileUpload'`
- *       (doUpload) — the command parks it on the Session (uploadedFiles);
- *    2. on success re-dispatch the current view with `action=Post`
- *       (cleanUpload -> ajaxDo), which is what runs
- *       Command.checkForUpload -> UploadSupport.performUpload() and actually
- *       imports the file. `uiData.cdmsKey` redirects that follow-up to
- *       CdmsEdit instead (CdmsUploadCommand).
- *  Step 2 was missing: the file landed on the session and nothing consumed
- *  it, so "carica da file" appeared to do nothing (SXADV-5672). */
-function useFilePicker(
+/** Parametri del multipart: il nome del campo e la riga, come il legacy. */
+function uploadParams(control: Parameters<ControlComponent>[0]['control']): Record<string, string> {
+  const extra: Record<string, string> = {};
+  if (control.controlName) extra.option1 = control.controlName as string;
+  if (control.navpath) extra.navpath = control.navpath as string;
+  return extra;
+}
+
+/** `uploadButton` (UploadButtonUIControl) = legacy ExtJS
+ *  `Ext.ux.form.FileUploadField` (ui.js `"upload"`), che su `fileselected`:
+ *    1. manda il solo file, multipart, a `ctl.action || 'FileUpload'`
+ *       (doUpload) — il comando lo parcheggia sulla Session;
+ *    2. se va bene rilancia la vista con `action=Post` (cleanUpload ->
+ *       ajaxDo), che lo importa (Command.checkForUpload); `uiData.cdmsKey`
+ *       gira il seguito su CdmsEdit (CdmsUploadCommand) (SXADV-5672). */
+function useImmediateUpload(
   control: Parameters<ControlComponent>[0]['control'],
   onAction: (action: string, params?: Record<string, string>) => void,
 ) {
   const feedback = useFeedback();
   const sid = useContext(SidContext);
   const uploadAction = (control.uploadAction as string | undefined) ?? 'FileUpload';
-  const [fileName, setFileName] = useState<string | null>(null);
   const handleFile = async (file: File) => {
     try {
-      const extra: Record<string, string> = {};
-      if (control.controlName) extra.option1 = control.controlName as string;
-      if (control.navpath) extra.navpath = control.navpath as string;
-      const resp = await uploadFile(file, sid, extra, uploadAction);
+      const resp = await uploadFile(file, sid, uploadParams(control), uploadAction);
       if (resp.errors && resp.errors.length > 0) {
         feedback.showServerMessages(resp.errors);
         return false;
       }
-      setFileName(file.name);
       const cdmsKey = (resp.uiData as Record<string, unknown> | undefined)?.cdmsKey as string | undefined;
       if (cdmsKey) onAction('CdmsEdit', { navpath: cdmsKey });
       else onAction('Post');
@@ -205,12 +203,28 @@ function useFilePicker(
     }
     return false; // prevent antd's built-in xhr upload
   };
-  return { handleFile, fileName };
+  return handleFile;
 }
 
-export const UploadControl: ControlComponent = ({ control, onAction }) => {
+/** `upload` (FileUploadUIControl) = campo file nativo del legacy: la scelta
+ *  non manda niente, il file sale col Save/Post della vista (Shell ->
+ *  flushPendingUpload). Caricarlo alla scelta lo elaborava prima di Salva, e
+ *  Salva poi non aveva piu' niente da fare (SXADV-5761). */
+export const UploadControl: ControlComponent = ({ control }) => {
   const isDisabled = !!control.disabled || control.editable === false;
-  const { handleFile, fileName } = useFilePicker(control, onAction);
+  const sid = useContext(SidContext);
+  const viewName = useContext(ViewNameContext);
+  const subscribe = useCallback((cb: () => void) => subscribePendingUpload(sid, cb), [sid]);
+  const pendingFile = useSyncExternalStore(subscribe, () => getPendingUpload(sid)?.file);
+  const handleFile = (file: File) => {
+    setPendingUpload(sid, {
+      file,
+      params: uploadParams(control),
+      action: (control.uploadAction as string | undefined) ?? 'FileUpload',
+      viewName,
+    });
+    return false; // prevent antd's built-in xhr upload
+  };
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       <Upload
@@ -223,13 +237,13 @@ export const UploadControl: ControlComponent = ({ control, onAction }) => {
           {(control.prompt as string | undefined) ?? 'Scegli File'}
         </Button>
       </Upload>
-      {fileName && <span className="upload-file-name">{fileName}</span>}
+      {pendingFile && <span className="upload-file-name">{pendingFile.name}</span>}
     </span>
   );
 };
 
 /** UploadButton: the icon-only variant (legacy arrow_up.png image button).
- *  Same file-picker flow, no filename echo — it sits inline next to other
+ *  Carica alla scelta, senza eco del nome — it sits inline next to other
  *  fields (cdmsRisorseDetail). */
 export const UploadButtonControl: ControlComponent = (props) => {
   if (props.control.visible === false) return null;
@@ -238,7 +252,7 @@ export const UploadButtonControl: ControlComponent = (props) => {
 
 const UploadButtonInner: ControlComponent = ({ control, onAction }) => {
   const isDisabled = !!control.disabled || control.editable === false;
-  const { handleFile } = useFilePicker(control, onAction);
+  const handleFile = useImmediateUpload(control, onAction);
   return (
     <Upload beforeUpload={handleFile} maxCount={1} disabled={isDisabled} showUploadList={false}>
       <Button

@@ -97,6 +97,7 @@ import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
 import { withRowNavpath, withRowPostPath } from './rowPostPath';
 import { releasedEditRow } from './editRowLifetime';
+import { cancelsUpload, clearPendingUpload, flushPendingUpload, hasPendingUpload } from '../services/pendingUpload';
 import { markPanelField, scopePanelValues, type PanelFieldRows } from './panelFieldScope';
 
 const { Header, Content } = Layout;
@@ -1331,6 +1332,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           && (update.ui as unknown as Record<string, unknown>)._detailResponse === undefined) {
         update.paneBreadcrumbs = undefined;
       }
+      // Uscendo dalla vista il campo file del legacy spariva col suo file: un
+      // file scelto e mai salvato non sale col Post di un'altra (SXADV-5761).
+      // Vale anche per un altro record della stessa vista (record successivo,
+      // altra riga): il file andrebbe a quello (SXADV-5761).
+      if (update.ui !== undefined && existingUi !== undefined
+          && (update.ui.viewName !== existingUi.viewName
+            || (update.ui.path !== undefined && existingUi.path !== undefined && update.ui.path !== existingUi.path))) {
+        const sid = tabs.find((t) => t.key === tabKey)?.sid;
+        if (sid) clearPendingUpload(sid);
+      }
       if (Object.keys(update).length > 0) {
         updateTabState(tabKey, update);
       }
@@ -1623,6 +1634,25 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
           document.body.style.cursor = '';
         }
         return;
+      }
+
+      // Il file scelto in un campo `upload` sale prima del Save/Post, come nel
+      // legacy (doUpload); se il caricamento fallisce l'azione non parte e il
+      // file resta in attesa (SXADV-5761). Niente `loading` sulla scheda: un
+      // Salva cliccato mentre sale il file del Post di un campo verrebbe
+      // scartato; lo fa aspettare flushPendingUpload. Il CdmsEdit che prende
+      // il posto dell'azione prosegue qui, con la scheda di chi l'ha chiesto.
+      if (cancelsUpload(action)) clearPendingUpload(tab.sid);
+      if ((action === 'Save' || action === 'Post') && hasPendingUpload(tab.sid)) {
+        const up = await flushPendingUpload(tab.sid, action, params);
+        if (!up.ok) {
+          discardPendingFocus();
+          if (up.errors) feedback.showServerMessages(up.errors);
+          else if (up.error !== undefined) feedback.failure(up.error);
+          return;
+        }
+        action = up.action;
+        params = up.params;
       }
 
       const noFormValues = params._noFormValues === 'true';
@@ -2128,6 +2158,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // ricomparirebbero, ricostruite da `panels`). Come il closeSession() del
       // client legacy.
       if (closed) void api.postAction2('CloseSession', { sid: closed.sid }).catch(() => {});
+      if (closed) clearPendingUpload(closed.sid);
     }
   };
 
