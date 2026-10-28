@@ -8,7 +8,7 @@ import { totalsCellText, buildTotalsRow, hasActiveTotals } from './listTotals';
 //   totalsCellText(col) -> { text, title? } | null
 //     - colonna assente o senza aggregati attivi: null;
 //     - `Σ <sum>` e/o `⌀ <avg>`, su due righe se entrambi;
-//     - mixedCurrencies: «valute diverse»;
+//     - mixed (testo del server, «valute diverse», «unità diverse»): scritto com'è;
 //     - available=false (con aggregati attivi): «—» con title = reason;
 //     - error: «—» con title = error.
 //   buildTotalsRow(totals, columns) -> riga per pinnedBottomRowData | null
@@ -28,7 +28,8 @@ interface ColTotals {
   active: ('sum' | 'avg')[];
   sum?: string;
   avg?: string;
-  mixedCurrencies?: boolean;
+  allowed?: ('sum' | 'avg')[];
+  mixed?: string;
   reason?: string;
   error?: string;
 }
@@ -139,14 +140,40 @@ describe('totalsCellText (SXADV-5490)', () => {
     expect(r!.text).not.toMatch(/⌀\s*\S/);
   });
 
-  it('mixedCurrencies: «valute diverse»', () => {
-    const r = cell({ available: true, active: ['sum'], mixedCurrencies: true });
+  it('mixed: il testo del server, «valute diverse»', () => {
+    const r = cell({ available: true, allowed: ['sum', 'avg'], active: ['sum'], mixed: 'valute diverse' });
     expect(r!.text).toBe('valute diverse');
   });
 
-  it('mixedCurrencies con entrambi attivi: una volta sola «valute diverse»', () => {
-    const r = cell({ available: true, active: ['sum', 'avg'], mixedCurrencies: true });
+  it('mixed: «unità diverse» si scrive com\'è (non si traduce in «valute diverse»)', () => {
+    const r = cell({ available: true, allowed: ['sum', 'avg'], active: ['sum'], mixed: 'unità diverse' });
+    expect(r!.text).toBe('unità diverse');
+    expect(r!.text).not.toContain('Σ');
+  });
+
+  it('mixed: un testo qualsiasi del controllo si scrive verbatim', () => {
+    const r = cell({ available: true, allowed: ['avg'], active: ['avg'], mixed: 'valori non omogenei' });
+    expect(r!.text).toBe('valori non omogenei');
+  });
+
+  it('mixed con entrambi attivi: il testo una volta sola, niente Σ/⌀', () => {
+    const r = cell({ available: true, allowed: ['sum', 'avg'], active: ['sum', 'avg'], mixed: 'unità diverse' });
+    expect(r!.text).toBe('unità diverse');
+  });
+
+  it('mixed con valori residui per errore: vince mixed', () => {
+    const r = cell({ available: true, active: ['sum'], sum: '10', mixed: 'valute diverse' });
     expect(r!.text).toBe('valute diverse');
+  });
+
+  it('la vecchia bandierina mixedCurrencies non conta più: senza mixed si scrive il numero', () => {
+    const old = { available: true, active: ['sum'], sum: '10', mixedCurrencies: true } as unknown as ColTotals;
+    expect(cell(old)!.text).toBe('Σ 10');
+  });
+
+  it('mixed vuoto (stringa vuota): niente testo misto, si scrive il numero', () => {
+    const r = cell({ available: true, active: ['sum'], sum: '10', mixed: '' });
+    expect(r!.text).toBe('Σ 10');
   });
 
   it('non disponibile con aggregato attivo: «—» con title = reason', () => {
@@ -261,13 +288,21 @@ describe('buildTotalsRow (SXADV-5490)', () => {
   it('valute diverse e «—» passano nella riga, col suggerimento', () => {
     const r = row(totals({
       quantita: { available: false, reason: MSG_SOLO_PAGINA, active: ['sum'] },
-      importo: { available: true, active: ['sum'], mixedCurrencies: true },
+      importo: { available: true, active: ['sum'], mixed: 'valute diverse' },
     }), columns);
     expect(cellText(r!.col_2)).toBe('valute diverse');
     expect(cellText(r!.col_1)).toBe('—');
     const title = cellTitle(r!, 'col_1');
     if (title !== undefined) expect(title).toBe(MSG_SOLO_PAGINA);
     else expect(JSON.stringify(r)).toContain(MSG_SOLO_PAGINA);
+  });
+
+  it('unità diverse su una colonna quantità passa nella riga verbatim', () => {
+    const r = row(totals({
+      quantita: { available: true, allowed: ['sum'], active: ['sum'], mixed: 'unità diverse' },
+    }), columns);
+    expect(cellText(r!.col_1)).toBe('unità diverse');
+    expect(cellText(r!.col_0)).toBe('Totale');
   });
 
   it('una voce di totals che non corrisponde a nessuna colonna: ignorata, nessuna chiave inventata', () => {

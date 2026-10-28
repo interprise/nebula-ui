@@ -93,9 +93,11 @@ const TotalsHeaderButton = ({ name }: { name: string }) => {
   const active = col.active ?? [];
   const disabled = !col.available;
   const mark = (on: boolean) => (on ? <CheckOutlined /> : <span style={{ display: 'inline-block', width: 14 }} />);
+  // Solo gli aggregati che la colonna ammette: un prezzo si media, non si somma.
+  const allowed = col.allowed ?? ['sum', 'avg'];
   const items = [
-    { key: 'sum', label: 'Somma', icon: mark(active.includes('sum')), disabled },
-    { key: 'avg', label: 'Media', icon: mark(active.includes('avg')), disabled },
+    ...(allowed.includes('sum') ? [{ key: 'sum', label: 'Somma', icon: mark(active.includes('sum')), disabled }] : []),
+    ...(allowed.includes('avg') ? [{ key: 'avg', label: 'Media', icon: mark(active.includes('avg')), disabled }] : []),
     ...(disabled && col.reason ? [{
       key: 'reason',
       disabled: true,
@@ -127,7 +129,7 @@ const TotalsHeaderButton = ({ name }: { name: string }) => {
         aria-label="Somma e media"
         data-totals-column={name}
         className={`list-totals-btn${active.length > 0 ? ' list-totals-on' : ''}`}
-        title={disabled ? col.reason : 'Somma e media'}
+        title={disabled ? col.reason : allowed.length === 1 ? (allowed[0] === 'sum' ? 'Somma' : 'Media') : 'Somma e media'}
         style={{ cursor: 'pointer', marginLeft: 4, padding: '0 2px', fontWeight: active.length > 0 ? 700 : 400, opacity: disabled ? 0.45 : 1 }}
       >
         Σ

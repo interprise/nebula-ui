@@ -590,13 +590,15 @@ export interface ListColumnTotals {
   available: boolean;
   /** Perché no, da mostrare all'utente (solo con available=false). */
   reason?: string;
+  /** Aggregati che la colonna ammette (allowAggregates); assente = entrambi. */
+  allowed?: Array<'sum' | 'avg'>;
   /** Aggregati accesi, nell'ordine sum, avg. */
   active: Array<'sum' | 'avg'>;
   /** Testi già formattati dal server. */
   sum?: string;
   avg?: string;
-  /** Righe in valute diverse: niente numero. */
-  mixedCurrencies?: boolean;
+  /** Righe non uniformi («valute diverse», «unità diverse»): niente numero, questo testo. */
+  mixed?: string;
   /** La query è fallita. */
   error?: string;
 }

@@ -9,7 +9,6 @@
 import type { ListColumn, ListColumnTotals, ListTotals } from '../types/ui';
 
 export const TOTALS_LABEL = 'Totale';
-export const MIXED_CURRENCIES_TEXT = 'valute diverse';
 export const SUM_PREFIX = 'Σ';
 export const AVG_PREFIX = '⌀';
 
@@ -24,7 +23,7 @@ export function totalsCellText(col: ListColumnTotals | undefined): { text: strin
   if (!col || !col.active || col.active.length === 0) return null;
   if (!col.available) return { text: '—', title: col.reason };
   if (col.error) return { text: '—', title: col.error };
-  if (col.mixedCurrencies) return { text: MIXED_CURRENCIES_TEXT };
+  if (col.mixed) return { text: col.mixed };
   const lines: string[] = [];
   if (col.active.includes('sum')) lines.push(`${SUM_PREFIX} ${col.sum ?? ''}`.trimEnd());
   if (col.active.includes('avg')) lines.push(`${AVG_PREFIX} ${col.avg ?? ''}`.trimEnd());

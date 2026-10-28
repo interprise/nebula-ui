@@ -8,11 +8,14 @@ import { ELTYPE_CONTENT, ELTYPE_SELECTOR } from '../types/ui';
 // SXADV-5490 — Somma e Media sulle colonne delle liste, la resa in ListRenderer
 // (contratto CORE/docs/20261027_SXADV-5490_totali_di_colonna.md §6):
 //   - le colonne con una voce in ui.totals.columns hanno nell'intestazione un
-//     pulsante «Σ» con un menu «Somma» / «Media»; le altre no;
+//     pulsante «Σ» con un menu delle voci di `allowed`: «Somma» (sum) e/o
+//     «Media» (avg); se `allowed` manca (risposta vecchia) valgono entrambe;
+//     le altre colonne nessun Σ;
 //   - la scelta chiama onAction(totals.command, { option1: <controlName>,
 //     option2: 'sum'|'avg', navpath: totals.path });
 //   - available=false: le due voci disabilitate, con reason visibile;
-//   - almeno una colonna attiva: pinnedBottomRowData con il testo nella colonna;
+//   - almeno una colonna attiva: pinnedBottomRowData con il testo nella colonna
+//     (`mixed` = testo del server, scritto com'e');
 //     nessuna colonna attiva: nessuna riga fissata;
 //   - il clic sulla riga totali non naviga e non chiama onAction.
 //
@@ -157,7 +160,8 @@ interface ColTotals {
   active: string[];
   sum?: string;
   avg?: string;
-  mixedCurrencies?: boolean;
+  allowed?: string[];
+  mixed?: string;
   reason?: string;
   error?: string;
 }
@@ -559,6 +563,73 @@ describe('ListRenderer: la scelta chiama ListTotals (SXADV-5490)', () => {
   });
 });
 
+describe('ListRenderer: il menu mostra solo gli aggregati ammessi (SXADV-5490 §1bis)', () => {
+  it('allowed = [avg]: solo «Media», niente «Somma»', () => {
+    const v = mount(listUi(3, totalsOf({ quantita: { available: true, allowed: ['avg'], active: [] } })));
+    const { els } = v.headerScan('col_1');
+    expect(v.headerMarkup('col_1')).toContain('Σ');
+    expect(findChoice(els, /Media/)).toBeDefined();
+    expect(findChoice(els, /Somma/)).toBeUndefined();
+  });
+
+  it('allowed = [sum]: solo «Somma», niente «Media»', () => {
+    const v = mount(listUi(3, totalsOf({ importo: { available: true, allowed: ['sum'], active: [] } })));
+    const { els } = v.headerScan('col_2');
+    expect(findChoice(els, /Somma/)).toBeDefined();
+    expect(findChoice(els, /Media/)).toBeUndefined();
+  });
+
+  it('allowed = [sum, avg]: entrambe', () => {
+    const v = mount(listUi(3, totalsOf({ importo: { available: true, allowed: ['sum', 'avg'], active: [] } })));
+    const { els } = v.headerScan('col_2');
+    expect(findChoice(els, /Somma/)).toBeDefined();
+    expect(findChoice(els, /Media/)).toBeDefined();
+  });
+
+  it('allowed assente (risposta vecchia): entrambe', () => {
+    const v = mount(listUi(3, totalsOf({ importo: { available: true, active: [] } })));
+    const { els } = v.headerScan('col_2');
+    expect(findChoice(els, /Somma/)).toBeDefined();
+    expect(findChoice(els, /Media/)).toBeDefined();
+  });
+
+  it('allowed diverso per colonna: ogni intestazione il suo menu', () => {
+    const v = mount(listUi(3, totalsOf({
+      quantita: { available: true, allowed: ['avg'], active: [] },
+      importo: { available: true, allowed: ['sum'], active: [] },
+    })));
+    const q = v.headerScan('col_1').els;
+    const i = v.headerScan('col_2').els;
+    expect(findChoice(q, /Media/)).toBeDefined();
+    expect(findChoice(q, /Somma/)).toBeUndefined();
+    expect(findChoice(i, /Somma/)).toBeDefined();
+    expect(findChoice(i, /Media/)).toBeUndefined();
+  });
+
+  it('allowed = [avg], scelta di «Media»: onAction(ListTotals, { option1: quantita, option2: avg, navpath })', () => {
+    const v = mount(listUi(3, totalsOf({ quantita: { available: true, allowed: ['avg'], active: [] } })));
+    const c = findChoice(v.headerScan('col_1').els, /Media/);
+    expect(c).toBeDefined();
+    expect(c!.disabled).toBe(false);
+    c!.click();
+    expect(v.props.onAction).toHaveBeenCalledWith('ListTotals', expect.objectContaining({ option1: 'quantita', option2: 'avg', navpath: LIST }));
+    expect(v.props.onAction.mock.calls.filter((x) => x[0] === 'ListTotals')).toHaveLength(1);
+  });
+
+  it('allowed = [sum], scelta di «Somma»: option2 = sum', () => {
+    const v = mount(listUi(3, totalsOf({ importo: { available: true, allowed: ['sum'], active: ['sum'], sum: '3,00 €' } })));
+    findChoice(v.headerScan('col_2').els, /Somma/)!.click();
+    expect(v.props.onAction).toHaveBeenCalledWith('ListTotals', expect.objectContaining({ option1: 'importo', option2: 'sum', navpath: LIST }));
+  });
+
+  it('allowed = [avg] con available=false: la sola «Media», disabilitata', () => {
+    const v = mount(listUi(3, totalsOf({ quantita: { available: false, reason: MSG_SOLO_PAGINA, allowed: ['avg'], active: [] } })));
+    const { els } = v.headerScan('col_1');
+    expect(findChoice(els, /Somma/)).toBeUndefined();
+    expect(findChoice(els, /Media/)?.disabled).toBe(true);
+  });
+});
+
 describe('ListRenderer: colonna non disponibile (SXADV-5490)', () => {
   const unavailable = totalsOf({
     quantita: { available: true, active: [] },
@@ -630,9 +701,17 @@ describe('ListRenderer: riga totali fissata in fondo (SXADV-5490)', () => {
     expect(JSON.stringify(p![0])).toContain('restringi i filtri');
   });
 
-  it('valute diverse', () => {
-    const v = mount(listUi(3, totalsOf({ importo: { available: true, active: ['sum'], mixedCurrencies: true } })));
+  it('valute diverse: il testo di mixed', () => {
+    const v = mount(listUi(3, totalsOf({ importo: { available: true, allowed: ['sum', 'avg'], active: ['sum'], mixed: 'valute diverse' } })));
     expect(text(pinned(v)![0].col_2)).toBe('valute diverse');
+  });
+
+  it('unità diverse su quantità: il testo di mixed com\'è, niente Σ', () => {
+    const v = mount(listUi(3, totalsOf({ quantita: { available: true, allowed: ['sum', 'avg'], active: ['sum', 'avg'], mixed: 'unità diverse' } })));
+    const p = pinned(v);
+    expect(p).toHaveLength(1);
+    expect(text(p![0].col_1)).toBe('unità diverse');
+    expect(text(p![0].col_0)).toBe('Totale');
   });
 
   it('la riga fissata non e\' fra le righe dei dati', () => {
