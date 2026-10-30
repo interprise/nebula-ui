@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ListColumn } from '../types/ui';
 import { totalsCellText, buildTotalsRow, hasActiveTotals } from './listTotals';
+import * as LT from './listTotals';
 
 // SXADV-5490 — Somma e Media sulle colonne delle liste: le funzioni pure del
 // client (contratto CORE/docs/20261027_SXADV-5490_totali_di_colonna.md §5, §6).
@@ -323,5 +324,174 @@ describe('buildTotalsRow (SXADV-5490)', () => {
 
   it('columns undefined: nessuna eccezione', () => {
     expect(() => row(totals({ importo: { available: true, active: ['sum'], sum: '10' } }), undefined)).not.toThrow();
+  });
+});
+
+// --- §7: liste con tracciato su più righe (30/10) ---------------------------------------
+//
+//   buildTotalsBandRows(totals, contHeaders) -> Array<{ band, cells }>
+//     - una voce per banda b (indice in contHeaders) con almeno un item attivo, in ordine;
+//     - cells: una per intestazione della banda, colspan copiato, text = totalsCellText
+//       (Σ/⌀, mixed, «—» con title) nella posizione dell'item (trovato per `control`),
+//       '' altrove; title solo se presente;
+//     - vuoto se niente è attivo nelle bande (anche con attivi di prima riga).
+//   hasActiveTotals: vero anche se l'unico attivo è di banda.
+//   buildTotalsRow: con soli attivi di banda restituisce comunque la riga, con «Totale».
+
+interface BandHeader { text: string; name?: string; tag?: string; control?: string; colspan?: number }
+interface BandRow { band: number; cells: Array<{ text: string; title?: string; colspan?: number }> }
+type BandFn = (t: Totals | undefined, h: BandHeader[][] | undefined) => BandRow[];
+const bandRows = ((LT as Record<string, unknown>).buildTotalsBandRows ?? (() => {
+  throw new Error('buildTotalsBandRows non esportata da listTotals.ts');
+})) as BandFn;
+
+type BandColTotals = ColTotals & { band?: number };
+function btotals(columns: Record<string, BandColTotals>): Totals {
+  return totals(columns as Record<string, ColTotals>);
+}
+
+// Due bande: [qta (colspan 2), descr], [prezzo, sconto (colspan 3)]; più un'intestazione
+// di lista incorporata senza control (nota).
+const contHeaders: BandHeader[][] = [
+  [{ text: 'Qtà', name: 'qta', control: 'qta', colspan: 2 }, { text: 'Descrizione', name: 'descr', control: 'descr' }],
+  [{ text: 'Prezzo', name: 'prezzo', control: 'prezzo' }, { text: 'Sconto', name: 'sconto', control: 'sconto', colspan: 3 },
+    { text: 'Nota', name: 'nota' }],
+];
+
+describe('buildTotalsBandRows (SXADV-5490 §7)', () => {
+  it('totals o contHeaders undefined: vuoto, nessuna eccezione', () => {
+    expect(bandRows(undefined, contHeaders)).toEqual([]);
+    expect(bandRows(btotals({ qta: { available: true, active: ['sum'], sum: '3', band: 1 } }), undefined)).toEqual([]);
+  });
+
+  it('niente attivo: vuoto', () => {
+    expect(bandRows(btotals({
+      qta: { available: true, active: [], band: 1 },
+      prezzo: { available: true, active: [], band: 2 },
+    }), contHeaders)).toEqual([]);
+  });
+
+  it('attivi solo di prima riga: nessuna banda dei totali', () => {
+    expect(bandRows(btotals({
+      importo: { available: true, active: ['sum'], sum: '10', band: 0 },
+      qta: { available: true, active: [], band: 1 },
+    }), contHeaders)).toEqual([]);
+  });
+
+  it('un item attivo nella prima banda: una voce, celle allineate alle intestazioni', () => {
+    const r = bandRows(btotals({ qta: { available: true, active: ['sum'], sum: '3,00', band: 1 } }), contHeaders);
+    expect(r).toHaveLength(1);
+    expect(r[0].band).toBe(0);
+    expect(r[0].cells).toHaveLength(2);
+    expect(r[0].cells[0].text).toBe('Σ 3,00');
+    expect(r[0].cells[0].colspan).toBe(2);
+    expect(r[0].cells[1].text).toBe('');
+    expect(r[0].cells[1].title).toBeUndefined();
+    expect(r[0].cells[1].colspan ?? 1).toBe(1);
+  });
+
+  it('la banda si trova per indice in contHeaders, l\'item per control (non per name)', () => {
+    const h: BandHeader[][] = [[{ text: 'A', name: '{espr}', tag: 'x', control: 'x' }]];
+    const r = bandRows(btotals({ x: { available: true, active: ['avg'], avg: '1,5', band: 1 } }), h);
+    expect(r).toHaveLength(1);
+    expect(r[0].cells[0].text).toBe('⌀ 1,5');
+    // name uguale a una chiave ma control diverso: non si aggancia
+    const h2: BandHeader[][] = [[{ text: 'A', name: 'y', control: 'z' }]];
+    expect(bandRows(btotals({ y: { available: true, active: ['sum'], sum: '9', band: 1 } }), h2)).toEqual([]);
+  });
+
+  it('intestazione senza control (lista incorporata): mai un totale', () => {
+    const r = bandRows(btotals({
+      prezzo: { available: true, active: ['avg'], avg: '5', band: 2 },
+      nota: { available: true, active: ['sum'], sum: '77', band: 2 },
+    }), contHeaders);
+    expect(r).toHaveLength(1);
+    expect(r[0].cells[2].text).toBe('');
+    expect(JSON.stringify(r)).not.toContain('77');
+  });
+
+  it('solo la seconda banda attiva: una voce con band = 1, la prima non c\'è', () => {
+    const r = bandRows(btotals({
+      qta: { available: true, active: [], band: 1 },
+      prezzo: { available: true, active: ['avg'], avg: '5,00', band: 2 },
+    }), contHeaders);
+    expect(r).toHaveLength(1);
+    expect(r[0].band).toBe(1);
+    expect(r[0].cells.map((c) => c.text)).toEqual(['⌀ 5,00', '', '']);
+    expect(r[0].cells.map((c) => c.colspan ?? 1)).toEqual([1, 3, 1]);
+  });
+
+  it('due bande attive: due voci, in ordine di banda', () => {
+    const r = bandRows(btotals({
+      sconto: { available: true, active: ['sum'], sum: '2', band: 2 },
+      descr: { available: true, active: ['sum'], sum: '4', band: 1 },
+    }), contHeaders);
+    expect(r.map((x) => x.band)).toEqual([0, 1]);
+    expect(r[0].cells.map((c) => c.text)).toEqual(['', 'Σ 4']);
+    expect(r[1].cells.map((c) => c.text)).toEqual(['', 'Σ 2', '']);
+  });
+
+  it('Σ e ⌀ sullo stesso item: due righe di testo nella cella', () => {
+    const r = bandRows(btotals({ qta: { available: true, active: ['sum', 'avg'], sum: '6', avg: '2', band: 1 } }), contHeaders);
+    expect(lines(r[0].cells[0].text)).toEqual(['Σ 6', '⌀ 2']);
+  });
+
+  it('mixed: il testo del server, senza title', () => {
+    const r = bandRows(btotals({ prezzo: { available: true, active: ['sum'], mixed: 'valute diverse', band: 2 } }), contHeaders);
+    expect(r[0].cells[0].text).toBe('valute diverse');
+    expect(r[0].cells[0].title).toBeUndefined();
+  });
+
+  it('available=false: «—» con title = reason', () => {
+    const r = bandRows(btotals({ prezzo: { available: false, reason: MSG_SOLO_PAGINA, active: ['avg'], band: 2 } }), contHeaders);
+    expect(r[0].cells[0].text).toBe('—');
+    expect(r[0].cells[0].title).toBe(MSG_SOLO_PAGINA);
+  });
+
+  it('error: «—» con title = error', () => {
+    const r = bandRows(btotals({ sconto: { available: true, active: ['sum'], error: 'query fallita', band: 2 } }), contHeaders);
+    expect(r[0].cells[1].text).toBe('—');
+    expect(r[0].cells[1].title).toBe('query fallita');
+  });
+
+  it('item di banda totalizzabile ma non attivo, accanto a uno attivo: cella vuota', () => {
+    const r = bandRows(btotals({
+      prezzo: { available: true, active: [], band: 2 },
+      sconto: { available: true, active: ['sum'], sum: '1', band: 2 },
+    }), contHeaders);
+    expect(r[0].cells[0].text).toBe('');
+  });
+});
+
+describe('hasActiveTotals e buildTotalsRow con attivi di banda (SXADV-5490 §7)', () => {
+  const columns = [col('descrizione', 'text'), col('importo', 'money')];
+
+  it('hasActiveTotals: vero con il solo item di banda attivo', () => {
+    expect(has(btotals({
+      importo: { available: true, active: [], band: 0 },
+      qta: { available: true, active: ['sum'], sum: '3', band: 1 },
+    }))).toBe(true);
+  });
+
+  it('buildTotalsRow: soli attivi di banda -> riga con «Totale» e nessun valore', () => {
+    const r = row(btotals({
+      importo: { available: true, active: [], band: 0 },
+      qta: { available: true, active: ['sum'], sum: '3', band: 1 },
+    }), columns);
+    expect(r).not.toBeNull();
+    const texts = Object.keys(r!).filter((k) => /^col_\d+$/.test(k)).map((k) => cellText(r![k]));
+    expect(texts).toContain('Totale');
+    expect(texts.filter((t) => t && t !== 'Totale')).toEqual([]);
+    expect(JSON.stringify(r)).not.toContain('Σ');
+  });
+
+  it('buildTotalsRow: attivi di prima riga e di banda insieme, il valore di banda non sale nella riga', () => {
+    const r = row(btotals({
+      importo: { available: true, active: ['sum'], sum: '10', band: 0 },
+      qta: { available: true, active: ['sum'], sum: '3', band: 1 },
+    }), columns);
+    expect(cellText(r!.col_1)).toBe('Σ 10');
+    expect(cellText(r!.col_0)).toBe('Totale');
+    expect(JSON.stringify(r)).not.toContain('Σ 3');
   });
 });

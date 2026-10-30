@@ -207,6 +207,9 @@ export interface ListHeader {
   configureIcon?: { included: boolean; itemId: string };
   /** `false` = il Cerca (LocateRow) non guarda questa colonna (SXADV-4569). */
   searchable?: boolean;
+  /** Solo nelle bande (`continuationHeaders`): il controlName dell'item, chiave di
+   *  `totals.columns` per Somma e Media sulle righe successive (SXADV-5490 §7). */
+  control?: string;
 }
 
 /** Il «Cerca» messo a filtro (SXADV-4569): `col` = content della colonna, assente = tutte. */
@@ -588,6 +591,8 @@ export const ELTYPE_DUMMY = 9;
 export interface ListColumnTotals {
   /** Calcolabili adesso; false = la colonna non esiste in SQL e la lista va oltre la pagina. */
   available: boolean;
+  /** Riga del tracciato: 0 = colonna della griglia, n = banda di continuazione n (§7). */
+  band?: number;
   /** Perché no, da mostrare all'utente (solo con available=false). */
   reason?: string;
   /** Aggregati che la colonna ammette (allowAggregates); assente = entrambi. */

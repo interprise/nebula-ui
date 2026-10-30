@@ -6,7 +6,7 @@
  * testo delle celle della riga fissata in fondo alla griglia.
  * Contratto: CORE/docs/20261027_SXADV-5490_totali_di_colonna.md, §6.
  */
-import type { ListColumn, ListColumnTotals, ListTotals } from '../types/ui';
+import type { ListColumn, ListColumnTotals, ListHeader, ListTotals } from '../types/ui';
 
 export const TOTALS_LABEL = 'Totale';
 export const SUM_PREFIX = 'Σ';
@@ -30,11 +30,13 @@ export function totalsCellText(col: ListColumnTotals | undefined): { text: strin
   return { text: lines.join('\n') };
 }
 
-/** Quante righe di testo porta la riga totali (per l'altezza). */
+/** Quante righe di testo porta la riga «Totale» (per l'altezza): solo le colonne della griglia. */
 export function totalsRowLines(totals: ListTotals | undefined): number {
   if (!totals?.columns) return 1;
   let n = 1;
   for (const c of Object.values(totals.columns)) {
+    // Gli item delle bande hanno la loro riga dei totali (§7).
+    if ((c?.band ?? 0) !== 0) continue;
     const t = totalsCellText(c);
     if (t) n = Math.max(n, t.text.split('\n').length);
   }
@@ -65,4 +67,37 @@ export function buildTotalsRow(
     }
   });
   return row;
+}
+
+/** Una banda dei totali: le celle allineate alle intestazioni della banda `band`. */
+export interface TotalsBandRow {
+  band: number;
+  cells: Array<{ text: string; title?: string; colspan?: number }>;
+}
+
+/**
+ * Le bande dei totali sotto la riga «Totale» (§7): una per banda di continuazione
+ * con almeno un item acceso, in ordine di banda. Le celle seguono le intestazioni
+ * della banda (stesso colspan), cosi' il valore sta sotto l'etichetta del suo item;
+ * l'item si trova per `control`, la chiave di `totals.columns`.
+ */
+export function buildTotalsBandRows(
+  totals: ListTotals | undefined,
+  contHeaders: ListHeader[][] | undefined,
+): TotalsBandRow[] {
+  const out: TotalsBandRow[] = [];
+  if (!totals?.columns || !contHeaders) return out;
+  contHeaders.forEach((hdrs, band) => {
+    let any = false;
+    const cells = (hdrs ?? []).map((h) => {
+      const t = h?.control ? totalsCellText(totals.columns[h.control]) : null;
+      if (t) any = true;
+      const cell: { text: string; title?: string; colspan?: number } = { text: t?.text ?? '' };
+      if (t?.title) cell.title = t.title;
+      if (h?.colspan) cell.colspan = h.colspan;
+      return cell;
+    });
+    if (any) out.push({ band, cells });
+  });
+  return out;
 }

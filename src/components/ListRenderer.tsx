@@ -1,4 +1,5 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import { serverHtml, serverText, HTML_POLICY, looksLikeServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, type IRowNode, themeAlpine } from 'ag-grid-community';
@@ -6,7 +7,7 @@ import { applyRowEcho, pruneEcho, type EchoEntry, type RowEcho } from './rowEcho
 import { Button, Dropdown, Pagination, Space, Tooltip, Typography } from 'antd';
 import { CheckOutlined, PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData, ListTotals } from '../types/ui';
-import { buildTotalsRow, totalsRowLines } from './listTotals';
+import { buildTotalsBandRows, buildTotalsRow, totalsCellText } from './listTotals';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
 import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
@@ -149,7 +150,9 @@ const HeaderLabelWithTotals = ({ displayName, labelHtml, totalsName }: { display
 /** La cella della riga dei totali: testo del server, su piu' righe se Σ e ⌀. */
 const TotalsCellRenderer = (params: ICellRendererParams) => {
   const field = params.colDef?.field ?? '';
-  const idx = field.startsWith('col_') ? field.slice(4) : '';
+  // `col_<n>` per le colonne della griglia, il field intero per le colonne promosse
+  // dalle bande in una-riga (`cont_<b>_<unit>`, SXADV-5490 §7).
+  const idx = field.startsWith('col_') ? field.slice(4) : field;
   const title = params.data?.[`_totalsTitle_${idx}`] as string | undefined;
   const text = params.value as string | undefined;
   if (!text) return null;
@@ -701,6 +704,12 @@ function widthsFromOffsets(
  *  (SXADV-5770.2). Module-level so the column-resize resync can restore the floor
  *  before the re-measure, which is how a row shrinks back after a widening. */
 function continuationRowFloor(params: { data?: Record<string, unknown> }): number | undefined {
+  // Banda dei totali (SXADV-5490 §7): Σ e ⌀ vanno su due righe.
+  if (params.data?._isContinuationRow && params.data._isTotalsRow) {
+    const cells = params.data._continuationCells as Array<{ text?: string }> | undefined;
+    const lines = Math.max(1, ...(cells ?? []).map(c => (c.text ?? '').split('\n').length));
+    return Math.max(GRID_ROW_HEIGHT, 4 + 17 * lines);
+  }
   if (params.data?._isContinuationRow) {
     const cells = params.data._continuationCells as Array<{ html?: string; text?: string; control?: UIControl }> | undefined;
     if (cells?.some(c => c.html && /<br\s*\/?>/i.test(c.html))) {
@@ -756,6 +765,8 @@ type ContCell = {
   control?: UIControl;
   cls?: string;
   style?: string;
+  /** Suggerimento della cella (banda dei totali: il perché del «—»). */
+  title?: string;
 };
 
 // Render a single continuation cell. Custom (cell-renderable) controls
@@ -802,7 +813,7 @@ const ContinuationCell = ({
   if (cell.html) {
     return <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: serverHtml(cell.html, HTML_POLICY.cell) }} />;
   }
-  return <span className={cell.cls} style={merged}>{cell.text}</span>;
+  return <span className={cell.cls} style={merged} title={cell.title}>{cell.text}</span>;
 };
 
 /** Colonne bloccate in modalità una-riga quando il server non dice nulla. Lo
@@ -894,7 +905,11 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const { node, api } = params;
   useEffect(() => {
-    if (!node || !api) return;
+    // Le bande dei totali fissate in fondo non crescono: il modello delle righe
+    // fissate non ricalcola posizioni e altezza del fondo su setRowHeight. La loro
+    // altezza viene dalle righe di testo (continuationRowFloor), il testo non va a
+    // capo e sconfina come nella riga «Totale» (SXADV-5490 §7).
+    if (!node || !api || node.rowPinned) return;
     const grow = () => {
       const el = trackRef.current;
       if (!el) return;
@@ -1125,6 +1140,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // intera: una chiave stabile, cosi' cambio pagina e totali non rifanno le colonne.
   const totalsNamesKey = ui.totals?.columns ? Object.keys(ui.totals.columns).sort().join('|') : '';
   const totalsNames = useMemo(() => new Set(totalsNamesKey ? totalsNamesKey.split('|') : []), [totalsNamesKey]);
+  const activeTotalsKey = ui.totals?.columns
+    ? Object.entries(ui.totals.columns).filter(([, c]) => (c?.active?.length ?? 0) > 0).map(([n]) => n).sort().join('|')
+    : '';
+  const activeTotalsNames = useMemo(() => new Set(activeTotalsKey ? activeTotalsKey.split('|') : []), [activeTotalsKey]);
   const totalsRef = useRef(ui.totals);
   totalsRef.current = ui.totals;
   const toggleTotals = useCallback((name: string, agg: 'sum' | 'avg') => {
@@ -1135,14 +1154,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const onActionRefForTotals = useRef(onAction);
   onActionRefForTotals.current = onAction;
   const totalsContext = useMemo(() => ({ totals: ui.totals, toggle: toggleTotals }), [ui.totals, toggleTotals]);
-  const pinnedBottomRowData = useMemo(() => {
-    const row = buildTotalsRow(ui.totals, ui.columns);
-    return row ? [row] : undefined;
-  }, [ui.totals, ui.columns]);
-  const totalsLines = totalsRowLines(ui.totals);
-  const rowHeightOf = useCallback((params: { data?: Record<string, unknown> }) => (
-    params.data?._isTotalsRow ? Math.max(GRID_ROW_HEIGHT, 4 + 17 * totalsLines) : continuationRowFloor(params)
-  ), [totalsLines]);
+  // L'altezza della riga «Totale» dalle sue celle: anche quelle delle colonne
+  // promosse dalle bande in una-riga, che totalsRowLines non vede.
+  const rowHeightOf = useCallback((params: { data?: Record<string, unknown> }) => {
+    const data = params.data;
+    if (data?._isTotalsRow && !data._isContinuationRow) {
+      let lines = 1;
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'string' && (k.startsWith('col_') || k.startsWith('cont_'))) lines = Math.max(lines, v.split('\n').length);
+      }
+      return Math.max(GRID_ROW_HEIGHT, 4 + 17 * lines);
+    }
+    return continuationRowFloor(params);
+  }, []);
 
   // All data local (no paging or single page) — can do client-side sort
   const meta = ui.header;
@@ -1212,7 +1236,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
 
 
-  const { columnDefs, rowData, serverEditingPath } = useMemo(() => {
+  const { columnDefs, rowData, serverEditingPath, flatTotals } = useMemo(() => {
     // An empty list still has column metadata (ui.headers / ui.columns). Build
     // the columns from it so the header row and the "no records" overlay render
     // correctly. Bailing to zero columns here left an empty list (e.g.
@@ -1220,7 +1244,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     // injection paint a garbled, clipped sliver. Only bail when there is truly
     // nothing to build columns from (no rows AND no header metadata).
     if ((!ui.rows || ui.rows.length === 0) && (!ui.headers || ui.headers.length === 0)) {
-      return { columnDefs: [], rowData: [], serverEditingPath: null, serverEditingFirstCol: null };
+      return { columnDefs: [], rowData: [], serverEditingPath: null, serverEditingFirstCol: null, flatTotals: [] as Array<[string, string]> };
     }
     const uiRows: UIRow[] = ui.rows ?? [];
 
@@ -1336,7 +1360,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         for (const sh of chRow) {
           const span = sh.colspan || 1;
           const longest = listHeaderLabel(sh.text).text.split(/\s+/).reduce((a, b) => a.length > b.length ? a : b, '');
-          const need = headerLabelMinWidth(longest);
+          const need = headerLabelMinWidth(longest) + (sh.control && totalsNames.has(sh.control) ? HEADER_TOTALS_ICON_WIDTH : 0);
           const covered = mainCols.filter(c => c.start < pos + span && (c.start + c.span) > pos);
           // Quanto deve valere la colonna PRINCIPALE perche' questa etichetta ci
           // stia. Una colonna spartisce la propria larghezza UNIFORMEMENTE fra le
@@ -1714,6 +1738,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
        l'etichetta giusta per ognuna. */
     type FlatCol = { band: number; unit: number; span: number; hasContent: boolean; ctrlType?: string };
     const flatCols = new Map<string, FlatCol>();
+    /** Colonne promosse con Somma e Media: [field, controlName] (SXADV-5490 §7). */
+    const flatTotals: Array<[string, string]> = [];
 
     // Build row data, detecting continuation rows (first cell is DUMMY elementType 9)
     const rows: Array<Record<string, unknown>> = [];
@@ -1951,9 +1977,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // che copre più celle presta il proprio nome a tutte, quindi bloccarla per
       // nome le blocca insieme — che è il comportamento voluto, sono lo stesso
       // campo spezzato su più celle.
-      const bandInfoFor = (band: number, unit: number, span: number): { label: string; labelHtml?: string; tokens: string[] } => {
+      const bandInfoFor = (band: number, unit: number, span: number): { label: string; labelHtml?: string; tokens: string[]; totalsName?: string } => {
         const hdrs = contHeaders[band];
         if (!hdrs) return { label: '', tokens: [] };
+        // Somma e Media sull'item della banda (SXADV-5490 §7): il primo sovrapposto
+        // che ne ha.
+        let totalsName: string | undefined;
         const labels: string[] = [];
         const htmls: string[] = [];
         let hasHtml = false;
@@ -1969,20 +1998,28 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
               hasHtml ||= l.html != null;
             }
             tokens.push(...headerTokens(h));
+            if (!totalsName && h.control && totalsNames.has(h.control)) totalsName = h.control;
           }
           pos += hs;
         }
-        return { label: labels.join(' '), labelHtml: hasHtml ? htmls.join(' ') : undefined, tokens };
+        return { label: labels.join(' '), labelHtml: hasHtml ? htmls.join(' ') : undefined, tokens, totalsName };
       };
       const perUnitPx = ui.totalCols && ui.totalWidth ? ui.totalWidth / ui.totalCols : 0;
       Array.from(flatCols.entries())
-        .filter(([, m]) => m.hasContent)
+        // Anche vuota in tutta la pagina, la colonna resta se porta un totale acceso:
+        // altrimenti il totale non avrebbe dove stare.
+        .filter(([, m]) => {
+          if (m.hasContent) return true;
+          const t = bandInfoFor(m.band, m.unit, m.span).totalsName;
+          return !!t && activeTotalsNames.has(t);
+        })
         .sort((a, b) => a[1].band - b[1].band || a[1].unit - b[1].unit)
         .forEach(([field, m]) => {
-          const { label, labelHtml, tokens } = bandInfoFor(m.band, m.unit, m.span);
+          const { label, labelHtml, tokens, totalsName } = bandInfoFor(m.band, m.unit, m.span);
           colTokens.set(field, tokens);
+          if (totalsName) flatTotals.push([field, totalsName]);
           const longest = label.split(/\s+/).reduce((a, b) => (a.length > b.length ? a : b), '');
-          const minW = Math.max(FLAT_COL_MIN_WIDTH, headerLabelMinWidth(longest));
+          const minW = Math.max(FLAT_COL_MIN_WIDTH, headerLabelMinWidth(longest) + (totalsName ? HEADER_TOTALS_ICON_WIDTH : 0));
           // Sì/No: la larghezza non viene dal size della maschera (SXADV-5847).
           const width = isBooleanType(m.ctrlType) || perUnitPx <= 0
             ? minW
@@ -1991,8 +2028,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             field,
             headerName: label,
             headerComponentParams: {
-              innerHeaderComponent: HeaderLabel,
-              innerHeaderComponentParams: { labelHtml },
+              innerHeaderComponent: totalsName ? HeaderLabelWithTotals : HeaderLabel,
+              innerHeaderComponentParams: { labelHtml, totalsName },
             },
             width,
             minWidth: Math.min(40, minW),
@@ -2063,8 +2100,40 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       }
     }
 
-    return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol };
-  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, ui.path, sid, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec, totalsNames]);
+    return { columnDefs: cols, rowData: rows, serverEditingPath, serverEditingFirstCol, flatTotals };
+  }, [ui.rows, ui.headers, ui.columns, ui.continuationHeaders, ui.hasDetailView, ui.totalCols, ui.totalWidth, ui.path, sid, allDataLocal, isMultiEdit, isListEdit, editableColumns, oneLine, pinnedSpec, totalsNames, activeTotalsNames]);
+
+  // Righe fissate in fondo (SXADV-5490): «Totale» con le colonne della griglia e,
+  // sotto, una banda dei totali per ogni banda di continuazione con un item acceso,
+  // allineata come la banda dei dati (§7). In una-riga le bande sono colonne: i
+  // loro totali stanno nella riga «Totale», sotto la colonna promossa.
+  const pinnedBottomRowData = useMemo(() => {
+    const row = buildTotalsRow(ui.totals, ui.columns);
+    if (!row) return undefined;
+    if (oneLine) {
+      for (const [field, name] of flatTotals ?? []) {
+        const t = totalsCellText(ui.totals?.columns[name]);
+        if (!t) continue;
+        row[field] = t.text;
+        row[`_totalsTitle_${field}`] = t.title;
+      }
+      return [row];
+    }
+    const bands = buildTotalsBandRows(ui.totals, ui.continuationHeaders).map((b) => ({
+      _isTotalsRow: true,
+      _isContinuationRow: true,
+      _isLastContinuationRow: true,
+      _totalsBand: b.band,
+      _continuationCells: b.cells.map((c) => ({
+        text: c.text,
+        colspan: c.colspan,
+        cls: c.text ? 'list-totals-cell' : undefined,
+        style: 'white-space: pre; overflow: visible; font-weight: 600',
+        title: c.title ?? (c.text || undefined),
+      })),
+    }));
+    return [row, ...bands];
+  }, [ui.totals, ui.columns, ui.continuationHeaders, oneLine, flatTotals]);
 
   // Report the ordered records (main rows: path + onboard edit data) so the
   // edit panel hydrates on selection and steps prev/next — all client-side,
@@ -2797,28 +2866,38 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return map;
   }, [ui.headers]);
 
+  /* Il «Σ» degli item delle bande (SXADV-5490 §7): le fasce d'intestazione sono DOM
+     iniettato, quindi il pulsante React ci entra con un portale, in un posto
+     preparato dall'iniezione accanto all'etichetta. */
+  const [bandTotalsSlots, setBandTotalsSlots] = useState<Array<{ el: HTMLElement; name: string }>>([]);
+  const publishBandTotalsSlots = useCallback((slots: Array<{ el: HTMLElement; name: string }>) => {
+    setBandTotalsSlots((prev) => (prev.length === 0 && slots.length === 0 ? prev : slots));
+  }, []);
+
   // Inject continuation header rows AFTER the ag-header. Each row is a
   // clipped viewport whose inner track has width = total cols width and
   // translates via --grid-scroll-x, mirroring the continuation cells.
   const injectContinuationHeaders = useCallback(() => {
     const container = gridContainerRef.current;
     if (!container) return;
+    const slots: Array<{ el: HTMLElement; name: string }> = [];
     // Prima si tolgono le fasce della lista di prima, POI si guarda se questa
     // ne ha: il contenitore della griglia sopravvive al cambio di funzione, e
     // uscendo prima della pulizia le bande di una lista a piu' righe (Criteri
     // Raggruppamento Fatturazione) restavano sopra la lista successiva che non
     // ne ha (Tipi Evento).
     container.querySelectorAll('.continuation-header-row').forEach(el => el.remove());
+    // Le fasce tolte si portano via i posti del Σ: si ripubblicano a ogni uscita.
     const contHeaders = ui.continuationHeaders;
-    if (!contHeaders || contHeaders.length === 0) return;
+    if (!contHeaders || contHeaders.length === 0) { publishBandTotalsSlots([]); return; }
 
     const agHeader = container.querySelector('.ag-header');
-    if (!agHeader) return;
+    if (!agHeader) { publishBandTotalsSlots([]); return; }
     // In one-line le bande sono diventate colonne vere, con la loro etichetta
     // nell'intestazione della griglia: la fascia iniettata sarebbe un doppione
     // sospeso su righe che non esistono più. La rimozione sopra deve comunque
     // essere passata, o entrando in one-line resterebbe quella di prima.
-    if (oneLine) return;
+    if (oneLine) { publishBandTotalsSlots([]); return; }
 
     const api = gridApiRef.current;
     const offsets = api ? computeUnitOffsets(api, headersByField) : null;
@@ -2881,13 +2960,20 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           });
           cell.appendChild(dot);
         }
+        if (hdr.control && totalsNames.has(hdr.control)) {
+          const slot = document.createElement('span');
+          slot.className = 'list-totals-band-slot';
+          cell.appendChild(slot);
+          slots.push({ el: slot, name: hdr.control });
+        }
         track.appendChild(cell);
       });
       wrapper.appendChild(track);
       insertAfter.insertAdjacentElement('afterend', wrapper);
       insertAfter = wrapper;
     });
-  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine]);
+    publishBandTotalsSlots(slots);
+  }, [ui.continuationHeaders, ui.hasDetailView, isListEdit, headersByField, oneLine, totalsNames, publishBandTotalsSlots]);
 
   // Propagate horizontal body scroll to continuation rows/headers via a CSS
   // variable. Uses a native scroll listener on the grid's horizontal-scroll
@@ -2959,6 +3045,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           }
         }
       });
+      // Le bande dei totali fissate in fondo (SXADV-5490 §7) non passano da
+      // forEachNode: si ridisegnano a parte, o resterebbero sulle larghezze di prima.
+      for (let i = 0; i < api.getPinnedBottomRowCount(); i++) {
+        const pinned = api.getPinnedBottomRow(i);
+        if ((pinned?.data as Record<string, unknown> | undefined)?._isContinuationRow) (nodes as unknown[]).push(pinned);
+      }
       if ((nodes as unknown[]).length > 0) {
         api.redrawRows({ rowNodes: nodes });
       }
@@ -3584,6 +3676,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // danno già il paginatore e la toolbar (SXADV-5688.1).
           suppressOverlays={['noRows']}
         />
+        {bandTotalsSlots.map((slot, i) => createPortal(<TotalsHeaderButton name={slot.name} />, slot.el, `bandtot-${i}`))}
         </ListTotalsContext.Provider>
       </div>
 

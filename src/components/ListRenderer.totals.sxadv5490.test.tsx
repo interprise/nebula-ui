@@ -46,6 +46,8 @@ const rt = vi.hoisted(() => ({
   effects: [] as { fn: () => unknown; deps?: unknown[] }[],
   // Valori di contesto imposti a mano (i provider che racchiudono la griglia).
   ctx: new Map<unknown, unknown>(),
+  // Modalità una-riga accesa per la griglia (casi §7).
+  oneLine: false,
 }));
 
 vi.mock('react', async (importOriginal) => {
@@ -101,7 +103,7 @@ vi.mock('../hooks/uiMode', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../hooks/uiMode')>()),
   useUiMode: () => ({
     immersive: false, setImmersive: () => {}, zoomedGridId: null, setZoomedGridId: () => {},
-    isOneLine: () => false, setOneLine: () => {},
+    isOneLine: () => rt.oneLine, setOneLine: () => {},
   }),
 }));
 vi.mock('../hooks/hotkeys', async (importOriginal) => ({
@@ -1029,5 +1031,564 @@ describe('ListRenderer: la cella dei totali non va a capo dopo «Σ » (SXADV-54
     const ws = whiteSpaces(m);
     expect(ws.length).toBeGreaterThan(0);
     for (const w of ws) expect(w).toBe('pre');
+  });
+});
+
+// ── §7: liste con tracciato su più righe (30/10) ────────────────────────────
+//
+// Contratto §7, lato client:
+//   - modalità a più righe: nella fascia d'intestazione della banda, accanto
+//     all'etichetta di un item con voce in totals.columns (trovato per `control`),
+//     lo stesso Σ della prima riga, stesso menu, stesso comando;
+//   - un item di banda attivo: sotto la riga «Totale» una riga fissata per banda,
+//     col testo di totalsCellText nella posizione dell'item; la riga «Totale» c'è
+//     anche con soli attivi di banda e porta solo «Totale»;
+//   - una-riga: la colonna promossa (cont_<b>_<unit>) dell'item ha il Σ
+//     nell'intestazione e il valore va nella riga «Totale», nessuna banda dei totali.
+//
+// Le fasce d'intestazione delle bande sono DOM iniettato da ListRenderer dopo
+// .ag-header (non c'è DOM qui): si dà al contenitore della griglia un DOM finto
+// minimo, si chiama onGridReady (che inietta le fasce) e si ridisegna. Il Σ della
+// banda è allora un elemento React (in un portale, o comunque nell'albero) da
+// qualche parte sotto la griglia: lo si cerca come elemento che, disegnato, porta
+// data-totals-column="<nome>" — lo stesso marcatore del Σ della prima riga.
+// Assunzione dichiarata: il Σ della banda è un componente React raggiungibile
+// dall'albero di ListRenderer (portale compreso), non HTML scritto a mano nel DOM.
+
+/** Un DOM finto: quello che serve all'iniezione delle fasce. */
+class FakeNode {
+  // createPortal vuole un nodo elemento (nodeType 1).
+  nodeType = 1;
+  className = '';
+  style: Record<string, unknown> = { cssText: '', setProperty: () => {} };
+  children: FakeNode[] = [];
+  parent: FakeNode | null = null;
+  attrs: Record<string, string> = {};
+  private ownText = '';
+  private ownHtml = '';
+  clientWidth = 1200;
+  clientHeight = 600;
+  scrollLeft = 0;
+  tag: string;
+  constructor(tag = 'div') { this.tag = tag; }
+  set textContent(v: string) { this.ownText = v; this.ownHtml = ''; }
+  get textContent(): string { return this.ownText + this.children.map((c) => c.textContent).join(''); }
+  set innerHTML(v: string) { this.ownHtml = v; this.ownText = v.replace(/<[^>]*>/g, ''); }
+  get innerHTML(): string { return this.ownHtml; }
+  appendChild<T extends FakeNode>(c: T): T { c.parent = this; this.children.push(c); return c; }
+  insertAdjacentElement(_pos: string, el: FakeNode) { injected.push(el); return el; }
+  remove() {}
+  setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  getAttribute(k: string) { return this.attrs[k] ?? null; }
+  querySelector(sel: string): FakeNode | null { return sel === '.ag-header' ? agHeader : null; }
+  querySelectorAll(): FakeNode[] { return []; }
+  addEventListener() {}
+  removeEventListener() {}
+  contains() { return false; }
+  closest() { return null; }
+  getBoundingClientRect() { return { top: 0, left: 0, right: 1200, bottom: 600, width: 1200, height: 600, x: 0, y: 0 }; }
+  get offsetHeight() { return 0; }
+  get offsetWidth() { return 0; }
+}
+let injected: FakeNode[] = [];
+let agHeader: FakeNode = new FakeNode();
+
+/** La lista a due righe per record: colonne descrizione/quantita/importo, banda codice + peso (colspan 2). */
+const BAND_HEADERS = [[
+  { text: 'Codice', name: 'codice', control: 'codice', colspan: 1 },
+  { text: 'Peso', name: 'peso', control: 'peso', colspan: 2 },
+]];
+function bandUi(n: number, totals?: Totals): UITree {
+  const base = listUi(n, totals) as unknown as { rows: Record<string, unknown>[] } & Record<string, unknown>;
+  const rows: Record<string, unknown>[] = [];
+  base.rows.forEach((r, i) => {
+    rows.push(r);
+    rows.push({
+      id: `r${i}c`,
+      cells: [
+        { elementType: 9, colspan: 1 },
+        { elementType: ELTYPE_CONTENT, colspan: 1, text: `C${i}`, control: { name: `codice.${LIST}.${i}`, id: 'codice', type: 'text', editable: false, value: `C${i}` } },
+        { elementType: ELTYPE_CONTENT, colspan: 2, text: `${i},5 kg`, control: { name: `peso.${LIST}.${i}`, id: 'peso', type: 'number', editable: false, value: `${i},5 kg` } },
+      ],
+    });
+  });
+  return { ...base, rows, continuationHeaders: BAND_HEADERS } as unknown as UITree;
+}
+type BandColTotals = ColTotals & { band?: number };
+const bandTotals = (columns: Record<string, BandColTotals>) => totalsOf(columns as Record<string, ColTotals>);
+
+/** Tutti gli elementi React raggiungibili, portali compresi (findEl si ferma ai portali). */
+function allElements(root: unknown): El[] {
+  const out: El[] = [];
+  const seen = new WeakSet<object>();
+  const walk = (n: unknown, depth: number) => {
+    if (!n || typeof n !== 'object' || depth > 400 || seen.has(n as object)) return;
+    seen.add(n as object);
+    if (Array.isArray(n)) { n.forEach((x) => walk(x, depth + 1)); return; }
+    const o = n as { $$typeof?: symbol; children?: unknown; props?: Record<string, unknown> };
+    if (o.$$typeof === Symbol.for('react.portal')) { walk(o.children, depth + 1); return; }
+    if (!isEl(n)) return;
+    out.push(n);
+    for (const v of Object.values(n.props ?? {})) if (v && typeof v === 'object') walk(v, depth + 1);
+  };
+  walk(root, 0);
+  return out;
+}
+
+/** Monta la lista a bande, dà il DOM finto al contenitore, inietta le fasce, ridisegna. */
+function mountBands(ui: UITree, apiOver: Record<string, unknown> = {}) {
+  injected = [];
+  agHeader = new FakeNode();
+  const v = mount(ui);
+  const container = new FakeNode();
+  // Il contenitore della griglia: l'elemento con una ref che contiene la griglia.
+  const holder = allElements(v.tree()).find((e) => {
+    const ref = e.props.ref as { current?: unknown } | undefined;
+    return !!ref && typeof ref === 'object' && 'current' in ref && typeof e.type === 'string'
+      && !!findEl(e.props.children, (x) => typeof x.props.onGridReady === 'function');
+  });
+  if (!holder) throw new Error('contenitore della griglia (ref) non trovato');
+  (holder.props.ref as { current: unknown }).current = container;
+  const g2 = globalThis as Record<string, unknown>;
+  const doc = g2.document as Record<string, unknown>;
+  doc.createElement = (tag: string) => new FakeNode(tag);
+  const api = new Proxy({} as Record<string, unknown>, {
+    get: (_t, k) => {
+      if (typeof k === 'string' && k in apiOver) return apiOver[k];
+      if (k === 'getAllDisplayedColumns' || k === 'getColumns' || k === 'getRenderedNodes') return () => [];
+      if (k === 'isDestroyed') return () => false;
+      if (k === 'then') return undefined;
+      return () => undefined;
+    },
+  });
+  (v.grid().props.onGridReady as (p: unknown) => void)({ api });
+  v.render();
+  // Dopo il ridisegno l'effetto dell'iniezione può essere ripassato: si eseguono
+  // gli effetti raccolti, ignorando quelli che col DOM finto non reggono.
+  for (const e of [...((rt as unknown as { effects: { fn: () => unknown }[] }).effects)]) {
+    try { e.fn(); } catch { /* DOM finto */ }
+  }
+  v.render();
+  return v;
+}
+
+/** Il Σ di un item di banda: l'elemento che, disegnato coi contesti della griglia, porta data-totals-column=name. */
+function bandTotalsButton(v: ReturnType<typeof mount>, name: string): { markup: string; el: El } | undefined {
+  const providers = v.providers();
+  const wrap = (el: ReactNode) => {
+    let out: ReactNode = el;
+    for (const p of [...providers].reverse()) out = createElement(p.type as never, { value: p.value }, out);
+    return out as ReactElement;
+  };
+  const grid = v.grid();
+  for (const e of allElements(v.tree())) {
+    if (e === grid || typeof e.type !== 'function') continue;
+    if (e.props.name !== name) continue;
+    let markup = '';
+    try { markup = renderToStaticMarkup(wrap(e)); } catch { continue; }
+    if (markup.includes(`data-totals-column="${name}"`)) return { markup, el: e };
+  }
+  return undefined;
+}
+
+function scanWithProviders(v: ReturnType<typeof mount>, el: El): El[] {
+  const els: El[] = [];
+  rt.ctx = new Map(v.providers().map((p) => [p.ctx, p.value] as [unknown, unknown]));
+  try {
+    visitAll(el, (e) => els.push(e));
+  } finally {
+    rt.ctx = new Map();
+  }
+  return els;
+}
+
+const pinnedOf = (v: ReturnType<typeof mount>) => v.grid().props.pinnedBottomRowData as Record<string, unknown>[] | undefined;
+const textOfCell = (x: unknown) => (typeof x === 'string' ? x : (x as { text?: string } | undefined)?.text);
+const colTexts = (r: Record<string, unknown>) =>
+  Object.keys(r).filter((k) => /^col_\d+$/.test(k)).map((k) => textOfCell(r[k]));
+
+describe('ListRenderer: Σ nella fascia d\'intestazione delle bande (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  it('impianto: la fascia della banda viene iniettata con le etichette Codice e Peso', () => {
+    mountBands(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    const text = injected.map((n) => n.textContent).join('|');
+    expect(text).toContain('Codice');
+    expect(text).toContain('Peso');
+  });
+
+  it('item di banda con voce in totals.columns: c\'è il Σ (data-totals-column="peso")', () => {
+    const v = mountBands(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    const b = bandTotalsButton(v, 'peso');
+    expect(b).toBeDefined();
+    expect(b!.markup).toContain('Σ');
+  });
+
+  it('item di banda senza voce in totals.columns: nessun Σ', () => {
+    const v = mountBands(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    expect(bandTotalsButton(v, 'codice')).toBeUndefined();
+  });
+
+  it('senza ui.totals: nessun Σ di banda', () => {
+    const v = mountBands(bandUi(2));
+    expect(bandTotalsButton(v, 'peso')).toBeUndefined();
+  });
+
+  it('«Somma» dal Σ della banda: onAction(\'ListTotals\', { option1: peso, option2: sum, navpath })', () => {
+    const v = mountBands(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    const b = bandTotalsButton(v, 'peso');
+    expect(b).toBeDefined();
+    const c = findChoice(scanWithProviders(v, b!.el), /Somma/);
+    expect(c).toBeDefined();
+    expect(c!.disabled).toBe(false);
+    c!.click();
+    expect(v.props.onAction).toHaveBeenCalledWith('ListTotals', expect.objectContaining({ option1: 'peso', option2: 'sum', navpath: LIST }));
+  });
+
+  it('il menu del Σ di banda segue allowed (solo Media)', () => {
+    const v = mountBands(bandUi(2, bandTotals({ peso: { available: true, allowed: ['avg'], active: [], band: 1 } })));
+    const b = bandTotalsButton(v, 'peso');
+    expect(b).toBeDefined();
+    const els = scanWithProviders(v, b!.el);
+    expect(findChoice(els, /Media/)).toBeDefined();
+    expect(findChoice(els, /Somma/)).toBeUndefined();
+  });
+});
+
+describe('ListRenderer: bande dei totali sotto la riga «Totale» (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  it('solo un item di prima riga attivo: una riga fissata, nessuna banda dei totali', () => {
+    const v = mount(bandUi(2, bandTotals({
+      importo: { available: true, active: ['sum'], sum: '1,00 €', band: 0 },
+      peso: { available: true, active: [], band: 1 },
+    })));
+    expect(pinnedOf(v)).toHaveLength(1);
+  });
+
+  it('solo l\'item di banda attivo: riga «Totale» (solo l\'etichetta) e sotto la banda con «Σ <valore>»', () => {
+    const v = mount(bandUi(2, bandTotals({
+      importo: { available: true, active: [], band: 0 },
+      peso: { available: true, active: ['sum'], sum: '2,0 kg', band: 1 },
+    })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(2);
+    const first = colTexts(p![0]);
+    expect(first).toContain('Totale');
+    expect(first.filter((t) => t && t !== 'Totale')).toEqual([]);
+    expect(JSON.stringify(p![0])).not.toContain('Σ');
+    expect(JSON.stringify(p![1])).toContain('Σ 2,0 kg');
+    expect(JSON.stringify(p![1])).not.toContain('Totale');
+  });
+
+  it('prima riga e banda attive: Σ di importo nella riga «Totale», Σ di peso nella banda', () => {
+    const v = mount(bandUi(2, bandTotals({
+      importo: { available: true, active: ['sum'], sum: '1,00 €', band: 0 },
+      peso: { available: true, active: ['avg'], avg: '1,0 kg', band: 1 },
+    })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(2);
+    expect(textOfCell(p![0].col_2)).toBe('Σ 1,00 €');
+    expect(textOfCell(p![0].col_0)).toBe('Totale');
+    expect(JSON.stringify(p![0])).not.toContain('1,0 kg');
+    expect(JSON.stringify(p![1])).toContain('⌀ 1,0 kg');
+  });
+
+  it('banda dei totali: «—» con il motivo per un item non calcolabile', () => {
+    const v = mount(bandUi(2, bandTotals({ peso: { available: false, reason: MSG_SOLO_PAGINA, active: ['sum'], band: 1 } })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(2);
+    expect(JSON.stringify(p![1])).toContain('—');
+    expect(JSON.stringify(p![1])).toContain('restringi i filtri');
+  });
+
+  it('le bande dei totali non sono fra le righe dei dati', () => {
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '2,0 kg', band: 1 } })));
+    expect(JSON.stringify(v.grid().props.rowData)).not.toContain('Σ 2,0 kg');
+  });
+
+  it('clic sulla banda dei totali: niente onAction, niente onSelectRecord', () => {
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '2,0 kg', band: 1 } })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(2);
+    const data = p![1];
+    (v.grid().props.onRowClicked as (e: unknown) => void)({
+      data, node: { data, rowPinned: 'bottom' }, rowPinned: 'bottom',
+      event: { target: { closest: () => null }, detail: 1, timeStamp: Math.random() * 1e6, stopPropagation: () => {}, preventDefault: () => {} },
+    });
+    expect(v.props.onAction).not.toHaveBeenCalled();
+    expect(v.props.onSelectRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe('ListRenderer: una-riga, totali dell\'item di banda nella colonna promossa (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  /** La colonna promossa (cont_*) la cui intestazione porta il Σ dell'item. */
+  const promotedWithSigma = (v: ReturnType<typeof mount>, name: string) =>
+    v.colDefs().filter((d) => (d.field ?? '').startsWith('cont_'))
+      .filter((d) => v.headerMarkup(d.field!).includes(`data-totals-column="${name}"`));
+
+  it('impianto: in una-riga le celle della banda diventano colonne cont_*', () => {
+    rt.oneLine = true;
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    expect(v.colDefs().some((d) => (d.field ?? '').startsWith('cont_'))).toBe(true);
+  });
+
+  it('Σ nell\'intestazione della colonna promossa di peso, e solo lì', () => {
+    rt.oneLine = true;
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    const cols = promotedWithSigma(v, 'peso');
+    expect(cols).toHaveLength(1);
+    expect(v.headerMarkup(cols[0].field!)).toContain('Σ');
+    expect(promotedWithSigma(v, 'codice')).toHaveLength(0);
+  });
+
+  it('«Somma» dal Σ della colonna promossa: onAction con option1 = peso', () => {
+    rt.oneLine = true;
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })));
+    const cols = promotedWithSigma(v, 'peso');
+    expect(cols).toHaveLength(1);
+    findChoice(v.headerScan(cols[0].field!).els, /Somma/)!.click();
+    expect(v.props.onAction).toHaveBeenCalledWith('ListTotals', expect.objectContaining({ option1: 'peso', option2: 'sum', navpath: LIST }));
+  });
+
+  it('peso attivo: il valore nella riga «Totale» sotto la colonna promossa, nessuna banda dei totali', () => {
+    rt.oneLine = true;
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '2,0 kg', band: 1 } })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(1);
+    const cols = promotedWithSigma(v, 'peso');
+    expect(cols).toHaveLength(1);
+    expect(textOfCell(p![0][cols[0].field!])).toBe('Σ 2,0 kg');
+    expect(colTexts(p![0])).toContain('Totale');
+  });
+});
+
+// ── §7, seconda tornata: difetti della revisione indipendente (30/10) ───────
+//
+//   1. dopo columnResized / displayedColumnsChanged / gridSizeChanged anche le bande
+//      dei totali fissate in fondo si ridisegnano (redrawRows riceve i nodi pinned
+//      bottom con _isContinuationRow, o ridisegna tutto);
+//   2. una banda dei totali fissata non fa setRowHeight su sé stessa; la sua altezza
+//      la dà getRowHeight dalle righe di testo (Σ+⌀ = 4 + 17*2); il testo non va a
+//      capo (white-space: pre);
+//   3. una-riga, Σ+⌀ solo su un item di banda: la riga «Totale» è alta due righe;
+//   4. una-riga, item di banda attivo senza valori nella pagina: la colonna promossa
+//      c'è lo stesso e porta il totale;
+//   6. due intestazioni di banda con lo stesso control: nessuna chiave React doppia.
+
+type FakeRowNode = { data: Record<string, unknown>; rowPinned?: string; rowHeight: number; setRowHeight: ReturnType<typeof vi.fn> };
+const rowNode = (data: Record<string, unknown>, pinnedPos?: string): FakeRowNode =>
+  ({ data, rowPinned: pinnedPos, rowHeight: 18, setRowHeight: vi.fn() });
+
+/** Un'api di AG Grid che registra gli ascoltatori e i ridisegni. */
+function recordingApi() {
+  const handlers = new Map<string, Array<(e?: unknown) => void>>();
+  const state = { rows: [] as FakeRowNode[], pinned: [] as FakeRowNode[] };
+  const redrawRows = vi.fn();
+  const api: Record<string, unknown> = {
+    addEventListener: (ev: string, fn: (e?: unknown) => void) => {
+      handlers.set(ev, [...(handlers.get(ev) ?? []), fn]);
+    },
+    removeEventListener: () => {},
+    forEachNode: (cb: (n: FakeRowNode) => void) => state.rows.forEach(cb),
+    getPinnedBottomRowCount: () => state.pinned.length,
+    getPinnedBottomRow: (i: number) => state.pinned[i],
+    redrawRows,
+    getAllDisplayedColumns: () => [],
+    isDestroyed: () => false,
+  };
+  const fire = (ev: string, e?: unknown) => { for (const h of handlers.get(ev) ?? []) h(e); };
+  return { api, handlers, state, redrawRows, fire };
+}
+
+/** Esegue un componente con hook finti, dà `track` alle ref di elementi host, esegue gli effetti. */
+function runComponentEffects(el: El, track: unknown) {
+  const saved = { active: rt.active, i: rt.i, slots: rt.slots, effects: rt.effects };
+  rt.active = true;
+  rt.i = 0;
+  rt.slots = [];
+  rt.effects = [];
+  let out: unknown;
+  let effects: { fn: () => unknown }[] = [];
+  try {
+    out = (el.type as (p: unknown) => unknown)(el.props);
+    effects = rt.effects;
+  } finally {
+    rt.active = saved.active;
+    rt.i = saved.i;
+    rt.slots = saved.slots;
+    rt.effects = saved.effects;
+  }
+  for (const e of allElements(out)) {
+    const ref = e.props.ref as { current?: unknown } | undefined;
+    if (typeof e.type === 'string' && ref && typeof ref === 'object' && 'current' in ref) ref.current = track;
+  }
+  for (const e of effects) { try { e.fn(); } catch { /* DOM finto */ } }
+}
+
+const tallTrack = { getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 120, width: 300, height: 120 }) };
+const noopApi = new Proxy({} as Record<string, unknown>, {
+  get: (_t, k) => (k === 'getAllDisplayedColumns' ? () => [] : k === 'then' ? undefined : () => undefined),
+});
+
+describe('ListRenderer: le bande dei totali fissate seguono il ridimensionamento (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  for (const [ev, payload] of [['columnResized', { finished: true }], ['displayedColumnsChanged', {}], ['gridSizeChanged', {}]] as const) {
+    it(`${ev}: redrawRows ridisegna anche la banda dei totali fissata`, () => {
+      const rec = recordingApi();
+      const v = mountBands(bandUi(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '2,0 kg', band: 1 } })), rec.api);
+      const p = pinnedOf(v);
+      expect(p).toHaveLength(2);
+      rec.state.rows = (v.grid().props.rowData as Record<string, unknown>[]).map((d) => rowNode(d));
+      rec.state.pinned = p!.map((d) => rowNode(d, 'bottom'));
+      expect(rec.handlers.get(ev)?.length ?? 0).toBeGreaterThan(0);
+      rec.redrawRows.mockClear();
+      rec.fire(ev, payload);
+      const band = rec.state.pinned[1];
+      const redrawn = rec.redrawRows.mock.calls.some((c) => {
+        const arg = c[0] as { rowNodes?: unknown[] } | undefined;
+        return !arg || !arg.rowNodes || arg.rowNodes.includes(band);
+      });
+      expect(redrawn).toBe(true);
+    });
+  }
+});
+
+describe('ListRenderer: altezza e a capo delle bande dei totali fissate (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  const sumAvg = () => bandTotals({ peso: { available: true, active: ['sum', 'avg'], sum: '6,0 kg', avg: '2,0 kg', band: 1 } });
+
+  it('impianto: una riga di continuazione dei DATI cresce con setRowHeight sul testo misurato', () => {
+    const v = mount(bandUi(2, sumAvg()));
+    const data = (v.grid().props.rowData as Record<string, unknown>[]).find((r) => r._isContinuationRow);
+    expect(data).toBeDefined();
+    const node = rowNode(data!);
+    const el = (v.grid().props.fullWidthCellRenderer as (p: unknown) => El)({ data, node, api: noopApi, context: v.grid().props.context });
+    runComponentEffects(el, tallTrack);
+    expect(node.setRowHeight).toHaveBeenCalled();
+  });
+
+  it('banda dei totali fissata: nessun setRowHeight su sé stessa', () => {
+    const v = mount(bandUi(2, sumAvg()));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(2);
+    const node = rowNode(p![1], 'bottom');
+    const el = (v.grid().props.fullWidthCellRenderer as (p: unknown) => El)({ data: p![1], node, api: noopApi, context: v.grid().props.context });
+    expect(el).toBeTruthy();
+    runComponentEffects(el, tallTrack);
+    expect(node.setRowHeight).not.toHaveBeenCalled();
+  });
+
+  it('banda dei totali con Σ e ⌀: getRowHeight = due righe di testo (4 + 17*2)', () => {
+    const v = mount(bandUi(2, sumAvg()));
+    const p = pinnedOf(v);
+    const h = (v.grid().props.getRowHeight as (x: unknown) => number)({ data: p![1], node: rowNode(p![1], 'bottom') });
+    expect(h).toBe(4 + 17 * 2);
+  });
+
+  it('banda dei totali con il solo Σ: getRowHeight = una riga (non due)', () => {
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '6,0 kg', band: 1 } })));
+    const p = pinnedOf(v);
+    const h = (v.grid().props.getRowHeight as (x: unknown) => number)({ data: p![1], node: rowNode(p![1], 'bottom') });
+    expect(h).toBeLessThan(4 + 17 * 2);
+  });
+
+  it('banda dei totali: il testo Σ/⌀ sta in white-space: pre (non va a capo)', () => {
+    const v = mount(bandUi(2, sumAvg()));
+    const p = pinnedOf(v);
+    const api = {
+      getAllDisplayedColumns: () => ['col_0', 'col_1', 'col_2'].map((f) => ({ getColDef: () => ({ field: f }), getActualWidth: () => 100 })),
+    };
+    const el = (v.grid().props.fullWidthCellRenderer as (p: unknown) => El)({ data: p![1], node: rowNode(p![1], 'bottom'), api, context: v.grid().props.context });
+    const html = renderToStaticMarkup(el as ReactElement);
+    const at = html.indexOf('Σ 6,0 kg');
+    expect(at).toBeGreaterThan(-1);
+    // La dichiarazione white-space più vicina prima del testo (quella che lo governa).
+    const decls = [...html.slice(0, at).matchAll(/white-space:\s*([a-z-]+)/g)].map((m) => m[1]);
+    expect(decls.length).toBeGreaterThan(0);
+    expect(decls[decls.length - 1]).toBe('pre');
+  });
+});
+
+/** La lista a bande con le celle di peso vuote in tutti i record (niente controllo, niente testo). */
+function bandUiEmptyPeso(n: number, totals?: Totals): UITree {
+  const ui = bandUi(n, totals) as unknown as { rows: { cells: Record<string, unknown>[] }[] } & Record<string, unknown>;
+  for (const r of ui.rows) {
+    if (r.cells[0]?.elementType !== 9) continue;
+    r.cells[2] = { elementType: ELTYPE_CONTENT, colspan: 2, text: '' };
+  }
+  return ui as unknown as UITree;
+}
+
+describe('ListRenderer: una-riga, altezza e colonna promossa dei totali di banda (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  const promotedWithSigma = (v: ReturnType<typeof mount>, name: string) =>
+    v.colDefs().filter((d) => (d.field ?? '').startsWith('cont_'))
+      .filter((d) => v.headerMarkup(d.field!).includes(`data-totals-column="${name}"`));
+
+  it('Σ+⌀ solo sull\'item di banda: la riga «Totale» è alta due righe', () => {
+    rt.oneLine = true;
+    const v = mount(bandUi(2, bandTotals({ peso: { available: true, active: ['sum', 'avg'], sum: '6,0 kg', avg: '2,0 kg', band: 1 } })));
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(1);
+    const h = (v.grid().props.getRowHeight as (x: unknown) => number)({ data: p![0], node: rowNode(p![0], 'bottom') });
+    expect(h).toBe(4 + 17 * 2);
+  });
+
+  it('item di banda attivo senza valori nella pagina: la colonna promossa c\'è e porta il totale', () => {
+    rt.oneLine = true;
+    const v = mount(bandUiEmptyPeso(2, bandTotals({ peso: { available: true, active: ['sum'], sum: '0,0 kg', band: 1 } })));
+    const cols = promotedWithSigma(v, 'peso');
+    expect(cols).toHaveLength(1);
+    const p = pinnedOf(v);
+    expect(p).toHaveLength(1);
+    expect(textOfCell(p![0][cols[0].field!])).toBe('Σ 0,0 kg');
+  });
+
+  it('impianto: item di banda NON totalizzabile e vuoto in tutta la pagina resta senza colonna', () => {
+    // I riempitivi vuoti non diventano colonne (comportamento esistente): la regola
+    // nuova vale solo per gli item con totali.
+    rt.oneLine = true;
+    const v = mount(bandUiEmptyPeso(2, bandTotals({ importo: { available: true, active: [], band: 0 } })));
+    expect(promotedWithSigma(v, 'peso')).toHaveLength(0);
+  });
+});
+
+describe('ListRenderer: Σ di banda, chiavi React univoche (SXADV-5490 §7)', () => {
+  afterEach(() => { rt.oneLine = false; });
+
+  it('due intestazioni di banda con lo stesso control: nessuna chiave doppia fra i Σ', () => {
+    const dup = [[
+      { text: 'Codice', name: 'codice', control: 'codice', colspan: 1 },
+      { text: 'Peso', name: 'peso', control: 'peso', colspan: 1 },
+      { text: 'Peso (bis)', name: 'peso', control: 'peso', colspan: 1 },
+    ]];
+    const ui = { ...(bandUi(2, bandTotals({ peso: { available: true, active: [], band: 1 } })) as unknown as Record<string, unknown>), continuationHeaders: dup } as unknown as UITree;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const v = mountBands(ui);
+      const portals: { key: unknown }[] = [];
+      const seen = new WeakSet<object>();
+      const walk = (n: unknown, d: number) => {
+        if (!n || typeof n !== 'object' || d > 400 || seen.has(n as object)) return;
+        seen.add(n as object);
+        if (Array.isArray(n)) { n.forEach((x) => walk(x, d + 1)); return; }
+        const o = n as { $$typeof?: symbol; key?: unknown; children?: unknown; props?: Record<string, unknown> };
+        if (o.$$typeof === Symbol.for('react.portal')) { portals.push({ key: o.key }); walk(o.children, d + 1); return; }
+        if (o.props) for (const x of Object.values(o.props)) walk(x, d + 1);
+      };
+      walk(v.tree(), 0);
+      expect(portals.length).toBeGreaterThan(0);
+      const keys = portals.map((x) => x.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(errors.mock.calls.some((c) => /same key/i.test(String(c[0])))).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
