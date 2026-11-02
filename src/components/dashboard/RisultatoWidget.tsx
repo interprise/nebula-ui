@@ -1,9 +1,11 @@
+import { listHeaderLabel } from '../listHeaderLabel';
 import React from 'react';
 import { Typography } from 'antd';
 import { ArrowDownOutlined, ArrowUpOutlined, PauseOutlined } from '@ant-design/icons';
 
 import {
   aNumero,
+  calcoloDelNumero,
   conSegno,
   conteggio,
   numeroPertinente,
@@ -19,6 +21,8 @@ interface Props {
   forma: string;
   trasformazione?: Trasformazione | null;
   opzioni?: Opzioni | null;
+  /** Per dare il nome alla colonna calcolata (SXADV-6107.3). */
+  colonne?: Array<{ item?: string; etichetta?: string }> | null;
 }
 
 /** La riga «calcolato su N righe»: dice sempre su che cosa poggia il numero. */
@@ -89,7 +93,15 @@ const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
   );
 };
 
-const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
+const CalcoloDelNumero: React.FC<{ calcolo: ReturnType<typeof calcoloDelNumero> }> = ({ calcolo }) =>
+  calcolo ? (
+    <div className="dash-numero-calcolo">
+      <span className="dash-numero-simbolo">{calcolo.simbolo}</span> {listHeaderLabel(calcolo.nome).text}
+    </div>
+  ) : null;
+
+const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni, colonne }) => {
+  const calcolo = calcoloDelNumero(trasformazione, colonne);
   const intero = conteggio(trasformazione, false);
   const n = aNumero(r.numero);
   const d = aNumero(r.delta);
@@ -107,6 +119,7 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
     );
   return (
     <div className="dash-numero" data-forma="kpi">
+      <CalcoloDelNumero calcolo={calcolo} />
       <div className="dash-numero-valore">
         {/* Niente «almeno»: su una parte delle righe una somma con saldi negativi puo'
             venire piu' alta di quella vera, e un conteggio di gruppi filtrati piu'

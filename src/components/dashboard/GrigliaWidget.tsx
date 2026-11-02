@@ -113,7 +113,7 @@ const GrigliaWidget: React.FC<Props> = ({ widget, articoli, extra, onSalva }) =>
 
   return (
     <div className="dash-home">
-      <div className="dash-barra">
+      <div className="dash-barra dash-griglia-barra">
         {bozza ? (
           <>
             <Typography.Text type="secondary" className="dash-barra-aiuto">

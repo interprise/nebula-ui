@@ -526,6 +526,8 @@ let tabCounter = 1;
 // La scheda fissa «Home» (SXADV-62): sta in testa alla barra delle schede, non e' una
 // Session (niente sid, niente TabState) e non conta nel limite delle sessioni.
 const HOME_KEY = 'home';
+/** Quanto si aspetta che la dashboard riarrivi, per rimettere la posizione (SXADV-6124). */
+const HOME_SCROLL_MAX_MS = 8000;
 
 // Un ingresso chiesto mentre si guarda la Home (voce di menu, Naviga, clic su una riga,
 // avviso, cartella del documentale). Si esegue nella scheda di lavoro, dopo averla resa
@@ -608,6 +610,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // altro cambio di scheda lo disarma — casetta, scheda «Home» della barra, cambio
   // azienda — cosi' il ritorno non si ripete da solo.
   const [mostraWidget, setMostraWidget] = useState<number | null>(null);
+  const homeScrollRef = useRef(0);
+  const homeRipristinoRef = useRef(false);
   const setActiveTab = useCallback((key: string) => {
     setMostraWidget(null);
     const leaving = activeTabRef.current;
@@ -616,6 +620,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     if (key !== leaving && leaving !== HOME_KEY && root && ui) {
       scrollByTabRef.current[leaving] = { ui, snap: snapshotScroll(root) };
     }
+    // SXADV-6124: anche la Home ricorda dove si era arrivati fra i widget.
+    // Uscendo a meta' ripristino la pagina e' ancora corta: vale quella ricordata.
+    if (key !== leaving && leaving === HOME_KEY && root && !homeRipristinoRef.current)
+      homeScrollRef.current = root.scrollTop;
     setActiveTabState(key);
   }, []);
   const [menuFilter, setMenuFilter] = useState('');
@@ -769,9 +777,29 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTab(HOME_KEY);
     setMostraWidget(idWidget);
   }, [setActiveTab]);
-  const entraDallaHome = useCallback((ingresso: IngressoDallaHome): boolean => {
+  const schedaInUso = (t: TabState) => !!(t.ui || t.menuId || t.functionAction || t.restorePending);
+  const puoAggiungereScheda = useCallback((): boolean => {
+    if (sessionLimit <= 0 || tabsRef.current.length < sessionLimit) return true;
+    feedback.warning(`Non si possono tenere aperte piu' di ${sessionLimit} sessioni: chiuderne una per aprirne un'altra.`);
+    return false;
+  }, [sessionLimit, feedback]);
+  // SXADV-6125: la lista completa va in una scheda nuova se quella di lavoro e' in uso:
+  // che stia lavorando non la ferma, la ferma solo il limite delle sessioni.
+  const puoNavigare = useCallback((): boolean => {
+    const tab = activeTabRef.current === HOME_KEY ? getWorkTab() : undefined;
+    return tab && schedaInUso(tab) ? puoAggiungereScheda() : schedaDiLavoroLibera();
+  }, [getWorkTab, puoAggiungereScheda, schedaDiLavoroLibera]);
+  const entraDallaHome = useCallback((ingresso: IngressoDallaHome, nuovaScheda = false): boolean => {
     if (activeTabRef.current !== HOME_KEY) return false;
     const tab = getWorkTab();
+    // SXADV-6125: chi lo chiede non sovrascrive una sessione gia' in uso, ne apre una.
+    if (nuovaScheda && tab && schedaInUso(tab)) {
+      if (!puoAggiungereScheda()) return false;
+      const nuova = addTab('label' in ingresso ? ingresso.label : undefined);
+      ingressoRef.current = { ingresso, chiave: nuova.key };
+      setIngressoNonce((n) => n + 1);
+      return true;
+    }
     if (!tab || !schedaDiLavoroLibera()) return false;
     // L'ingresso sostituisce la videata: una scheda ricostruita dopo un F5 e mai
     // aperta non deve piu' ridisegnare quella vecchia quando ci si torna.
@@ -780,7 +808,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTab(tab.key);
     setIngressoNonce((n) => n + 1);
     return true;
-  }, [getWorkTab, schedaDiLavoroLibera, updateTabState, setActiveTab]);
+  }, [getWorkTab, addTab, puoAggiungereScheda, schedaDiLavoroLibera, updateTabState, setActiveTab]);
 
   const handleErrors = useCallback((errors: ErrorItem[], replay?: ConfirmReplay, tabKey?: string) => {
     feedback.showServerMessages(errors, {
@@ -838,6 +866,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // Dopo setActiveTab, che fotografa la scheda lasciata: le chiavi tab_N
     // ripartono e nessuna fotografia del contesto vecchio deve restare.
     scrollByTabRef.current = {};
+    homeScrollRef.current = 0;
   }, [setActiveTab]);
 
   const changeContext = useCallback(
@@ -1970,9 +1999,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // SXADV-5999.2: «Naviga» su un widget apre la lista della sua ricerca, rifatta oggi,
   // nella scheda della Home e come ingresso di primo livello (vedi NavigaCommand).
   const handleNaviga = useCallback(
-    (titolo: string, idWidget: number) =>
-      openFunctionByAction(titolo, 'dashboard.Naviga', { idWidget: String(idWidget) }, { idWidget, titolo }),
-    [openFunctionByAction],
+    (titolo: string, idWidget: number) => {
+      const params = { idWidget: String(idWidget) };
+      const daWidget = { idWidget, titolo };
+      return activeTabRef.current === HOME_KEY
+        ? entraDallaHome({ tipo: 'funzione', label: titolo, action: 'dashboard.Naviga', params, daWidget }, true)
+        : openFunctionByAction(titolo, 'dashboard.Naviga', params, daWidget);
+    },
+    [openFunctionByAction, entraDallaHome],
   );
 
   // Esegue l'ingresso chiesto dalla Home (entraDallaHome), ora che la scheda di lavoro
@@ -2209,6 +2243,34 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     USER_EVENTS.forEach((t) => root.addEventListener(t, stop, { capture: true, passive: true }));
     step();
     return stop;
+  }, [activeTab]);
+  // SXADV-6124: la Home rinasce e i widget arrivano dopo: si rimette la posizione mentre
+  // la pagina cresce, finche' l'utente non scorre o un «Torna al widget» non decide lui.
+  useLayoutEffect(() => {
+    const root = tabContentRef.current;
+    const top = homeScrollRef.current;
+    if (activeTab !== HOME_KEY || !root || top <= 0 || mostraWidget != null) return;
+    const start = performance.now();
+    let raf = 0;
+    const USER_EVENTS = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+    const stop = () => {
+      homeRipristinoRef.current = false;
+      cancelAnimationFrame(raf);
+      USER_EVENTS.forEach((t) => root.removeEventListener(t, stop, { capture: true }));
+    };
+    homeRipristinoRef.current = true;
+    const step = () => {
+      // Azzerata nel frattempo (cambio azienda): la posizione era di un'altra dashboard.
+      if (homeScrollRef.current !== top) return stop();
+      root.scrollTop = top;
+      if (root.scrollTop >= top - 1 || performance.now() - start > HOME_SCROLL_MAX_MS) stop();
+      else raf = requestAnimationFrame(step);
+    };
+    USER_EVENTS.forEach((t) => root.addEventListener(t, stop, { capture: true, passive: true }));
+    step();
+    return stop;
+    // mostraWidget si guarda solo all'ingresso sulla Home: dopo non conta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
   const addWaiting = isAddWaiting(addWait, currentTab?.key);
   const addWaitValue = useMemo<AddWaitValue>(
@@ -3012,6 +3074,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                 onApriDettaglio={handleApriDettaglio}
                 onNaviga={handleNaviga}
                 puoAprire={schedaDiLavoroLibera}
+                puoNavigare={puoNavigare}
                 mostraWidget={mostraWidget}
               />
               {loginInfo.copyright && copyrightFits && (

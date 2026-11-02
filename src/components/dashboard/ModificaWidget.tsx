@@ -137,6 +137,11 @@ const dettaglioDi = (w: WidgetDaModificare) =>
 const stessiNomi = (a: string[], b: string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
 
+const MSG_COLONNA = 'Indicare la colonna per la quale eseguire il calcolo';
+/** Somma, media, minimo e massimo hanno bisogno di una colonna; la lista non calcola. */
+const mancaLaColonna = (b: Pick<Bozza, 'forma' | 'agg' | 'col'>) =>
+  b.forma !== 'list' && b.agg !== 'count' && !b.col;
+
 const AGGREGATI = [
   { value: 'count', label: 'conteggio delle righe' },
   { value: 'sum', label: 'somma' },
@@ -264,6 +269,7 @@ const ModificaWidget: React.FC<Props> = ({
   /** Numero dell'ultima anteprima chiesta: le risposte arrivate tardi si scartano. */
   const richiesta = useRef(0);
   /** Il pannello e' aperto su QUESTO widget: dopo la chiusura niente piu' risposte. */
+  const [colonnaMancante, setColonnaMancante] = useState(false);
   const aperto = useRef<number | null>(null);
   /**
    * I campi del dettaglio da offrire come colonne (6001.1c); null finche' non arrivano,
@@ -277,6 +283,7 @@ const ModificaWidget: React.FC<Props> = ({
     setBozza(widget ? daWidget(widget) : null);
     setAnteprima(null);
     setCandidati([]);
+    setColonnaMancante(false);
     setErroreAnteprima(null);
     setErroreSalva(null);
     setSalvando(false);
@@ -462,6 +469,7 @@ const ModificaWidget: React.FC<Props> = ({
       if (p.sale !== undefined && p.scende === undefined) n.scende = oppostoDi(p.sale);
       // Le chiavi escluse sono valori della colonna di raggruppamento: cambiata quella,
       // non vogliono piu' dire niente.
+      if (p.agg !== undefined) setColonnaMancante(false);
       if (p.gruppo !== undefined && p.gruppo !== b.gruppo && p.escludi === undefined)
         n.escludi = [];
       // Le barre senza raggruppamento non esistono: se si toglie il gruppo si torna al
@@ -490,6 +498,12 @@ const ModificaWidget: React.FC<Props> = ({
     if (!widget || !bozza || salvando) return;
     if (!bozza.titolo.trim()) {
       setErroreSalva('Il titolo non puo\' essere vuoto.');
+      return;
+    }
+    // SXADV-6110.1: il messaggio in finestra, perche' quello in fondo al pannello non si vede.
+    if (mancaLaColonna(bozza)) {
+      setColonnaMancante(true);
+      feedback.warning(MSG_COLONNA);
       return;
     }
     const id = widget.idWidget;
@@ -674,7 +688,11 @@ const ModificaWidget: React.FC<Props> = ({
                     <Select
                       value={bozza.col ?? undefined}
                       placeholder="su quale colonna"
-                      onChange={(v) => cambia({ col: v })}
+                      status={colonnaMancante && !bozza.col ? 'error' : undefined}
+                      onChange={(v) => {
+                        setColonnaMancante(false);
+                        cambia({ col: v });
+                      }}
                       options={colonne}
                       style={{ width: '55%' }}
                       aria-label="Su quale colonna"
@@ -798,7 +816,7 @@ const ModificaWidget: React.FC<Props> = ({
           {/* Per ogni forma: tornando alla lista il campo c'e' ancora. */}
           <Form.Item
             label="Apri il dettaglio con"
-            extra="Il clic su una riga apre questa vista. Vuoto: quella della lista."
+            extra="Il clic su una riga apre questa vista. Se resta vuoto, si apre il dettaglio abituale della lista."
           >
             <Input
               value={bozza.vistaDettaglio}
@@ -878,7 +896,7 @@ const ModificaWidget: React.FC<Props> = ({
                   onChange={(e) => cambia({ mandato: e.target.checked })}
                   style={{ marginTop: 8 }}
                 >
-                  Mandalo nelle Home
+                  Distribuisci nelle Home
                 </Checkbox>
               ) : null}
             </Form.Item>
@@ -927,6 +945,7 @@ const ModificaWidget: React.FC<Props> = ({
                   forma={bozza.forma}
                   trasformazione={trasformazione}
                   opzioni={{ sale: bozza.sale, scende: bozza.scende }}
+                  colonne={colonne.map((c) => ({ item: String(c.value), etichetta: String(c.label) }))}
                 />
               ) : null}
             </section>

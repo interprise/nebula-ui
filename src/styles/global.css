@@ -2206,11 +2206,31 @@ body[style*="cursor: wait"] * {
 
 /* SXADV-62 G10 · il numero e le barre di un widget. Disegnati a mano, sui token:
    nessuna libreria di grafici (piano §5.3). */
+.home-testata {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--ant-color-bg-container, #fff);
+}
+.dash-griglia-barra {
+  position: sticky;
+  top: var(--home-testata-h, 0px);
+  z-index: 20;
+  padding-bottom: 8px;
+  margin-bottom: 0;
+  background: var(--ant-color-bg-container, #fff);
+}
 .dash-numero {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 4px 0;
+}
+.dash-numero-calcolo {
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.65));
+}
+.dash-numero-simbolo {
+  font-weight: 600;
 }
 .dash-numero-valore {
   font-size: 32px;
@@ -2293,12 +2313,19 @@ body[style*="cursor: wait"] * {
   white-space: nowrap;
 }
 /* SXADV-6013 · i totali per gruppo sotto il numero, e il totale sotto le barre. */
+.dash-aziende-elenco {
+  max-width: 420px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dash-aziende-elenco ul {
+  margin: 0 0 4px;
+  padding-left: 16px;
+}
 .dash-parziali {
   list-style: none;
   margin: 6px 0 0;
   padding: 0;
-  max-height: 180px;
-  overflow-y: auto;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -2349,3 +2376,6 @@ body[style*="cursor: wait"] * {
   flex-direction: column;
   gap: 6px;
 }
+
+/* SXADV-6121: la cella cambiata a cui si scorre non finisce sotto testata e barra fisse. */
+.dash-griglia td { scroll-margin-top: calc(var(--home-testata-h, 0px) + 40px); }
