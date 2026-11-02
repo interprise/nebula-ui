@@ -621,6 +621,27 @@ html, body {
 .session-tabs .ant-tabs-tab + .ant-tabs-tab {
   margin-left: 2px;
 }
+/* SXADV-5767: la sessione corrente si riconosce a colpo d'occhio: sfondo pieno,
+   bordo e filetto del colore primario, leggero rilievo. Il testo si ispessisce
+   con text-shadow, non con font-weight, per non cambiare la larghezza. */
+.session-tabs.ant-tabs-card .ant-tabs-tab {
+  background: var(--app-border);
+}
+.session-tabs.ant-tabs-card .ant-tabs-tab:not(.ant-tabs-tab-active):hover .ant-tabs-tab-btn,
+.session-tabs.ant-tabs-card .ant-tabs-tab:not(.ant-tabs-tab-active):hover .ant-tabs-tab-remove {
+  color: var(--app-text);
+}
+.session-tabs.ant-tabs-card .ant-tabs-tab-active {
+  background: var(--app-surface);
+  border-color: var(--app-primary);
+  /* Filetto come ombra interna: un bordo piu' spesso alzerebbe la striscia. */
+  box-shadow: inset 0 3px 0 var(--app-primary), 0 0 6px rgba(0, 0, 0, 0.3);
+  position: relative;
+  z-index: 1;
+}
+.session-tabs.ant-tabs-card .ant-tabs-tab-active .ant-tabs-tab-btn {
+  text-shadow: 0 0 0.4px currentColor;
+}
 /* The "+" (new session) affordance is sized off the tab height; without this it
    keeps its default box and re-inflates the strip it sits in. */
 .session-tabs .ant-tabs-nav-add {
