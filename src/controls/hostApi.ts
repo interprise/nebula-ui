@@ -26,8 +26,8 @@ export interface HostServices {
    *  (DocDownload, LoadFile), che rispondono su /controller2. */
   triggerDownload: (
     action: string,
-    params?: Record<string, string>,
-    sid?: string,
+    params: Record<string, string>,
+    sid: string,
     fallbackName?: string,
     useCommand2?: boolean,
   ) => Promise<void>;

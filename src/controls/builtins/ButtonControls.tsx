@@ -272,6 +272,7 @@ const UploadButtonInner: ControlComponent = ({ control, onAction }) => {
 export const DownloadControl: ControlComponent = ({ control }) => {
   // Prima dei return anticipati: un hook non puo' stare dopo.
   const feedback = useFeedback();
+  const sid = useContext(SidContext);
   if (control.visible === false) return null;
   const cmd = (control.command ?? control.action) as string | undefined;
   if (!cmd) return null;
@@ -285,7 +286,9 @@ export const DownloadControl: ControlComponent = ({ control }) => {
         ? <img src={`/entrasp/images/${control.icon}`} width={16} height={16} />
         : <DownloadOutlined />}
       // Senza catch un download fallito non diceva niente (SXADV-5804).
-      onClick={() => triggerDownload(cmd, extra).catch((e) => feedback.error((e as Error).message || 'Download non riuscito'))}
+      // Il sid e' quello della scheda: navpath vive li', e con S1 fisso il comando
+      // da un'altra scheda tornava false a corpo vuoto (SXADV-5947).
+      onClick={() => triggerDownload(cmd, extra, sid).catch((e) => feedback.error((e as Error).message || 'Download non riuscito'))}
       title={control.hint}
     >
       {control.prompt || 'Download'}

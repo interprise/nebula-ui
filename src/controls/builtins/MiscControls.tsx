@@ -1,3 +1,4 @@
+import { useContext } from 'react';
 import { Button, Select } from 'antd';
 import {
   FileOutlined,
@@ -8,6 +9,7 @@ import {
 import type { ControlComponent } from '../types';
 import { triggerDownload } from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
+import { SidContext } from '../../components/ViewRenderer';
 import { mapUrl } from '../mapUrl';
 import { legacyUrl, serverHtml, HTML_POLICY } from '../../services/serverHtml';
 
@@ -16,6 +18,7 @@ interface AttachmentItem { key: string; fileName: string }
 export const AttachmentsControl: ControlComponent = ({ control, onAction }) => {
   // Prima dei return anticipati: un hook non puo' stare dopo.
   const feedback = useFeedback();
+  const sid = useContext(SidContext);
   if (control.visible === false) return null;
   const items = (control.items as AttachmentItem[] | undefined) ?? [];
   const downloadCmd = control.downloadCommand as string | undefined;
@@ -55,7 +58,7 @@ export const AttachmentsControl: ControlComponent = ({ control, onAction }) => {
                 e.preventDefault();
                 // DocDownload is a Command2 (→ /controller2) reading `key`.
                 // Senza catch un download fallito non diceva niente (SXADV-5804).
-                triggerDownload(downloadCmd, { key: item.key }, undefined, item.fileName, true)
+                triggerDownload(downloadCmd, { key: item.key }, sid, item.fileName, true)
                   .catch((err) => feedback.error((err as Error).message || 'Download non riuscito'));
               }}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}

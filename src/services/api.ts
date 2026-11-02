@@ -214,6 +214,36 @@ export async function postAction2(
 const FILE_CALLBACK_RE =
   /handleFileDownload\.createDelegate\(this,\s*\[\{fileName:\s*"([^"]+)",\s*type:\s*"([^"]+)",\s*index:\s*"([^"]+)"\}\]\)/;
 
+const NO_FILE_MESSAGE = 'Download non riuscito: il server non ha restituito alcun file';
+
+/** Nome da un valore percent-encoded: un % letterale non deve far perdere un
+ *  file gia' arrivato. */
+function decodeName(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** Nome dichiarato dalla content-disposition, se c'e'. */
+function nameFromDisposition(cd: string | null): string | null {
+  const m = cd ? /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd) : null;
+  return m ? decodeName(m[1].replace(/"/g, '')) : null;
+}
+
+/** Corpo JSON di un download: mai l'errore del parser davanti all'utente. */
+async function readDownloadJson(resp: Response): Promise<{
+  uiData?: { callback?: string };
+  errors?: Array<{ message: string }>;
+}> {
+  try {
+    return await resp.json();
+  } catch {
+    throw new Error(NO_FILE_MESSAGE);
+  }
+}
+
 function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -235,8 +265,10 @@ function saveBlob(blob: Blob, filename: string): void {
  *  server does not advertise one. */
 export async function triggerDownload(
   action: string,
-  params: Record<string, string> = {},
-  sid: string = 'S1',
+  params: Record<string, string>,
+  // Obbligatorio: con un default S1 un download da un'altra scheda finiva nella
+  // sessione sbagliata senza dire nulla (SXADV-5947).
+  sid: string,
   fallbackName: string = 'download',
   // Some download commands are Command2 (resolved at /controller2) — e.g.
   // DocDownload for CDMS attachments, which streams the file directly. Posting
@@ -255,10 +287,7 @@ export async function triggerDownload(
 
   const ct = resp.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
-    const json = (await resp.json()) as {
-      uiData?: { callback?: string };
-      errors?: Array<{ message: string }>;
-    };
+    const json = await readDownloadJson(resp);
     // Un comando di download che fallisce risponde con la busta degli errori,
     // non con il file: senza questo ramo l'utente vedeva "unexpected JSON
     // response" al posto del motivo (p.es. il file non c'e' piu' sul server).
@@ -269,7 +298,8 @@ export async function triggerDownload(
     if (!m) throw new Error('Download non riuscito: risposta inattesa del server');
     const fileName = decodeURIComponent(m[1]);
     const fileType = m[2];
-    const indexName = decodeURIComponent(m[3]);
+    // Util.sendJSONFile codifica con URLEncoder: lo spazio arriva come +.
+    const indexName = decodeName(m[3].replace(/\+/g, ' '));
     const loadBody = buildFormData({
       action: 'LoadFile',
       sid,
@@ -284,17 +314,25 @@ export async function triggerDownload(
       credentials: 'same-origin',
     });
     if (!fileResp.ok) throw new Error(`Download non riuscito: il server ha risposto HTTP ${fileResp.status}`);
-    saveBlob(await fileResp.blob(), indexName || fallbackName);
+    if ((fileResp.headers.get('content-type') || '').includes('application/json')) {
+      const failed = await readDownloadJson(fileResp);
+      throw new Error(failed.errors?.[0]?.message || NO_FILE_MESSAGE);
+    }
+    const loaded = await fileResp.blob();
+    if (loaded.size === 0) throw new Error(NO_FILE_MESSAGE);
+    // Il nome buono e' index: LoadFile ci accoda .zip nella disposition anche se
+    // c'e' gia' (Vista.zip.zip), e la disposition non regge ; ed euro nel nome.
+    const name = indexName || fallbackName;
+    saveBlob(loaded, fileType === 'application/zip' && !/\.zip$/i.test(name) ? `${name}.zip` : name);
     return;
   }
 
-  let filename = fallbackName;
   const cd = resp.headers.get('content-disposition');
-  if (cd) {
-    const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(cd);
-    if (m) filename = decodeURIComponent(m[1].replace(/"/g, ''));
-  }
-  saveBlob(await resp.blob(), filename);
+  const blob = await resp.blob();
+  // Un Command che torna false senza scrivere nulla risponde 200 a corpo vuoto:
+  // salvarlo darebbe all'utente un file vuoto al posto di un errore (SXADV-5947).
+  if (blob.size === 0 && !cd) throw new Error(NO_FILE_MESSAGE);
+  saveBlob(blob, nameFromDisposition(cd) || fallbackName);
 }
 
 /** Multipart POST of a single file. `action` defaults to the CORE
