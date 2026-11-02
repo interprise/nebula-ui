@@ -290,7 +290,7 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
         style={editable ? { cursor: 'pointer' } : undefined}
       >
         {selectedKeys.length === 0 && (
-          <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
+          <Text type={editable ? undefined : 'secondary'} style={{ fontSize: 12, fontStyle: 'italic' }}>
             {editable ? 'Clicca per selezionare' : 'Nessuna selezione'}
           </Text>
         )}

@@ -450,7 +450,8 @@ html, body {
 .view-subtitle {
   font-size: var(--app-font-size-sm);
   font-weight: 400;
-  color: #8c8c8c;
+  font-style: italic;
+  color: #1f4e8c;
   padding: 0 0 6px;
   border-bottom: 1px solid #e8e8e8;
   margin-bottom: 4px;
@@ -1585,7 +1586,13 @@ body[style*="cursor: wait"] * {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-left: 4px;
+}
+
+/* Freccia della tendina e calendario: in grigio sembravano spenti (SXADV-5647.6). */
+.ant-select:not(.ant-select-disabled) .ant-select-suffix,
+.ant-picker:not(.ant-picker-disabled) .ant-picker-suffix {
+  color: rgba(0, 0, 0, 0.88);
 }
 .negation-label {
   font-size: 11px;

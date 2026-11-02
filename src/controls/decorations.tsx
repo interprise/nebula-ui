@@ -65,10 +65,11 @@ export const withPostDecorations = (
   const fieldName = control.name || control.id || '';
   return (
     <span className="post-decorations">
+      {element}
+      {/* Dopo il campo, come il legacy (addNegationCheckBox, SXADV-5647.4). */}
       {hasNegation && (
         <NegationCheckbox control={control} fieldName={fieldName} onChange={onChange} />
       )}
-      {element}
       {postPrompt && <span className="post-prompt">{postPrompt}</span>}
       {isMandatoryIcon && (
         control.mandatoryIcon === 'sequence'
