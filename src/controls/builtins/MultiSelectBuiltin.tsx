@@ -5,7 +5,15 @@ import { withPostDecorations } from '../decorations';
 import MultiSelectControl from '../MultiSelectControl';
 
 const MultiSelectBuiltin: ControlComponent = ({ control, pageType, onAction, onChange }) => {
-  const handleChange = useControlChange(control, onChange, onAction);
+  // Senza pastiglie la scelta si vede solo da quello che il server ne ricava (i
+  // righi nel tab sotto): in dettaglio si ridisegna a Conferma, come il ritorno
+  // dalla lista del legacy (SXADV-5859.c).
+  const showsNoItems = control.maxItemsShown === 0 && pageType === 2;
+  const handleChange = useControlChange(
+    showsNoItems ? { ...control, reload: true, option1: (control.option1 as string) || (control.controlName as string) } : control,
+    onChange,
+    onAction,
+  );
   const textMaxWidth = getTextMaxWidth(control);
   const isDisabled = !!control.disabled || control.editable === false;
   return withPostDecorations(
