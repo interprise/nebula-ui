@@ -54,7 +54,7 @@ export interface UIControl {
   count?: number;
   // post-decorations: navigation icons next to field
   navigateView?: { command: string; navpath: string; controlName: string };
-  navigateAdd?: { command: string; navpath: string; controlName: string };
+  navigateAdd?: { command: string; navpath: string; controlName: string; withValue?: boolean };
   navigateLookupCommand?: string; // lookup search action (e.g. "NavigateLookup")
   lookupViewName?: string;
   // documentation mode: icon to edit/view help text for this field
