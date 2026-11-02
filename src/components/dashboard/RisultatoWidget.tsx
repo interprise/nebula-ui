@@ -6,6 +6,7 @@ import {
   aNumero,
   conSegno,
   conteggio,
+  numeroPertinente,
   scrivi,
   tonoDelta,
   type Opzioni,
@@ -56,9 +57,9 @@ const conParziale = (testo: string, r: Risultato) =>
  */
 const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
   const gruppi = r.gruppi || [];
-  if (!(trasformazione?.group || []).length || gruppi.length === 0) return null;
-  const intero = conteggio(trasformazione, true);
   const altri = r.altri && aNumero(r.altri.valore) !== null ? r.altri : null;
+  if (!(trasformazione?.group || []).length || (gruppi.length === 0 && !altri)) return null;
+  const intero = conteggio(trasformazione, true);
   const totale = aNumero(r.totale);
   const riga = (chiave: string, etichetta: string, valore: string, classe = '') => (
     <li key={chiave} className={`dash-parziale ${classe}`.trim()}>
@@ -97,6 +98,13 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni }) => {
   // testo col segno dicono la stessa cosa a chi il colore non lo distingue.
   const tono = tonoDelta(d, opzioni);
   const classeTono = tono === 'attenzione' ? 'male' : tono;
+  if (!numeroPertinente(trasformazione, r))
+    return (
+      <div className="dash-numero" data-forma="kpi">
+        <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} />
+        <Base r={r} />
+      </div>
+    );
   return (
     <div className="dash-numero" data-forma="kpi">
       <div className="dash-numero-valore">

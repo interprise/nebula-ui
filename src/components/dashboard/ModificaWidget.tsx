@@ -19,7 +19,7 @@ import type { ErrorItem } from '../../types/ui';
 import { RisultatoVista } from './RisultatoWidget';
 import DateDellaRicerca from './DateDellaRicerca';
 import type { CriterioData, SceltaData } from './DateDellaRicerca';
-import { oppostoDi, toniDi } from './risultato';
+import { contaSoloIGruppi, oppostoDi, toniDi } from './risultato';
 import type { Opzioni, Risultato, Tono, Trasformazione } from './risultato';
 
 /** Un gruppo che l'anteprima offre da escludere (`dashboard.Preview`, SALESCENDE E6). */
@@ -585,7 +585,7 @@ const ModificaWidget: React.FC<Props> = ({
           <Form.Item label="Esempi rapidi">
             <Space wrap size={4}>
               <Button size="small" onClick={() => esempio('rosso')}>
-                Conta i gruppi con valore &gt; 0
+                Gruppi con valore &gt; 0
               </Button>
               <Button size="small" onClick={() => esempio('totale')}>
                 Somma di una colonna
@@ -734,7 +734,7 @@ const ModificaWidget: React.FC<Props> = ({
                     value={bozza.outAgg}
                     onChange={(v) => cambia({ outAgg: v })}
                     options={[
-                      { value: 'count', label: 'quanti gruppi' },
+                      { value: 'count', label: 'nessuno: solo i gruppi' },
                       { value: 'sum', label: 'somma dei gruppi' },
                       { value: 'avg', label: 'media dei gruppi' },
                     ]}
@@ -766,7 +766,7 @@ const ModificaWidget: React.FC<Props> = ({
                   </Space>
                 </Form.Item>
               ) : null}
-              {bozza.forma === 'kpi' ? (
+              {bozza.forma === 'kpi' && !contaSoloIGruppi(trasformazione) ? (
                 <>
                   <Form.Item label="Se il numero sale è">
                     <Radio.Group

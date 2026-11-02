@@ -215,9 +215,10 @@ describe('SXADV-6013 kpi: quando non ci sono parziali', () => {
     expect(haClasse(h, 'dash-parziali')).toBe(false);
   });
 
+  // Con conteggio e «quanti gruppi» il numero non c'e' piu': vedi SXADV-6043.
   it('il numero grande resta', async () => {
-    const h = await html({ numero: 42, gruppi, completo: true }, 'kpi', tConta);
-    expect(testoDiClasse(h, 'dash-numero-valore')).toBe('42');
+    const h = await html({ numero: 42, gruppi, completo: true }, 'kpi', tSomma);
+    expect(testoDiClasse(h, 'dash-numero-valore')).toBe('42,00');
   });
 });
 

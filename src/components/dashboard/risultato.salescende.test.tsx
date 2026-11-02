@@ -290,15 +290,18 @@ describe('E7: la riga .dash-esclusi', () => {
   });
 
   it('sta sopra il numero', async () => {
+    // SXADV-6043: col conteggio dei gruppi il numero non c'e' piu'; qui serve una
+    // trasformazione raggruppata che il numero lo mostra.
     const h = await html(
       ris({ numero: 2, gruppi, esclusi: [{ k: '000', etichetta: 'Sede centrale', righe: 7 }] }),
       'kpi',
-      tGruppi,
+      { group: ['sede'], agg: 'sum', col: 'importo', outAgg: 'sum' },
       null,
     );
     const e = elemento(h, 'dash-esclusi');
-    const n = elemento(h, 'dash-numero-valore') ?? elemento(h, 'dash-numero');
-    expect(e && n).toBeTruthy();
+    const n = elemento(h, 'dash-numero-valore');
+    expect(e, 'manca .dash-esclusi').not.toBeNull();
+    expect(n, 'manca .dash-numero-valore').not.toBeNull();
     expect(e!.da).toBeLessThan(n!.da);
   });
 

@@ -129,6 +129,29 @@ export const conteggio = (t: Trasformazione | null | undefined, perGruppo: boole
   return (t.agg || 'count') === 'count';
 };
 
+/**
+ * Le voci vuote non raggruppano: il server le scarta. La trasformazione e' JSON salvato e
+ * si legge durante il disegno, dove un'eccezione porterebbe giu' tutta la Home: una voce
+ * che non e' un testo non deve lanciare.
+ */
+const raggruppaDavvero = (group: unknown) => {
+  const voci: unknown[] = Array.isArray(group) ? group : [group];
+  return voci.some((g) => typeof g === 'string' && !!g.trim());
+};
+
+/**
+ * SXADV-6043: «quanti gruppi» sopra l'elenco dei gruppi non si mostra mai, qualunque sia
+ * il calcolo o il filtro: i gruppi si vedono gia'. Restano somma e media dei gruppi.
+ */
+export const contaSoloIGruppi = (t: Trasformazione | null | undefined) =>
+  !!t && raggruppaDavvero(t.group) && (t.outAgg || 'count') === 'count';
+
+/** Il numero grande si disegna? Senza gruppi da mostrare resta: il widget non sta vuoto. */
+export const numeroPertinente = (t: Trasformazione | null | undefined, r: Risultato) => {
+  const altri = r.altri && aNumero(r.altri.valore) !== null;
+  return !(contaSoloIGruppi(t) && ((r.gruppi || []).length > 0 || altri));
+};
+
 export const scrivi = (v: unknown, intero: boolean) => {
   const n = aNumero(v);
   if (n === null) return '—';
