@@ -81,6 +81,7 @@ import { ensureNotificationPermission, notify } from '../services/notifications'
 import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
+import { applyToggleItem, notifyToggleItem } from '../services/applyToggleItem';
 import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
 import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
 import { effectiveMenuFilter, filterMenuTree } from './menuFilter';
@@ -194,80 +195,6 @@ interface ShellProps {
   loginInfo: LoginInfo;
   onLogout: () => void;
   onReloadMenu: () => void | Promise<void>;
-}
-
-/**
- * Walk the UI tree and flip the configureIcon.included for a single item.
- * Used for ToggleItem responses so we don't re-render the whole view.
- * Returns a new UITree with shallow copies along the touched path.
- */
-function applyToggleItem(ui: UITree, itemId: string, included: boolean): UITree {
-  let changed = false;
-  const visitControl = (ctl: UIControl): UIControl => {
-    let next: UIControl = ctl;
-    if (ctl.configureIcon && ctl.configureIcon.itemId === itemId) {
-      next = { ...next, configureIcon: { ...ctl.configureIcon, included } };
-      changed = true;
-    }
-    if (ctl.tabs && ctl.tabs.length > 0) {
-      let tabsChanged = false;
-      const newTabs = ctl.tabs.map((t) => {
-        if (t.configureIcon && t.configureIcon.itemId === itemId) {
-          tabsChanged = true;
-          changed = true;
-          return { ...t, configureIcon: { ...t.configureIcon, included } };
-        }
-        return t;
-      });
-      if (tabsChanged) next = { ...next, tabs: newTabs };
-    }
-    if (ctl.contentRows) {
-      const newRows = ctl.contentRows.map(visitRow);
-      if (newRows !== ctl.contentRows) next = { ...next, contentRows: newRows };
-    }
-    // ButtonBar buttons are inner controls with their own configureIcon
-    const buttons = (ctl as unknown as { buttons?: UIControl[] }).buttons;
-    if (buttons && buttons.length > 0) {
-      let btnsChanged = false;
-      const newButtons = buttons.map((b) => {
-        const nb = visitControl(b);
-        if (nb !== b) btnsChanged = true;
-        return nb;
-      });
-      if (btnsChanged) next = { ...next, buttons: newButtons } as UIControl;
-    }
-    return next;
-  };
-  const visitRow = (row: UIRow): UIRow => {
-    let rowChanged = false;
-    const newCells = row.cells.map((cell) => {
-      if (!cell.control) return cell;
-      const newCtl = visitControl(cell.control);
-      if (newCtl !== cell.control) {
-        rowChanged = true;
-        return { ...cell, control: newCtl };
-      }
-      return cell;
-    });
-    return rowChanged ? { ...row, cells: newCells } : row;
-  };
-  const newRows = ui.rows.map(visitRow);
-  // List headers (column headers) can also carry a configureIcon
-  let newHeaders = ui.headers;
-  if (ui.headers) {
-    let headersChanged = false;
-    newHeaders = ui.headers.map((h) => {
-      if (h.configureIcon && h.configureIcon.itemId === itemId) {
-        headersChanged = true;
-        changed = true;
-        return { ...h, configureIcon: { ...h.configureIcon, included } };
-      }
-      return h;
-    });
-    if (!headersChanged) newHeaders = ui.headers;
-  }
-  if (!changed) return ui;
-  return { ...ui, rows: newRows, headers: newHeaders };
 }
 
 /**
@@ -1596,9 +1523,15 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         try {
           const resp = await api.postAction2('ToggleItem', params);
           const toggle = (resp as ServerResponse).toggleItem;
-          if (toggle && tab.ui) {
-            const newUi = applyToggleItem(tab.ui, toggle.itemId, toggle.included);
-            if (newUi !== tab.ui) updateTabState(tab.key, { ui: newUi });
+          // Sullo stato di ADESSO, non su quello letto prima della risposta: due clic
+          // ravvicinati, o una navigazione nel frattempo, non si cancellano a vicenda.
+          if (toggle) {
+            setTabs((prev) => prev.map((t) => {
+              if (t.key !== tab.key || !t.ui) return t;
+              const ui = applyToggleItem(t.ui, toggle.itemId, toggle.included);
+              return ui === t.ui ? t : { ...t, ui };
+            }));
+            notifyToggleItem(toggle.itemId, toggle.included);
           }
         } catch (e) {
           feedback.failure(e);

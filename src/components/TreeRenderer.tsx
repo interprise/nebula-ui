@@ -8,6 +8,7 @@ import { paneReentersEdit } from './treeDetailRouting';
 import { recallTree, rememberTree } from './treeMemory';
 import ViewRenderer from './ViewRenderer';
 import * as api from '../services/api';
+import { applyToggleItem, subscribeToggleItem } from '../services/applyToggleItem';
 import type { FieldCaption, FieldChange } from '../controls/types';
 
 const { Text } = Typography;
@@ -127,6 +128,11 @@ const TreeRenderer: React.FC<TreeRendererProps> = ({ ui, onAction, onChange }) =
   // server (nodo nuovo selezionato, pannello del nodo di prima).
   const paneInFlight = useRef(0);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // "Configura campi" nel pannello: il pallino gira qui, non nell'albero della scheda.
+  useEffect(() => subscribeToggleItem((itemId, included) => {
+    setDetailUi((cur) => (cur ? applyToggleItem(cur, itemId, included) : cur));
+  }), []);
 
   // A node's label is a ViewInfo expression on the record (`#descrizione#`,
   // `#codice# - #descrizione#`, ...), so the client cannot recompute it after an

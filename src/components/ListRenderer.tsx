@@ -2725,6 +2725,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const label = listHeaderLabel(hdr.text);
         if (label.html != null) cell.innerHTML = label.html;
         else cell.textContent = label.text;
+        // Pallino di "Configura campi" anche sulle colonne delle bande (SXADV-5777).
+        const ci = hdr.configureIcon;
+        if (ci) {
+          const dot = document.createElement('span');
+          dot.className = `configure-icon ${ci.included ? 'configure-on' : 'configure-off'}`;
+          dot.title = ci.included ? 'Colonna inclusa - clicca per escludere' : 'Colonna esclusa - clicca per includere';
+          dot.textContent = ci.included ? '●' : '✕';
+          dot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleItemDispatchRef.current?.(ci.itemId);
+          });
+          cell.appendChild(dot);
+        }
         track.appendChild(cell);
       });
       wrapper.appendChild(track);
