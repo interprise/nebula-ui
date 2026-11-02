@@ -138,6 +138,13 @@ export function revealVertically(el: HTMLElement): void {
   }
 }
 
+let arrivalFocus = false;
+/** Vero mentre il fuoco lo sta mettendo {@link focusNewPage}: e' l'arrivo sulla
+ *  pagina a muovere il cursore, non l'utente che si sposta in quell'area. */
+export function isArrivalFocus(): boolean {
+  return arrivalFocus;
+}
+
 /**
  * Pagina nuova: il cursore va dove lo metteva il legacy dopo ogni pagina
  * (ui.js: `focusInputField(json.currField)`, altrimenti `nextField()`), cioe'
@@ -164,7 +171,13 @@ export function focusNewPage(currField?: string | null): void {
       ? byServer
       : Array.from(view?.querySelectorAll('input, textarea, select') ?? []).find(isUsableField);
     if (target) {
-      target.focus({ preventScroll: true });
+      // L'evento focus e' sincrono: chi lo ascolta sa cosi' che non e' l'utente.
+      arrivalFocus = true;
+      try {
+        target.focus({ preventScroll: true });
+      } finally {
+        arrivalFocus = false;
+      }
       // Come focusInputField: il testo gia' presente resta selezionato.
       if (target instanceof HTMLInputElement && target.type === 'text' && !target.readOnly) target.select();
       // Si scorre fino al campo solo quando arriva come currField. Il ripiego,

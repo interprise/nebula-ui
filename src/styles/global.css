@@ -2349,3 +2349,39 @@ body[style*="cursor: wait"] * {
   flex-direction: column;
   gap: 6px;
 }
+
+/* Pannello inferiore a sezioni in sequenza (SXADV-5935): l'area scorre, ogni
+   sezione e' alta quanto il suo contenuto e si stacca dalla precedente. */
+.view-split-bottom--stacked {
+  overflow-y: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+.bottom-section + .bottom-section {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #d9d9d9;
+}
+.bottom-section .ag-layout-auto-height .ag-center-cols-viewport,
+.bottom-section .ag-layout-auto-height .ag-center-cols-container {
+  min-height: 0;
+}
+/* Un tab accanto alle sezioni non si riduce a zero nella colonna che scorre. */
+.view-split-bottom--stacked > .split-tab-panel {
+  flex: 0 0 70% !important;
+  min-height: 260px !important;
+}
+/* Griglia zoomata: resta solo la sua sezione e riempie l'area. */
+.view-split-bottom--stacked:has(.list-container--zoomed) {
+  overflow: hidden;
+}
+.view-split-bottom--stacked:has(.list-container--zoomed) > .bottom-section:not(:has(.list-container--zoomed)),
+.view-split-bottom--stacked:has(.list-container--zoomed) > .split-tab-panel {
+  display: none !important;
+}
+.view-split-bottom--stacked > .bottom-section:has(.list-container--zoomed) {
+  flex: 1 1 0 !important;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

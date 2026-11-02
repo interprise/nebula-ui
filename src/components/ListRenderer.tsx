@@ -8,7 +8,7 @@ import { PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, Expand
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData } from '../types/ui';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
 import { controls, isCellRenderable } from '../controls/registry';
-import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
+import { SidContext, SplitAreaContext, StackedSectionsContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
 import { addedRowPath } from './addedRow';
 import { listHeaderLabel } from './listHeaderLabel';
 import { useUiMode } from '../hooks/uiMode';
@@ -935,6 +935,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      da collassare, ed è lì che l'alta numerosità righi è ingestibile. Lo stato
      è l'`ui.path` della griglia, così una vista con più griglie sa quale. */
   const inSplitArea = useContext(SplitAreaContext);
+  const inStackedSections = useContext(StackedSectionsContext);
   const inTabPanel = useContext(InTabPanelContext);
   const { zoomedGridId, setZoomedGridId, isOneLine, setOneLine } = useUiMode();
   /* Identità della griglia dentro la vista: il NOME della vista, non `ui.path`.
@@ -950,6 +951,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      disponibile (SXADV-5651). */
   const canZoom = !!embedded && inSplitArea && !inTabPanel && !!gridId;
   const isZoomed = canZoom && zoomedGridId === gridId;
+  /* In una pila di sezioni la griglia e' alta quanto il contenuto; zoomata torna a riempire. */
+  const contentHeight = !!embedded && inStackedSections && !isZoomed;
   /* Modalità una-riga: le bande di continuazione diventano colonne vere, il
      record sta su una linea sola e la griglia scorre in orizzontale con le
      prime colonne bloccate. Offerta solo dove c'è qualcosa da linearizzare —
@@ -2174,7 +2177,18 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [embedded, panelShown, rowData.length]);
+  }, [embedded, panelShown, rowData.length, isZoomed]);
+
+  // In una pila di sezioni il pannello di riga nasce sotto l'ultima riga: si porta
+  // a vista, altrimenti il clic sembra non aver fatto nulla (SXADV-5935).
+  useEffect(() => {
+    if (!contentHeight || !panelShown) return;
+    const raf = requestAnimationFrame(() => {
+      gridContainerRef.current?.closest('.list-container')?.parentElement
+        ?.querySelector('.edit-panel')?.scrollIntoView?.({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [contentHeight, panelShown]);
 
   const getGridViewport = useCallback((): HTMLElement | null => {
     return gridContainerRef.current?.querySelector('.ag-body-viewport') ?? null;
@@ -2975,6 +2989,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (!viewport || !el) return false;
       const v = viewport.getBoundingClientRect();
       const r = el.getBoundingClientRect();
+      // In una pila di sezioni a scorrere e' l'area: la griglia e' sempre "tutta a vista".
+      const area = el.closest('.view-split-bottom--stacked')?.getBoundingClientRect();
+      if (area && (r.top < area.top - 1 || r.bottom > area.bottom + 1)) return false;
       return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
     };
     // Il fuoco va sulla riga solo se non e' gia' altrove: sul <body> (perso nel
@@ -3064,7 +3081,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (viewport && viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1) {
           viewport.scrollTop = viewport.scrollHeight;
         }
-      } else if (!inView(target.id)) api.ensureIndexVisible(target.rowIndex, 'middle');
+        if (contentHeight) gridContainerRef.current?.querySelector('.ag-center-cols-container .ag-row:last-child')?.scrollIntoView?.({ block: 'nearest' });
+      } else if (!inView(target.id)) {
+        api.ensureIndexVisible(target.rowIndex, 'middle');
+        if (contentHeight) gridContainerRef.current?.querySelector(`.ag-center-cols-container [row-id="${target.id}"]`)?.scrollIntoView?.({ block: 'nearest' });
+      }
       if (armed && inView(target.id)) focusRow(api, target.rowIndex);
       if (performance.now() - since < ALIGN_WINDOW_MS) raf = requestAnimationFrame(attempt);
       else giveUp();
@@ -3277,11 +3298,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   );
 
   return (
-    <div className="list-container" style={listContainerStyle}>
+    <div className={`list-container${isZoomed ? ' list-container--zoomed' : ''}`} style={listContainerStyle}>
       {/* In zoom il titolo torna anche quando ripete l'etichetta del tab: la
           barra dei tab non c'è più, e resterebbe l'unica cosa a dire su quali
           righe si sta lavorando. */}
-      {meta?.title && (!titleEchoesTab || isZoomed) && <div className="view-title">{meta.title}</div>}
+      {meta?.title && (!titleEchoesTab || isZoomed) && !(inStackedSections && gridActions?.title) && <div className="view-title">{meta.title}</div>}
       {meta?.subtitle && <div className="view-subtitle">{meta.subtitle}</div>}
 
       {/* Embedded-list action bar, above the grid and styled like the primary
@@ -3372,6 +3393,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           if (!embedded) {
             return { width: '100%', flex: 1, minHeight: 0 };
           }
+          if (contentHeight) return { width: '100%', maxWidth: '100%', boxSizing: 'border-box' };
           // Embedded grid (form section, tab, or stacked above the in-flow edit
           // panel): FILL the space measured down to the container bottom / the
           // panel top (fillCapHeight — the layout-table ancestors block CSS
@@ -3420,7 +3442,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
           enterNavigatesVerticallyAfterEdit
-          domLayout={undefined}
+          domLayout={contentHeight ? 'autoHeight' : undefined}
           // Griglia vuota = solo intestazioni, come nel legacy: nessun messaggio
           // nel corpo, che finiva sopra i nomi colonna. Il conteggio a zero lo
           // danno già il paginatore e la toolbar (SXADV-5688.1).
