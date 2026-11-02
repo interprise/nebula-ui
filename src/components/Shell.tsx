@@ -82,6 +82,7 @@ import * as api from '../services/api';
 import { putTemplate, getTemplate, panelTemplateKeysParam } from '../services/templateCache';
 import { hydrate } from '../services/hydrate';
 import { applyToggleItem, notifyToggleItem } from '../services/applyToggleItem';
+import { withoutPagedArrays } from '../services/positionalValues';
 import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
 import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
 import { effectiveMenuFilter, filterMenuTree } from './menuFilter';
@@ -1711,6 +1712,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       }
       const settlePanelFields = (resp: ServerResponse) => {
         if ((resp.errors ?? []).some((e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) return;
+        // La pagina e' cambiata, anche dal rigioco di una conferma: le spunte le
+        // ha gia' il server (SXADV-6015).
+        if (isNav || action === 'SetPageSize' || action === 'LocateRow' || action === 'FilterRows') {
+          const live = formValuesRef.current[tab.key];
+          if (live) {
+            const rest = withoutPagedArrays(live, sentParams.navpath ?? tab.ui?.path);
+            formValuesRef.current[tab.key] = rest;
+            // Anche nello stato: il prossimo campo battuto riparte da li'.
+            updateTabState(tab.key, { formValues: rest });
+          }
+        }
         const rows = panelFieldRows(tab.key);
         for (const { name, value } of sentPanel) {
           if (!rows.has(name) || formValuesRef.current[tab.key]?.[name] !== value) continue;

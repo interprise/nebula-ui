@@ -29,3 +29,22 @@ export function withoutPositionalArrays(
   }
   return out;
 }
+
+// Un cambio pagina consuma gli array della lista: il server li ha gia' applicati
+// alla pagina lasciata. Rimasti nei valori, la richiesta successiva li avrebbe
+// applicati per posizione alla pagina nuova, spuntando le righe sbagliate
+// (SXADV-6015). `listPath` e' il percorso della lista, con o senza posizione.
+export function withoutPagedArrays(
+  values: Record<string, string | string[]>,
+  listPath: string | null | undefined,
+): Record<string, string | string[]> {
+  if (!listPath) return values;
+  const last = listPath.split(',').pop()!.trim().replace(/\.-?\d+$/, '');
+  const suffix = `.${last}`;
+  const out: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (Array.isArray(value) && key.endsWith(suffix)) continue;
+    out[key] = value;
+  }
+  return out;
+}
