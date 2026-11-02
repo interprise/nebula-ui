@@ -2202,6 +2202,11 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     if (!api || api.isDestroyed() || !viewport) return;
     const widths = api.getAllDisplayedColumns().map((c) => c.getActualWidth());
     setColsOverflow(columnsOverflow(widths, viewport.clientWidth));
+    // Le bande di continuazione finiscono dove finiscono le colonne, come il rigo
+    // principale: il loro colore non prosegue nel vuoto a destra (SXADV-5915.1).
+    const total = widths.reduce((n, w) => n + w, 0);
+    if (total > 0 && total < viewport.clientWidth) gridContainerRef.current?.style.setProperty('--grid-cols-width', `${total}px`);
+    else gridContainerRef.current?.style.removeProperty('--grid-cols-width');
   }, [getGridViewport]);
 
   /* Adaptive page size (SXADV-5742) ---------------------------------------

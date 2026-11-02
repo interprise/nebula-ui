@@ -2385,3 +2385,15 @@ body[style*="cursor: wait"] * {
   padding: 0;
   border: 0;
 }
+
+/* SXADV-5915.1: la banda di continuazione non sborda oltre le colonne. */
+.ag-full-width-row.continuation-row {
+  overflow: visible;
+  background-image: linear-gradient(to right, transparent var(--grid-cols-width, 100%), var(--ag-background-color, #fff) var(--grid-cols-width, 100%));
+}
+/* SXADV-5915.2: il clic su una cella senza controllo non la fa sembrare modificabile
+   (si modifica nel pannello di riga). Da tastiera il segno resta. */
+.ag-cell.ag-cell-focus:not(:focus-visible):not(.ag-cell-last-left-pinned):not(:has(input, select, textarea, .ant-select)) {
+  border-color: transparent !important;
+  outline: none !important;
+}
