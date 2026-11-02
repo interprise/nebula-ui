@@ -1572,17 +1572,15 @@ body[style*="cursor: wait"] * {
 }
 .nav-icon:hover { color: #4096ff; }
 
-/* Catenella NavigateView dentro una cella di lista (SXADV-5759.3). Il valore
-   puo' andare a capo su piu' righe: l'icona resta accanto all'ULTIMA parola,
-   come faceva la <td> che il legacy scriveva dopo il valore, e non si stringe
-   quando la colonna e' stretta. */
+/* Catenella NavigateView dentro una cella di lista (SXADV-5759.3). */
 .list-cell-linked {
   display: inline;
 }
+/* Al bordo destro della cella e non subito dopo il testo: l'icona sta nello
+   stesso punto su tutte le righe, come nel legacy (SXADV-5951.3). */
 .list-cell-nav {
-  display: inline-block;
+  float: right;
   margin-left: 4px;
-  vertical-align: baseline;
 }
 .list-cell-nav .nav-icon {
   font-size: var(--app-font-size-sm);
