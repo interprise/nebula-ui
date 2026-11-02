@@ -2685,7 +2685,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // terza non ha voce di menu e passa da openFunctionByAction (SXADV-5783).
     // Il tooltip e' "Gestione Profili" come nel documentale (SXADV-5784.Z); la
     // scheda resta intitolata alla funzione.
-    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openFunctionByAction('Gestione Profili Menu', 'ProfileManager', { navpath: 'menu' }), visible: true, active: currentTab?.functionAction === 'ProfileManager' },
+    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openFunctionByAction('Gestione Profili', 'ProfileManager', { navpath: 'menu' }), visible: true, active: currentTab?.functionAction === 'ProfileManager' },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleMenuClick('menu._$commstatList', 'Comandi in esecuzione'), visible: true, active: activeMenuId === 'menu._$commstatList' },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleMenuClick('menu._$jdbcstatList', 'Connessioni attive'), visible: true, active: activeMenuId === 'menu._$jdbcstatList' },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true, active: activeMenuId === 'menu.expBuilderList' },
