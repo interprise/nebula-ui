@@ -847,7 +847,12 @@ export function useCommonProps(
     // sposterebbe il riquadro invece del valore. Sono ~6 campi in tutto
     // (SXADV-5734). I control che si impongono uno `style` proprio devono
     // fonderlo per ultimo, cosi' quello che la view chiede vince.
-    style: parseInlineStyle(control.style as string | undefined),
+    // inputStyle e' l'attributo del campo nella form (grassetto degli importi,
+    // SXADV-5986); contentStyle per ultimo, vince.
+    style: {
+      ...parseInlineStyle(control.inputStyle as string | undefined),
+      ...parseInlineStyle(control.style as string | undefined),
+    },
   };
 }
 

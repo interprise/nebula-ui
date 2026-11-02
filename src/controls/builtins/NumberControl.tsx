@@ -120,9 +120,11 @@ const MoneyInput: React.FC<{
           legacy (SXADV-5653.3): dentro il riquadro — prima come prefisso, poi
           come suffisso antd — rubava spazio alle cifre e non corrispondeva a
           quello che l'utente vedeva prima. Fuori non c'e' piu' nulla che balli
-          tra fuoco e non fuoco, quindi si mostra sempre, anche a campo vuoto o
-          disabilitato (dove resta a piena leggibilita', non sbiadito). */}
-      {!!symbol && <span className="currency-suffix">{symbol}</span>}
+          tra fuoco e non fuoco, quindi si mostra anche a campo vuoto o disabilitato
+          (dove resta a piena leggibilita', non sbiadito). Solo un campo vuoto E
+          non modificabile non lo mostra, come il legacy: un importo che non c'e'
+          non ha valuta (SXADV-5986.3). */}
+      {!!symbol && (local != null || !commonProps.disabled) && <span className="currency-suffix">{symbol}</span>}
       {!!unitSuffix && (
         <span className="unit-suffix">{String(unitSuffix)}</span>
       )}
