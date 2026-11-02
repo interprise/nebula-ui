@@ -32,10 +32,6 @@ export const UrlControl: ControlComponent = ({ control }) => {
     : <a href={href} target="_blank" rel="noopener noreferrer">{(control.displayValue ?? control.value) as string | undefined}</a>;
 };
 
-export const HtmlControl: ControlComponent = ({ control }) => (
-  <span dangerouslySetInnerHTML={{ __html: serverHtml((control.value as string) || '', HTML_POLICY.content) }} />
-);
-
 export const HtmlFormatControl: ControlComponent = ({ control }) => {
   const cls = control.cls as string | undefined;
   const style = parseInlineStyle(control.style as string | undefined);
@@ -48,11 +44,16 @@ export const HtmlFormatControl: ControlComponent = ({ control }) => {
   return (
     <span
       className={cls || ''}
-      style={styled ? { display: 'block', width: '100%', ...style } : style}
+      // white-space:pre non va a capo: la cella taglierebbe le righe lunghe (una stack trace).
+      style={styled ? { display: 'block', width: '100%', ...(/white-space:\s*pre/i.test(String(control.style ?? '')) ? { overflowX: 'auto' as const } : null), ...style } : style}
       dangerouslySetInnerHTML={{ __html: serverHtml((control.value as string) || '', HTML_POLICY.content) }}
     />
   );
 };
+
+// Il contentStyle/contentClass vale anche per un Html: il saldo del sottoconto e'
+// allineato a destra per stare accanto alla sua catenella (SXADV-5934.2).
+export const HtmlControl = HtmlFormatControl;
 
 export const HintControl: ControlComponent = ({ control, onAction }) => {
   const forGroup = control.forGroup as string | undefined;

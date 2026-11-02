@@ -29,7 +29,7 @@ import { bareFieldName, echoText, type RowEcho } from './rowEcho';
 import type { FieldCaption } from '../controls/types';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
-import { solvePromptBand, type LeadingPrompt } from './promptBand';
+import { promptFitWidth, solvePromptBand, type LeadingPrompt } from './promptBand';
 import { panelRowSwitch } from './addWait';
 import { staleSelection } from './editRowLifetime';
 import { sectionZoomTooltip } from './zoomLabels';
@@ -337,7 +337,7 @@ function buildRuler(allRows: UIRow[], hostWidth: number, density: Density, total
     if (!first || first.visible === false || first.elementType !== ELTYPE_PROMPT) continue;
     leadingPrompts.push({
       span: first.colspan || 1,
-      width: first.prompt ? measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING : 0,
+      width: first.prompt ? promptFitWidth(first.prompt, (t) => measurePromptWidth(t, font)) + PROMPT_CELL_PADDING : 0,
     });
   }
   const bandColsShared = leadingPrompts.length ? Math.min(...leadingPrompts.map((p) => p.span)) : 0;

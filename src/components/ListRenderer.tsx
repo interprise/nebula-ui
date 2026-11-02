@@ -1,3 +1,4 @@
+import { emptyCellTakesEdit } from './listEditSpread';
 import React, { useMemo, useCallback, useRef, useEffect, useState, useLayoutEffect, useContext } from 'react';
 import { serverHtml, serverText, HTML_POLICY, looksLikeServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
@@ -1772,8 +1773,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
             if (rowObj[`_editable_${ci}`]) continue; // already marked
             // Only spread to cells that are empty (no value) — not to cells where
             // the server sent a value without editable metadata (server denied editing)
-            const cellVal = rowObj[`col_${ci}`];
-            if (cellVal === undefined || cellVal === '') {
+            if (emptyCellTakesEdit(row.cells[ci], rowObj[`col_${ci}`])) {
               rowObj[`_editable_${ci}`] = true;
             }
           }
