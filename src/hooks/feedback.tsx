@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { App, Button } from 'antd';
 import type { ErrorItem } from '../types/ui';
 import { sanitizeMessageHtml } from '../services/serverHtml';
+import { annullaADestra } from '../components/annullaADestra';
 
 /**
  * Come si presenta all'utente quello che il server dice: una regola sola per
@@ -100,13 +101,7 @@ export function useFeedback(): Feedback {
         cancelText: 'Annulla',
         onOk,
         onCancel,
-        // Ordine del legacy: l'azione prima, Annulla all'estrema destra.
-        footer: (_, { OkBtn, CancelBtn }) => (
-          <>
-            <OkBtn />
-            <CancelBtn />
-          </>
-        ),
+        footer: annullaADestra,
       });
     };
 

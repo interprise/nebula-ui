@@ -7,6 +7,7 @@ import { leggiOrdinamentoLocale, leggiOrdineColonne } from './dashboard/ordineCo
 import DateDellaRicerca from './dashboard/DateDellaRicerca';
 import { testoDelModo } from './dashboard/dateMobili';
 import type { CriterioData } from './dashboard/DateDellaRicerca';
+import { annullaADestra } from './annullaADestra';
 
 /** Quello che il server chiama "sorgente" del widget, per la parte che qui si mostra. */
 interface Sorgente {
@@ -226,6 +227,7 @@ const AddWidgetModal: React.FC<Props> = ({ open, sid, onClose, onAggiunto }) => 
       title="Aggiungi alla dashboard"
       okText="Aggiungi"
       cancelText="Annulla"
+      footer={annullaADestra}
       // Chiudibile anche mentre salva: se il salvataggio non tornasse (rete, server
       // appeso) Esc, X e Annulla non farebbero niente e l'utente resterebbe chiuso
       // dentro. L'esito arriva comunque, dal feedback.

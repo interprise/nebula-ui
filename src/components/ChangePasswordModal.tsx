@@ -61,10 +61,10 @@ const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, onClose
       onCancel={close}
       mask={{ closable: false }}
       footer={[
-        <Button key="cancel" onClick={close}>Annulla</Button>,
         <Button key="ok" type="primary" loading={submitting} onClick={() => form.submit()}>
           Cambia Password
         </Button>,
+        <Button key="cancel" onClick={close}>Annulla</Button>,
       ]}
     >
       <Form form={form} onFinish={handleFinish} style={{ marginTop: 8 }}>

@@ -346,10 +346,10 @@ const MultiSelectControl: React.FC<MultiSelectControlProps> = ({
         onClose={() => setDrawerOpen(false)}
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>Annulla</Button>
             <Button type="primary" onClick={applySelection}>
               Conferma ({pendingKeys.length})
             </Button>
+            <Button onClick={() => setDrawerOpen(false)}>Annulla</Button>
           </Space>
         }
       >

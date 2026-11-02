@@ -564,10 +564,10 @@ const ModificaWidget: React.FC<Props> = ({
       destroyOnHidden
       footer={
         <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button onClick={onClose}>Annulla</Button>
           <Button type="primary" onClick={() => void salva()} loading={salvando}>
             Salva
           </Button>
+          <Button onClick={onClose}>Annulla</Button>
         </Space>
       }
     >

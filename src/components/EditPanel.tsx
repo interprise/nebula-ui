@@ -12,6 +12,7 @@ import { listHeaderLabel } from './listHeaderLabel';
 import { focusFirstPanelField } from './panelFocus';
 import type { RowToolbarAction } from './rowToolbar';
 import { editPanelWaitAttrs } from './addWait';
+import { annullaADestra } from './annullaADestra';
 
 /**
  * Bottom edit panel for listEdit lists. The grid stays read-only; selecting a
@@ -324,6 +325,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
       okText: 'Cancella',
       okButtonProps: { danger: true },
       cancelText: 'Annulla',
+      footer: annullaADestra,
       // Delete on the selected record, through the view's own delete command
       // when it declares one. The server's confirmation flow (if any) is
       // handled by Shell.makeConfirmReplay.

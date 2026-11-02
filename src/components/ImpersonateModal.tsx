@@ -53,10 +53,10 @@ const ImpersonateModal: React.FC<ImpersonateModalProps> = ({ open, onClose, onSu
       onCancel={close}
       mask={{ closable: false }}
       footer={[
-        <Button key="cancel" onClick={close}>Annulla</Button>,
         <Button key="ok" type="primary" loading={submitting} onClick={() => form.submit()}>
           Impersona
         </Button>,
+        <Button key="cancel" onClick={close}>Annulla</Button>,
       ]}
     >
       <Form form={form} onFinish={handleFinish} style={{ marginTop: 8 }}>

@@ -21,6 +21,7 @@ import {
 import type { AttachmentMeta, AttachmentsInfo } from '../types/ui';
 import * as api from '../services/api';
 import { useFeedback } from '../hooks/feedback';
+import { annullaADestra } from './annullaADestra';
 
 const { Text } = Typography;
 
@@ -110,6 +111,7 @@ const AttachmentsDrawer: React.FC<AttachmentsDrawerProps> = ({
         okText: 'Elimina',
         okButtonProps: { danger: true },
         cancelText: 'Annulla',
+        footer: annullaADestra,
         onOk: async () => {
           try {
             await api.postAction('CdmsDelete', { key: row.key }, undefined, sid);

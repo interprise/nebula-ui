@@ -12,6 +12,7 @@ import type { DataNode, EventDataNode } from 'antd/es/tree';
 import * as api from '../services/api';
 import type { CdmsNode } from '../services/api';
 import { useFeedback } from '../hooks/feedback';
+import { annullaADestra } from './annullaADestra';
 
 interface CdmsTreeProps {
   collapsed: boolean;
@@ -218,6 +219,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         ),
         okText: 'Crea',
         cancelText: 'Annulla',
+        footer: annullaADestra,
         onOk: async () => {
           if (!folderName.trim()) return;
           const parentId = String(parentNode.key);
@@ -250,6 +252,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         ),
         okText: 'Rinomina',
         cancelText: 'Annulla',
+        footer: annullaADestra,
         onOk: async () => {
           if (!newName.trim()) return;
           const nodeId = String(node.key);
@@ -276,6 +279,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
         okText: 'Elimina',
         okButtonProps: { danger: true },
         cancelText: 'Annulla',
+        footer: annullaADestra,
         onOk: async () => {
           const nodeId = String(node.key);
           const resp = await api.cdmsExec('delete', { path: nodeId });

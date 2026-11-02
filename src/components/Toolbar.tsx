@@ -38,6 +38,7 @@ import {
 import type { ToolbarItem } from '../types/ui';
 import { comboFromToolbarKeys, toolbarTooltip } from './toolbarKeys';
 import { HotkeyPriority, useHotkey, useHotkeys, type HotkeyBinding } from '../hooks/hotkeys';
+import { annullaADestra } from './annullaADestra';
 
 const iconMap: Record<string, React.ReactNode> = {
   'control_repeat_blue.png': <ReloadOutlined />,
@@ -136,6 +137,7 @@ async function invokeHandler(handler: string, onAction: (action: string, params?
       content: 'Confermare la cancellazione del record',
       okText: 'OK',
       cancelText: 'Annulla',
+      footer: annullaADestra,
       onOk: () => onAction(action, params),
     });
     return;

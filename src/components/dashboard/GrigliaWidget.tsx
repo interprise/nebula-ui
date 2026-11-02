@@ -121,11 +121,11 @@ const GrigliaWidget: React.FC<Props> = ({ widget, articoli, extra, onSalva }) =>
               destra (da tastiera: frecce e Maiusc + frecce).
             </Typography.Text>
             <Space>
-              <Button size="small" onClick={() => setBozza(null)} disabled={salvando}>
-                Annulla
-              </Button>
               <Button size="small" type="primary" onClick={() => void salva()} loading={salvando}>
                 Salva
+              </Button>
+              <Button size="small" onClick={() => setBozza(null)} disabled={salvando}>
+                Annulla
               </Button>
             </Space>
           </>
