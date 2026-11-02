@@ -1867,7 +1867,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const openCdmsViewInTab = useCallback(
     async (
       tab: Pick<TabState, 'key' | 'sid'>,
-      opts: { viewName: string; title: string; action?: string; filter?: string; orderBy?: string },
+      opts: { viewName: string; title: string; titoloVista?: string; action?: string; filter?: string; orderBy?: string },
     ) => {
       // Come handleMenuClick: la videata resta sotto la rotella e digitato e riga in
       // modifica si azzerano quando arriva quella nuova. Se il server chiede conferma
@@ -1880,7 +1880,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // Ingresso di primo livello (barra del documentale, cartella dell'albero):
       // la scheda riparte da zero, quindi il percorso non deve accodarsi a
       // quello della funzione precedente (SXADV-5783).
-      const params: Record<string, string> = { viewName: opts.viewName, title: opts.title, newTask: '1' };
+      const params: Record<string, string> = { viewName: opts.viewName, title: opts.titoloVista ?? opts.title, newTask: '1' };
       if (opts.filter) params.filter = opts.filter;
       if (opts.orderBy) params.orderBy = opts.orderBy;
       const action = opts.action || 'ListPage';
@@ -1958,7 +1958,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     (cdmsId: string, folderName: string) => {
       // Extract UUID from cdmsId (part after last |)
       const uuid = cdmsId.substring(cdmsId.lastIndexOf('|') + 1);
-      const opts = { viewName: 'cdmsRisorseList', title: folderName, orderBy: 'nickname', filter: `exists(nodi[idNodoClass = '${uuid}'])` };
+      // La scheda porta il nome della cartella; lista, dettaglio e link di ritorno sono
+      // di "Gestione Documentale", come nel legacy (SXADV-5815.9).
+      const opts = { viewName: 'cdmsRisorseList', title: folderName, titoloVista: 'Gestione Documentale', orderBy: 'nickname', filter: `exists(nodi[idNodoClass = '${uuid}'])` };
       const aperta = tabsRef.current.find((t) => t.cdmsFunzione === 'listaNodo');
       if (aperta?.loading) return;
       const tab = aperta ?? addTab(folderName, 'cdms');

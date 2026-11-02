@@ -2089,7 +2089,9 @@ const RowRenderer: React.FC<{
     return (
       <div id={row.id} className={row.cls || ''}>
         {row.cells.map((cell, ci) => {
-          if (!cell.control) return null;
+          // Qui non passa da CellRenderer: una cella nascosta si disegnava lo stesso,
+          // un campo vuoto sopra la barra delle azioni (SXADV-5815.9).
+          if (!cell.control || cell.visible === false) return null;
           return (
             <ControlRenderer key={cell.id || ci} control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
           );

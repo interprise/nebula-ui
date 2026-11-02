@@ -532,7 +532,7 @@ describe('B. apertura con conferma su una scheda gia\' popolata', () => {
     await entra();
     await cartella('ROOT|u2026', '2026');
     expect(attiva()).toBe('2026');
-    expect(videata()?.ui?.title).toBe('2026');
+    expect(videata()?.ui?.title).toBe('Gestione Documentale');
     videata()!.onChange('note.X', 'bozza');
     await assesta();
     azzeraRichieste();
@@ -545,8 +545,8 @@ describe('B. apertura con conferma su una scheda gia\' popolata', () => {
 
   it('mentre si attende la risposta la videata di prima resta', async () => {
     const t = await domandaSuCartella();
-    expect(t.ui?.title).toBe('2026');
-    expect(videata()?.ui?.title).toBe('2026');
+    expect(t.ui?.title).toBe('Gestione Documentale');
+    expect(videata()?.ui?.title).toBe('Gestione Documentale');
   });
 
   it('Annulla: titolo e videata di prima, digitato conservato, nessuna richiesta, scheda libera', async () => {
@@ -556,7 +556,7 @@ describe('B. apertura con conferma su una scheda gia\' popolata', () => {
     await assesta();
     expect(etichette()).toContain('2026');
     expect(etichette()).not.toContain('2025');
-    expect(videata()?.ui?.title).toBe('2026');
+    expect(videata()?.ui?.title).toBe('Gestione Documentale');
     expect(richieste()).toEqual([]);
     const dopo = schede().find((x) => x.key === t.key)!;
     expect(dopo.loading).toBeFalsy();
@@ -584,10 +584,10 @@ describe('B. apertura con conferma su una scheda gia\' popolata', () => {
     expect(richieste()[0]).toMatchObject({
       action: 'ListPage',
       sid: t.sid,
-      params: { viewName: RECENTI, newTask: '1', title: '2025', orderBy: 'nickname', messages: 'CANCEL_ALL_CHANGES,' },
+      params: { viewName: RECENTI, newTask: '1', title: 'Gestione Documentale', orderBy: 'nickname', messages: 'CANCEL_ALL_CHANGES,' },
     });
     expect(richieste()[0].params.filter).toContain('u2025');
-    expect(videata()?.ui?.title).toBe('2025');
+    expect(videata()?.ui?.title).toBe('Gestione Documentale');
     expect(attiva()).toBe('2025');
   });
 
@@ -602,7 +602,7 @@ describe('B. apertura con conferma su una scheda gia\' popolata', () => {
     expect(richieste()[0].params.messages).toBe('CANCEL_ALL_CHANGES,');
     expect(attiva()).toBe('Magazzino');
     expect(haBarra('Documentale')).toBe(true);
-    expect(schede().find((x) => x.key === t.key)!.ui?.title).toBe('2025');
+    expect(schede().find((x) => x.key === t.key)!.ui?.title).toBe('Gestione Documentale');
   });
 
   it('una funzione con action propria (Aggiungi Albero) rigioca la sua AddPage', async () => {
@@ -740,8 +740,8 @@ describe('F. cartelle: una scheda sola', () => {
     const [a, b] = richieste();
     expect(richieste()).toHaveLength(2);
     expect(b.sid).toBe(a.sid);
-    for (const [r, uuid, nome] of [[a, 'u2026', '2026'], [b, 'u2025', '2025']] as const) {
-      expect(r.params).toMatchObject({ viewName: RECENTI, orderBy: 'nickname', title: nome, newTask: '1' });
+    for (const [r, uuid] of [[a, 'u2026'], [b, 'u2025']] as const) {
+      expect(r.params).toMatchObject({ viewName: RECENTI, orderBy: 'nickname', title: 'Gestione Documentale', newTask: '1' });
       expect(r.params.filter).toContain(uuid);
       expect(r.params.filter).not.toContain('anno');
     }

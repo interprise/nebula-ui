@@ -494,7 +494,7 @@ const BreakRowRenderer = (params: ICellRendererParams) => {
    AG Grid: chi disegna un comando dentro una cella lo aggiunge qui.
    Il selettore ci e' entrato con SXADV-5861 — apriva il micro-detail per un
    istante prima di navigare al detail integrale. */
-const ROW_ACTIVATION_IGNORE = '.list-cell-control, .selector-nav-cell, button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]';
+const ROW_ACTIVATION_IGNORE = '.list-cell-control, .selector-nav-cell, a[href], button, select, input, textarea, .ant-select, .ant-select-dropdown, .ant-btn, [role="combobox"], [role="option"]';
 
 /** Per quanto, tornando in lista, si riallinea la riga di partenza mentre le
  *  altezze delle righe si assestano (SXADV-5957.1). */
