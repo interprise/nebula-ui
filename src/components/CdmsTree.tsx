@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Tree, Input, Dropdown, App } from 'antd';
+import { Tree, Input, Dropdown, App, Button, Popover } from 'antd';
 import {
   FolderOutlined,
   FolderOpenOutlined,
@@ -87,6 +87,8 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
   } | null>(null);
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedFilter, setDebouncedFilter] = useState('');
+  // Col menu compresso l'albero sta in un riquadro a comparsa (SXADV-5789.2).
+  const [riquadroAperto, setRiquadroAperto] = useState(false);
 
   // Load roots on mount
   useEffect(() => {
@@ -158,12 +160,14 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
 
   // Node click → open document list filtered by this folder
   const onSelect = useCallback(
-    (keys: React.Key[], info: { node: EventDataNode<DataNode> }) => {
-      if (keys.length === 0) return;
-      setSelectedKeys(keys);
+    (_keys: React.Key[], info: { node: EventDataNode<DataNode> }) => {
+      // Non `keys`: riclicando la cartella gia' selezionata arriva vuoto, e invece
+      // deve riportare alla sua lista, come nel legacy.
       const node = info.node;
+      setSelectedKeys([node.key]);
       const title = String(node.title);
       const cdmsId = String(node.key);
+      setRiquadroAperto(false);
       onFolderClick(cdmsId, title);
     },
     [onFolderClick],
@@ -205,6 +209,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
   // Context menu actions
   const handleNewFolder = useCallback(
     (parentNode: DataNode) => {
+      setRiquadroAperto(false);
       let folderName = '';
       const dialog = modal.confirm({
         title: 'Nuova cartella',
@@ -237,6 +242,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
 
   const handleRename = useCallback(
     (node: DataNode) => {
+      setRiquadroAperto(false);
       let newName = String(node.title);
       const dialog = modal.confirm({
         title: 'Rinomina cartella',
@@ -270,6 +276,7 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
 
   const handleDelete = useCallback(
     (node: DataNode) => {
+      setRiquadroAperto(false);
       modal.confirm({
         title: 'Elimina cartella',
         content: `Eliminare la cartella "${node.title}"?`,
@@ -306,18 +313,8 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
     ];
   }, [contextMenu, handleNewFolder, handleRename, handleDelete]);
 
-  if (collapsed) {
-    return (
-      // The collapsed rail is 48px wide (SXADV-5454.5); the previous 16px
-      // horizontal padding no longer fits around the glyph.
-      <div style={{ textAlign: 'center', padding: '16px 8px', color: '#999' }}>
-        <FolderOutlined style={{ fontSize: 20 }} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="cdms-tree-container">
+  const albero = (
+    <div className={collapsed ? 'cdms-tree-container cdms-tree-riquadro' : 'cdms-tree-container'}>
       {/* "Aggiungi Albero" is not here but in the documentale app bar, next to
           the other documentale functions, as in the legacy client (SXADV-5790). */}
       <div style={{ padding: '0 12px 8px', display: 'flex', gap: 4 }}>
@@ -354,6 +351,25 @@ const CdmsTree: React.FC<CdmsTreeProps> = ({ collapsed, onFolderClick }) => {
           <span style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }} />
         </Dropdown>
       )}
+    </div>
+  );
+
+  if (!collapsed) return albero;
+
+  // Stesso albero, stesso stato (rami aperti, figli gia' caricati): il menu compresso
+  // deve lasciare arrivare alle cartelle, come i sottomenu a comparsa del gestionale.
+  return (
+    <div style={{ textAlign: 'center', padding: '8px 0' }}>
+      <Popover
+        placement="rightTop"
+        trigger="click"
+        open={riquadroAperto}
+        onOpenChange={setRiquadroAperto}
+        arrow={false}
+        content={albero}
+      >
+        <Button type="text" aria-label="Albero del documentale" icon={<FolderOutlined style={{ fontSize: 20 }} />} />
+      </Popover>
     </div>
   );
 };

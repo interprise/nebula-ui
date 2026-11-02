@@ -1728,6 +1728,11 @@ body[style*="cursor: wait"] * {
   flex-direction: column;
   height: calc(100vh - 100px);
 }
+.cdms-tree-riquadro {
+  width: 280px;
+  height: auto;
+  max-height: calc(100vh - 120px);
+}
 .cdms-tree-content {
   flex: 1;
   overflow: auto;

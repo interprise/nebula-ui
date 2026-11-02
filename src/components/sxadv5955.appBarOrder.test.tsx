@@ -110,17 +110,17 @@ describe('SXADV-5955: ordine della app bar', () => {
   it('senza documentale (cdms falso) Documentale non compare e il resto non si sposta', async () => {
     const t = (await appBarTooltips({ ...fullLogin, cdms: false })).map(short);
     expect(t).not.toContain('Documentale');
-    expect(t).not.toContain('Torna al menu');
+    expect(t).not.toContain('Gestionale');
     expect(t.slice(0, 5)).toEqual(['Esci', 'Cambio Password', 'Schermo intero', 'Posta Elettronica', 'Area Documenti']);
   });
 
-  it('modalita\' documentale: Torna al menu segue Schermo intero e precede le funzioni del documentale', async () => {
+  it('modalita\' documentale: Gestionale segue Schermo intero e precede le funzioni del documentale', async () => {
     mode.startInCdms = true;
     expect((await appBarTooltips(fullLogin)).map(short)).toEqual([
       'Esci',
       'Cambio Password',
       'Schermo intero',
-      'Torna al menu',
+      'Gestionale',
       'Gestione Profili',
       'Gestione Utenti',
       'Aggiungi Albero',

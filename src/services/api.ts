@@ -423,13 +423,18 @@ export interface CdmsNode {
   leaf?: boolean;
 }
 
+// L'albero ha la sua Session, come nel legacy: senza sid finiva in S1, e CdmsExec
+// (nuova cartella, rinomina...) fa un save che si portava dietro il lavoro in sospeso
+// della prima scheda del gestionale (SXADV-5789).
+const CDMS_TREE_SID = 'D0';
+
 export async function cdmsGetRoots(): Promise<{ nodes: CdmsNode[]; admin: boolean }> {
-  const resp = await post(CMD2_URL, { action: 'CdmsRoots' });
+  const resp = await post(CMD2_URL, { action: 'CdmsRoots', sid: CDMS_TREE_SID });
   return resp as unknown as { nodes: CdmsNode[]; admin: boolean };
 }
 
 export async function cdmsGetChildren(path: string): Promise<CdmsNode[]> {
-  const resp = await post(CMD2_URL, { action: 'CdmsGet', path });
+  const resp = await post(CMD2_URL, { action: 'CdmsGet', path, sid: CDMS_TREE_SID });
   return resp as unknown as CdmsNode[];
 }
 
@@ -437,7 +442,7 @@ export async function cdmsExec(
   cmd: string,
   params: Record<string, string>
 ): Promise<{ success?: boolean; error?: string }> {
-  const resp = await post(CMD2_URL, { action: 'CdmsExec', cmd, ...params });
+  const resp = await post(CMD2_URL, { action: 'CdmsExec', cmd, ...params, sid: CDMS_TREE_SID });
   return resp as unknown as { success?: boolean; error?: string };
 }
 
