@@ -11,6 +11,9 @@ const ROW_SEGMENT = /^(.+)\.-?\d+$/;
 export function withoutPositionalArrays(
   values: Record<string, string | string[]>,
   navpath: string | null | undefined,
+  // Il controllo che ha chiesto la richiesta (option1): un suo array non e' una colonna
+  // di lista, sono i valori che lui stesso manda, una voce per riga (SXADV-5983).
+  sender?: string,
 ): Record<string, string | string[]> {
   if (!navpath) return values;
   const targeted: string[] = [];
@@ -21,7 +24,7 @@ export function withoutPositionalArrays(
   if (targeted.length === 0) return values;
   const out: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(values)) {
-    if (Array.isArray(value) && targeted.some((suffix) => key.endsWith(suffix))) continue;
+    if (Array.isArray(value) && key !== sender && targeted.some((suffix) => key.endsWith(suffix))) continue;
     out[key] = value;
   }
   return out;
