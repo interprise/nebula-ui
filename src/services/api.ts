@@ -1,5 +1,5 @@
 import type { ServerResponse, AttachmentMeta } from '../types/ui';
-import { withoutPositionalArrays } from './positionalValues';
+import { LIST_PAGE_ACTIONS, withoutPositionalArrays } from './positionalValues';
 import { disarmAllReturns } from './rowReturn';
 
 const CMD_URL = '/entrasp/controller';
@@ -195,7 +195,8 @@ export async function postAction(
 ): Promise<ServerResponse> {
   // Gli array di colonna non partono con una richiesta puntata su una riga
   // della loro lista: il server li leggerebbe come valori di quella riga.
-  const values = formValues && withoutPositionalArrays(formValues, params.navpath, params.option1);
+  const values = formValues
+    && withoutPositionalArrays(formValues, params.navpath, params.option1, LIST_PAGE_ACTIONS.has(action));
   // Ingresso di primo livello senza voce di menu (SXADV-5783): come sopra.
   if (params.newTask === '1') disarmAllReturns();
   return post(CMD_URL, { action, sid, ...params }, values);

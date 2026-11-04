@@ -64,7 +64,7 @@ import type {
   ServerResponse,
   SessionPanel,
 } from '../types/ui';
-import { ELTYPE_DUMMY } from '../types/ui';
+import { continuationTest } from './continuationRow';
 import Toolbar from './Toolbar';
 import AttachmentsBar from './AttachmentsBar';
 import { viewHasOlapCube } from './olap/detect';
@@ -228,9 +228,9 @@ function removeListRow(ui: UITree, path: string): UITree {
     const p = r.props?.path;
     return typeof p === 'string' ? p : undefined;
   };
-  // Riga di continuazione = prima cella DUMMY (stessa regola di ListRenderer):
+  // Riga di continuazione (stessa regola di ListRenderer, continuationRow.ts):
   // e' la prosecuzione del record che la precede, quindi se ne va con lui.
-  const isContinuation = (r: UIRow) => r.cells.length > 0 && r.cells[0].elementType === ELTYPE_DUMMY;
+  const isContinuation = continuationTest(rows);
   const start = rows.findIndex((r) => pathOf(r) === path);
   if (start < 0) return ui;
   let end = start + 1;
@@ -1713,8 +1713,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const settlePanelFields = (resp: ServerResponse) => {
         if ((resp.errors ?? []).some((e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL')) return;
         // La pagina e' cambiata, anche dal rigioco di una conferma: le spunte le
-        // ha gia' il server (SXADV-6015).
-        if (isNav || action === 'SetPageSize' || action === 'LocateRow' || action === 'FilterRows') {
+        // ha gia' il server (SXADV-6015). DetailPage: la pagina di una griglia
+        // incorporata, i suoi array e basta (l'ultimo segmento del navpath).
+        if (isNav || action === 'SetPageSize' || action === 'LocateRow' || action === 'FilterRows'
+          || action === 'DetailPage') {
           const live = formValuesRef.current[tab.key];
           if (live) {
             const rest = withoutPagedArrays(live, sentParams.navpath ?? tab.ui?.path);

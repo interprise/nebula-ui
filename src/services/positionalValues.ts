@@ -8,16 +8,26 @@
 
 const ROW_SEGMENT = /^(.+)\.-?\d+$/;
 
+// Azioni che lasciano la pagina di una lista e il cui navpath e' il percorso
+// della LISTA (ui.path), non di un suo rigo: gli array di quella lista devono
+// partire, il server li applica alla pagina lasciata col giro posizionale
+// (SXADV-6015). Gli altri segmenti del percorso restano come sopra.
+export const LIST_PAGE_ACTIONS: ReadonlySet<string> = new Set(['LocateRow', 'FilterRows', 'DetailPage', 'SortColumn']);
+
 export function withoutPositionalArrays(
   values: Record<string, string | string[]>,
   navpath: string | null | undefined,
   // Il controllo che ha chiesto la richiesta (option1): un suo array non e' una colonna
   // di lista, sono i valori che lui stesso manda, una voce per riga (SXADV-5983).
   sender?: string,
+  // true: l'ultimo segmento e' la lista stessa (LIST_PAGE_ACTIONS), i suoi array partono.
+  listScope = false,
 ): Record<string, string | string[]> {
   if (!navpath) return values;
   const targeted: string[] = [];
-  for (const segment of navpath.split(',')) {
+  const segments = navpath.split(',');
+  if (listScope) segments.pop();
+  for (const segment of segments) {
     const m = ROW_SEGMENT.exec(segment.trim());
     if (m) targeted.push(`.${m[1]}`);
   }

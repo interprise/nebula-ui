@@ -9,6 +9,7 @@ import { CheckOutlined, PlusOutlined, RightOutlined, FileExcelOutlined, PrinterO
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData, ListTotals } from '../types/ui';
 import { buildTotalsBandRows, buildTotalsRow, totalsCellText } from './listTotals';
 import { ELTYPE_PROMPT, ELTYPE_CONTENT, ELTYPE_SELECTOR, ELTYPE_SECTION_HEADER, ELTYPE_DUMMY } from '../types/ui';
+import { continuationTest } from './continuationRow';
 import { controls, isCellRenderable } from '../controls/registry';
 import { SidContext, SplitAreaContext, InTabPanelContext, useIsTabLabelEcho, type PendingAdd } from './ViewRenderer';
 import { addedRowPath } from './addedRow';
@@ -985,17 +986,13 @@ const ContinuationRowRenderer = (params: ICellRendererParams) => {
   );
 };
 
-/** Detect continuation rows: first cell is DUMMY (elementType 9) */
-function isContinuationRow(row: UIRow): boolean {
-  return row.cells.length > 0 && row.cells[0].elementType === ELTYPE_DUMMY;
-}
-
 /** I valori delle righe principali (niente separatori di gruppo né bande) che
  *  la cella scrive come markup: controllo `Html`, o valore che porta markup
  *  composto dal server. Restano fuori le colonne modificabili, come per
  *  `markupColumns`: su quelle la modalità una-riga non unisce gli a capo, e
  *  offrirla per loro sarebbe un pulsante che non cambia niente. */
 function* mainRowMarkupValues(rows: readonly UIRow[]): Generator<unknown> {
+  const isContinuationRow = continuationTest(rows);
   for (const r of rows) {
     if (r.cls === 'breakRow' || isContinuationRow(r)) continue;
     for (const cell of r.cells) {
@@ -1247,6 +1244,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       return { columnDefs: [], rowData: [], serverEditingPath: null, serverEditingFirstCol: null, flatTotals: [] as Array<[string, string]> };
     }
     const uiRows: UIRow[] = ui.rows ?? [];
+    // Riga di continuazione: DUMMY in testa, oppure senza il percorso che la
+    // riga primaria porta sempre (continuationRow.ts, SXADV-6015).
+    const isContinuationRow = continuationTest(uiRows);
 
     const serverHeaders = ui.headers;
 
