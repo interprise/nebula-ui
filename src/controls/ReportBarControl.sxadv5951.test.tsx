@@ -91,11 +91,11 @@ const px = (v: unknown): number | null => {
 let root: Root | null = null;
 let box: HTMLElement | null = null;
 
-function monta(C: React.FC<never>, props: Record<string, unknown>) {
+function monta(C: React.ComponentType<Record<string, unknown>>, props: Record<string, unknown>) {
   box = document.createElement('div');
   document.body.appendChild(box);
   root = createRoot(box);
-  act(() => { root!.render(<C {...(props as never)} />); });
+  act(() => { root!.render(<C {...props} />); });
 }
 
 function montaFinto(control: UIControl) {
@@ -393,7 +393,7 @@ describe('SXADV-5951 — i clic mandano il report scelto', () => {
   it('un nuovo disegno con gli stessi report conserva la scelta', async () => {
     const { onAction, C } = montaVero(controllo());
     await scegli(LUNGO_B);
-    act(() => { root!.render(<C {...({ control: controllo(), onAction, onChange: vi.fn() } as never)} />); });
+    act(() => { root!.render(<C {...{ control: controllo(), onAction, onChange: vi.fn() }} />); });
     clic(STAMPA);
     expect(onAction).toHaveBeenCalledWith('ExecuteBarReport', { $ReportBarItem: 'REP_B', $ReportBarFormat: 'PDF' });
   });
@@ -410,7 +410,7 @@ describe('Difetto fuori dal perimetro stretto di SXADV-5951 — stato che soprav
       reports: [{ value: 'REP_X', text: 'Nota di credito' }, { value: 'REP_Y', text: 'Reso' }],
       selected: 'REP_X',
     });
-    act(() => { root!.render(<C {...({ control: altro, onAction, onChange: vi.fn() } as never)} />); });
+    act(() => { root!.render(<C {...{ control: altro, onAction, onChange: vi.fn() }} />); });
     clic(STAMPA);
     expect(onAction).toHaveBeenCalledWith('ExecuteBarReport', { $ReportBarItem: 'REP_X', $ReportBarFormat: 'PDF' });
   });

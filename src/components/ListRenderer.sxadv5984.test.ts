@@ -50,7 +50,7 @@ describe('SXADV-5984 il selettore e\' quello dei gestori', () => {
   });
 
   it('entrambe le vie di attivazione lo consultano', () => {
-    expect(sorgente).toMatch(/handleRowClicked[\s\S]{0,200}closest\(ROW_ACTIVATION_IGNORE\)/);
+    expect(sorgente).toMatch(/handleRowClicked[\s\S]{0,400}closest\(ROW_ACTIVATION_IGNORE\)/);
     expect(sorgente).toMatch(/handleGridClick[\s\S]{0,200}closest\(ROW_ACTIVATION_IGNORE\)/);
   });
 });

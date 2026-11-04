@@ -62,11 +62,11 @@ function hostFinto() {
 let root: Root | null = null;
 let box: HTMLElement | null = null;
 
-function monta(C: React.FC<never>, props: Record<string, unknown>) {
+function monta(C: React.ComponentType<Record<string, unknown>>, props: Record<string, unknown>) {
   box = document.createElement('div');
   document.body.appendChild(box);
   root = createRoot(box);
-  act(() => { root!.render(<C {...(props as never)} />); });
+  act(() => { root!.render(<C {...props} />); });
 }
 
 function montaFinto(control: UIControl) {
