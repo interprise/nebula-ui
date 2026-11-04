@@ -65,6 +65,11 @@ export interface UIControl {
   postPrompt?: string; // text displayed after the field
   negation?: boolean; // field supports NOT checkbox on query pages
   negationValue?: boolean; // current NOT checkbox state
+  // Array che il controllo vuole rispediti col form come li ha disegnati il
+  // server (nome campo -> valori): extractFormValues li rimette a ogni risposta.
+  // Es. le tendine cdmsClass di una query, che il server legge come criteri
+  // solo dai parametri di ExecuteQuery (SXADV-5983).
+  postValues?: Record<string, string[]>;
   mandatoryIcon?: 'sequence'; // sequence fields get numbered-list icon instead of star
   // embedded / detail view
   contentViewName?: string;

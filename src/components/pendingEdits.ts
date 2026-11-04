@@ -36,6 +36,16 @@ export function extractFormValues(ui: UITree): Record<string, string | string[]>
       if (name && ctrl.value != null && typeof ctrl.value !== 'object') {
         values[name] = String(ctrl.value);
       }
+      // Array dichiarati dal controllo stesso: un `value` array non basta, per
+      // non spedire d'un tratto quelli di controlli che non lo prevedono. Senza,
+      // tornando dai risultati Esegui ripartiva senza le tendine di Ricerca
+      // Allegati (SXADV-5983).
+      const post = ctrl.postValues;
+      if (post && typeof post === 'object' && !Array.isArray(post)) {
+        for (const [key, arr] of Object.entries(post)) {
+          if (Array.isArray(arr)) values[key] = arr.map((v) => (v == null ? '' : String(v)));
+        }
+      }
       // Re-seed the negation ($not) flag from the server's authoritative
       // state so it survives this rebuild and is posted on ExecuteQuery.
       // Without it, toggling "not" then triggering any reload would drop

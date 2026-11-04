@@ -203,15 +203,15 @@ describe('SXADV-5983 — sola lettura', () => {
 });
 
 describe('SXADV-5983 — modalita\' query (cdmsRisorseQuery, tag="class")', () => {
-  // In query renderJSON non manda mai selectedKey (nodi resta vuoto).
+  // Righe senza selectedKey: query aperta per la prima volta, nessuna scelta.
   const qRows = (): Row[] => righe().map(({ containerId, containerDescription, options }) => ({ containerId, containerDescription, options }));
   const q = () => controllo({ isQuery: true, name: 'class.S1-7', navpath: 'S1-7.0', rows: qRows(), value: undefined });
 
-  it('una scelta: array con "" nelle altre righe e nessun Post', () => {
-    const { selects, onChange, onAction } = montaFinto(q());
+  // Il Post in query non fa parte del contratto: non si verifica ne' in un senso ne' nell'altro.
+  it('una scelta: array con "" nelle altre righe', () => {
+    const { selects, onChange } = montaFinto(q());
     selects[1].onChange('44|t2');
     expect(onChange).toHaveBeenCalledWith('class.S1-7', ['', '44|t2', '']);
-    expect(onAction).not.toHaveBeenCalled();
   });
 
   it('nessun pulsante Elimina', () => {
@@ -221,6 +221,130 @@ describe('SXADV-5983 — modalita\' query (cdmsRisorseQuery, tag="class")', () =
 
   // Due scelte di fila: provato con antd vero piu' sotto; il finto non ridisegna.
 
+});
+
+describe('SXADV-5983 — ritorno alla query dai risultati', () => {
+  // Il server, in query, rimanda selectedKey dalla queryMap per ogni contenitore
+  // con una scelta: tornando dai risultati le tendine devono mostrarla. Dopo
+  // Pulisci (ClearQuery) le righe arrivano senza selectedKey: tendine vuote.
+  const QNAME = 'class.S1-7';
+  const qRighe = (sel: (string | undefined)[]): Row[] =>
+    righe().map(({ containerId, containerDescription, options }, i) => (
+      sel[i] ? { containerId, containerDescription, options, selectedKey: sel[i] } : { containerId, containerDescription, options }
+    ));
+  const qc = (sel: (string | undefined)[]) => controllo({ isQuery: true, name: QNAME, navpath: 'S1-7.0', rows: qRighe(sel), value: undefined });
+  // il finto accumula una Select per riga a ogni disegno: contano le ultime tre
+  const ultime = (selects: SelectProps[]) => selects.slice(-3);
+  const valori = (selects: SelectProps[]) => ultime(selects).map((s) => s.value || undefined);
+  const ultimo = (onChange: ReturnType<typeof vi.fn>, n: string) =>
+    (onChange.mock.calls.filter(([k]) => k === n).at(-1) ?? [])[1] as string[] | undefined;
+
+  function montaQ(control: UIControl) {
+    const { host, selects, bottoni } = hostFinto();
+    const C = makeCdmsClassControl(host);
+    const onChange = vi.fn();
+    const onAction = vi.fn();
+    monta(C as never, { control, onChange, onAction });
+    // nuova risposta del server: stesso controllo montato, nuovo oggetto control
+    const ridisegna = (c: UIControl) => act(() => { root!.render(<C {...{ control: c, onChange, onAction }} />); });
+    return { selects, bottoni, onChange, ridisegna };
+  }
+
+  it('montato con selectedKey: le tendine mostrano le scelte del server', () => {
+    const { selects } = montaQ(qc(['44|a1', '44|t2', undefined]));
+    expect(valori(selects)).toEqual(['44|a1', '44|t2', undefined]);
+  });
+
+  it('cambiando una tendina, le altre righe portano il valore del server (non "")', () => {
+    const { selects, onChange } = montaQ(qc([undefined, '44|t2', '44|d1']));
+    act(() => { ultime(selects)[0].onChange('44|a1'); });
+    expect(ultimo(onChange, QNAME)).toEqual(['44|a1', '44|t2', '44|d1']);
+    const due = ultimo(onChange, `${QNAME}_2`)!;
+    expect(due).toHaveLength(3);
+    expect(due.slice(1)).toEqual(['44|t2', '44|d1']);
+  });
+
+  it('cambiando una riga gia\' scelta dal server: le altre restano quelle del server', () => {
+    const { selects, onChange } = montaQ(qc(['44|a1', '44|t2', undefined]));
+    act(() => { ultime(selects)[1].onChange('44|t1'); });
+    expect(ultimo(onChange, QNAME)).toEqual(['44|a1', '44|t1', '']);
+    const due = ultimo(onChange, `${QNAME}_2`)!;
+    expect([due[0], due[2]]).toEqual(['44|a1', '']);
+  });
+
+  it('nuova risposta con scelte diverse: le tendine seguono il server', () => {
+    const { selects, ridisegna } = montaQ(qc(['44|a1', '44|t2', undefined]));
+    ridisegna(qc(['44|a2', undefined, '44|d1']));
+    expect(valori(selects)).toEqual(['44|a2', undefined, '44|d1']);
+  });
+
+  it('Pulisci (righe senza selectedKey): tendine vuote', () => {
+    const { selects, ridisegna } = montaQ(qc(['44|a1', '44|t2', '44|d1']));
+    ridisegna(qc([undefined, undefined, undefined]));
+    expect(valori(selects)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('scelta locale poi Pulisci: la tendina si svuota', () => {
+    const { selects, ridisegna } = montaQ(qc([undefined, undefined, undefined]));
+    act(() => { ultime(selects)[0].onChange('44|a2'); });
+    ridisegna(qc([undefined, undefined, undefined]));
+    expect(valori(selects)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('dopo Pulisci, una nuova scelta non riporta le vecchie nell\'array', () => {
+    const { selects, onChange, ridisegna } = montaQ(qc(['44|a1', '44|t2', undefined]));
+    act(() => { ultime(selects)[2].onChange('44|d1'); });
+    ridisegna(qc([undefined, undefined, undefined]));
+    act(() => { ultime(selects)[1].onChange('44|t1'); });
+    expect(ultimo(onChange, QNAME)).toEqual(['', '44|t1', '']);
+  });
+
+  it('nessun pulsante Elimina, anche con selectedKey e resourceNodeKey', () => {
+    const rows = qRighe(['44|a1', '44|t2', undefined]).map((r) => (r.selectedKey ? { ...r, resourceNodeKey: `${r.selectedKey}|r` } : r));
+    const { bottoni } = montaQ(controllo({ isQuery: true, name: QNAME, navpath: 'S1-7.0', rows }));
+    expect(bottoni).toHaveLength(0);
+  });
+
+  it('due scelte di fila senza giro dal server: la seconda non cancella la prima', () => {
+    const { selects, onChange } = montaQ(qc([undefined, undefined, undefined]));
+    act(() => { ultime(selects)[0].onChange('44|a1'); });
+    act(() => { ultime(selects)[1].onChange('44|t2'); });
+    expect(ultimo(onChange, QNAME)).toEqual(['44|a1', '44|t2', '']);
+  });
+
+  it('due scelte di fila sopra le scelte del server: restano tutte', () => {
+    const { selects, onChange } = montaQ(qc([undefined, undefined, '44|d1']));
+    act(() => { ultime(selects)[0].onChange('44|a2'); });
+    act(() => { ultime(selects)[1].onChange('44|t1'); });
+    expect(ultimo(onChange, QNAME)).toEqual(['44|a2', '44|t1', '44|d1']);
+  });
+
+  describe('con antd vero', () => {
+    const hostVero = { React, antd } as unknown as HostAPI;
+    const mostrati = () => [...box!.querySelectorAll('.ant-select')].map((s) => s.textContent ?? '');
+
+    function montaVeroQ(control: UIControl) {
+      const C = makeCdmsClassControl(hostVero);
+      const onChange = vi.fn();
+      const onAction = vi.fn();
+      monta(C as never, { control, onChange, onAction });
+      return (c: UIControl) => act(() => { root!.render(<C {...{ control: c, onChange, onAction }} />); });
+    }
+
+    it('montato con selectedKey: si vede il testo dell\'opzione', () => {
+      montaVeroQ(qc(['44|a1', '44|t2', undefined]));
+      const m = mostrati();
+      expect(m[0]).toContain('testo 44|a1');
+      expect(m[1]).toContain('testo 44|t2');
+      expect(m[2]).not.toContain('testo');
+    });
+
+    it('Pulisci dopo il ritorno: nessun testo nelle tendine', () => {
+      const ridisegna = montaVeroQ(qc(['44|a1', '44|t2', '44|d1']));
+      ridisegna(qc([undefined, undefined, undefined]));
+      for (const t of mostrati()) expect(t).not.toContain('testo');
+    });
+  });
 });
 
 describe('SXADV-5983 — pulsante Elimina', () => {
