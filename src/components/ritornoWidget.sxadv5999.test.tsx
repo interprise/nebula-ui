@@ -383,8 +383,6 @@ const handleAction = () =>
   handler<(action: string, params?: Record<string, string>) => Promise<void>>('serverParams.hasTemplate = ');
 const openFunctionByAction = () =>
   handler<(label: string, action: string, params?: Record<string, string>) => boolean>('functionAction: action');
-const openCdmsView = () =>
-  handler<(viewName: string, title: string, filter?: string) => void>("tipo: \"cdms\"");
 const changeContext = () =>
   handler<(action: 'CambioAzienda' | 'CambioSede', value: string) => Promise<void>>('postAction2(action, { navpath: value })');
 
@@ -513,15 +511,8 @@ describe('SXADV-5999.3 R1: un altro ingresso di primo livello toglie il ricordo'
     expect(collegamento()).toBeUndefined();
   });
 
-  it('documentale (openCdmsView)', async () => {
-    await navigaDallaHome('Fatture da incassare', 7);
-    server.next.push(videata('cdmsRisorseListCestino', 'S1-8'));
-    openCdmsView()('cdmsRisorseListCestino', 'Cestino');
-    await settle();
-    expect(scheda().label).toBe('Cestino');
-    expect(collegamento()).toBeUndefined();
-  });
-
+  // Le funzioni del documentale hanno schede proprie (SXADV-5789.3): non possono piu'
+  // finire nella scheda aperta dal widget, che tiene il suo collegamento.
   it('cambio azienda/sede (resetToHome): tornati a lavorare, nessun collegamento', async () => {
     await navigaDallaHome('Fatture da incassare', 7);
     await changeContext()('CambioAzienda', '45');

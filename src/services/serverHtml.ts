@@ -12,8 +12,11 @@
  * absolute, http(s) and data: URLs pass through untouched.
  */
 export function fixServerHtml(html: string): string {
-  if (!html || !html.includes('images/')) return html;
-  return html.replace(/(src|href)=(["'])images\//gi, '$1=$2/entrasp/images/');
+  if (!html) return html;
+  return html
+    .replace(/(src|href)=(["'])images\//gi, '$1=$2/entrasp/images/')
+    // I link ai comandi, relativi come le immagini (SXADV-5815.8).
+    .replace(/href=(["'])controller\?/gi, 'href=$1/entrasp/controller?');
 }
 
 /**

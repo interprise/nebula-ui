@@ -101,6 +101,7 @@ import { withRowNavpath, withRowPostPath } from './rowPostPath';
 import { releasedEditRow } from './editRowLifetime';
 import { cancelsUpload, clearPendingUpload, flushPendingUpload, hasPendingUpload } from '../services/pendingUpload';
 import { markPanelField, scopePanelValues, type PanelFieldRows } from './panelFieldScope';
+import { APERTURA_FUNZIONE, dimenticaSidDocumentale, isSchedaDocumentale, prendiSidOrfani, ricordaSidDocumentale, schedaChiudibile, schedeDiArea, sidDiArea, type CdmsFunzione, type FunzioneApribile, type SidebarMode } from './cdmsTabs';
 
 const { Header, Content } = Layout;
 
@@ -128,6 +129,9 @@ interface TabState {
   key: string;
   label: string;
   sid: string;
+  // La funzione del documentale che la scheda ospita (SXADV-5789.3): la stessa
+  // funzione non apre una seconda scheda, come i pannelli con id del legacy.
+  cdmsFunzione?: CdmsFunzione;
   // Menu item this tab was opened from. Drives the persistent selection
   // highlight in the sidebar menu and in the app bar (SXADV-5784), so the user
   // keeps seeing which function is open — hover alone gave no lasting clue.
@@ -459,7 +463,7 @@ let tabCounter = 1;
 const HOME_KEY = 'home';
 
 // Un ingresso chiesto mentre si guarda la Home (voce di menu, Naviga, clic su una riga,
-// avviso, cartella del documentale). Si esegue nella scheda di lavoro, dopo averla resa
+// avviso). Si esegue nella scheda di lavoro, dopo averla resa
 // attiva: per questo e' un descrittore e non una funzione, perche' deve girare con i
 // gestori del disegno successivo, quando la scheda attiva e' gia' quella giusta.
 interface DaWidget {
@@ -470,8 +474,7 @@ interface DaWidget {
 type IngressoDallaHome =
   | { tipo: 'menu'; menuId: string; label: string }
   | { tipo: 'funzione'; label: string; action: string; params?: Record<string, string>; daWidget?: DaWidget }
-  | { tipo: 'azione'; action: string }
-  | { tipo: 'cdms'; viewName: string; title: string; filter?: string };
+  | { tipo: 'azione'; action: string };
 
 const defaultTab: TabState = {
   key: 'tab_1',
@@ -550,7 +553,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTabState(key);
   }, []);
   const [menuFilter, setMenuFilter] = useState('');
-  const [sidebarMode, setSidebarMode] = useState<'menu' | 'cdms'>('menu');
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('menu');
   const [bannersModalOpen, setBannersModalOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [impersonateOpen, setImpersonateOpen] = useState(false);
@@ -655,12 +658,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Append a session tab (own sid, own form values) and make it active.
   // Returns it synchronously so the caller can fire a request on it without
   // waiting for the state update — `tabs` is still the pre-append array here.
-  const addTab = useCallback((label?: string): TabState => {
+  const addTab = useCallback((label?: string, area: SidebarMode = 'menu'): TabState => {
     tabCounter++;
     const key = `tab_${tabCounter}`;
     const fv: Record<string, string | string[]> = {};
     formValuesRef.current[key] = fv;
-    const tab: TabState = { key, label: label || `Sessione ${tabCounter}`, sid: `S${tabCounter}`, formValues: fv, formCaptions: {} };
+    const tab: TabState = { key, label: label || `Sessione ${tabCounter}`, sid: sidDiArea(area, tabCounter), formValues: fv, formCaptions: {} };
+    if (area === 'cdms') ricordaSidDocumentale(tab.sid);
     setTabs((prev) => [...prev, tab]);
     setActiveTab(key);
     return tab;
@@ -670,10 +674,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // qualcosa dalla Home lo apre li', come farebbe un clic sul menu da quella scheda.
   const workTabRef = useRef<string>('tab_1');
   useEffect(() => {
-    if (activeTab !== HOME_KEY && tabs.some((t) => t.key === activeTab)) workTabRef.current = activeTab;
+    // Solo del gestionale: e' li' che la Home manda chi apre qualcosa (SXADV-5789).
+    if (activeTab !== HOME_KEY && tabs.some((t) => t.key === activeTab && !isSchedaDocumentale(t))) workTabRef.current = activeTab;
   }, [activeTab, tabs]);
   const getWorkTab = useCallback(
-    (): TabState | undefined => tabsRef.current.find((t) => t.key === workTabRef.current) ?? tabsRef.current[0],
+    (): TabState | undefined => tabsRef.current.find((t) => t.key === workTabRef.current) ?? schedeDiArea(tabsRef.current, 'menu')[0],
     [],
   );
 
@@ -700,6 +705,27 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setActiveTab(HOME_KEY);
     setMostraWidget(idWidget);
   }, [setActiveTab]);
+  // Dove si rientra passando da un'area all'altra (SXADV-5789.4). Il gestionale
+  // puo' essere sulla Home, il documentale no.
+  const ultimaSchedaRef = useRef<Record<SidebarMode, string | null>>({ menu: null, cdms: null });
+  // Un ingresso del gestionale chiesto stando nel documentale (avviso, banner): non
+  // deve finire in una scheda del documentale. Stesso meccanismo della Home.
+  const entraDalDocumentale = useCallback((ingresso: IngressoDallaHome) => {
+    const tab = getWorkTab();
+    if (!tab) return;
+    ultimaSchedaRef.current.cdms = activeTabRef.current;
+    setSidebarMode('menu');
+    if (tab.loading) {
+      // Come dalla Home: l'ingresso non partirebbe, lo si dice invece di perderlo.
+      setActiveTab(tab.key);
+      feedback.info(`"${tab.label}" sta ancora lavorando: quando ha finito, riprova.`);
+      return;
+    }
+    if (tab.restorePending) updateTabState(tab.key, { restorePending: false });
+    ingressoRef.current = { ingresso, chiave: tab.key };
+    setActiveTab(tab.key);
+    setIngressoNonce((n) => n + 1);
+  }, [getWorkTab, updateTabState, setActiveTab, feedback]);
   const entraDallaHome = useCallback((ingresso: IngressoDallaHome): boolean => {
     if (activeTabRef.current !== HOME_KEY) return false;
     const tab = getWorkTab();
@@ -765,6 +791,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {}, formCaptions: {} }]);
     // Dopo il cambio si torna sulla Home, che si rilegge per il contesto nuovo.
     workTabRef.current = 'tab_1';
+    // Le schede del documentale se ne vanno con le altre: si riparte dal gestionale,
+    // e l'albero si rilegge per l'azienda nuova al prossimo ingresso (SXADV-5789).
+    setSidebarMode('menu');
+    ultimaSchedaRef.current = { menu: null, cdms: null };
+    prendiSidOrfani(); // il cambio ha gia' svuotato le Session sul server
     setActiveTab(HOME_KEY);
     // Dopo setActiveTab, che fotografa la scheda lasciata: le chiavi tab_N
     // ripartono e nessuna fotografia del contesto vecchio deve restare.
@@ -969,7 +1000,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             panelFieldRowsRef.current[tabKey] = new Map();
             update.formValues = freshValues;
             update.formCaptions = {};
-            editNavpathRef.current = null;
+            if (tabKey === activeTabRef.current) editNavpathRef.current = null;
           }
         }
       }
@@ -1002,7 +1033,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         // ...and so does a new page that happens to reuse the layout on screen
         // (mode "MC" — key advertised, template omitted): same key, different
         // page, so the key comparison alone wouldn't catch it.
-        if (resp.templateKey !== prevTemplateKey || !resp.template) editNavpathRef.current = null;
+        // Solo se e' la scheda attiva: la risposta di una scheda dietro (i Documenti
+        // recenti che arrivano quando si e' gia' tornati al gestionale) non deve far
+        // perdere la riga aperta in quella davanti (SXADV-5789).
+        if ((resp.templateKey !== prevTemplateKey || !resp.template) && tabKey === activeTabRef.current) editNavpathRef.current = null;
         // Stessa uscita dalla lista, ma per l'armamento del "Nuovo": un Add
         // su una lista con `detailViewName` e `inlineEdit="false"` NON aggiunge
         // una riga, apre la mappa di dettaglio (ToolView.isInlineEdited), quindi
@@ -1454,6 +1488,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // piu' il fatto che la scheda "nuova" successiva si riprendeva il sid di una
   // di loro. Come il client legacy (setupPanels): si ricreano tutte le schede,
   // si rende subito solo la prima e le altre quando ci si entra sopra.
+  // Le schede del documentale un F5 non le ricostruisce (JSONMenu non le elenca), ma
+  // le loro Session restano vive sul server: si chiudono, e il contatore non riusa
+  // i loro sid, altrimenti una scheda "nuova" si ritroverebbe il lavoro di quella.
+  useEffect(() => {
+    const orfani = prendiSidOrfani();
+    for (const sid of orfani) {
+      tabCounter = Math.max(tabCounter, Number(sid.substring(1)) || 0);
+      void api.postAction2('CloseSession', { sid }).catch(() => {});
+    }
+  }, []);
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current) return;
@@ -1476,7 +1520,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     });
     // Le schede aperte dopo il ripristino non devono riusare il sid di una
     // Session gia' viva: il contatore riparte dal massimo ricostruito.
-    tabCounter = Math.max(...restored.map((t) => Number(t.sid.substring(1))));
+    tabCounter = Math.max(tabCounter, ...restored.map((t) => Number(t.sid.substring(1))));
     formValuesRef.current = fvs;
     setTabs(restored);
     setActiveTab(restored[0].key);
@@ -1781,82 +1825,108 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const openCdmsViewInTab = useCallback(
     async (
       tab: Pick<TabState, 'key' | 'sid'>,
-      opts: { viewName: string; title: string; action?: string; filter?: string; orderBy?: string },
+      opts: { viewName: string; title: string; titoloVista?: string; action?: string; filter?: string; orderBy?: string },
     ) => {
-      const fv: Record<string, string | string[]> = {};
-      formValuesRef.current[tab.key] = fv;
-      panelFieldRowsRef.current[tab.key] = new Map();
-      editNavpathRef.current = null;
-      updateTabState(tab.key, { label: opts.title, daWidget: undefined, loading: true, ui: undefined, toolbar: undefined, uiData: undefined, currField: undefined, formValues: fv });
+      // Come handleMenuClick: la videata resta sotto la rotella e digitato e riga in
+      // modifica si azzerano quando arriva quella nuova. Se il server chiede conferma
+      // ("annullare le modifiche?") un Annulla lascia tutto com'era, e un Si' rigioca
+      // QUESTA richiesta sulla sua Session, qualunque scheda sia attiva nel frattempo.
+      const prima = tabsRef.current.find((t) => t.key === tab.key);
+      pendingMenuUndoRef.current.set(tab.key, { tabKey: tab.key, label: prima?.label ?? opts.title, menuId: prima?.menuId, functionAction: prima?.functionAction, daWidget: prima?.daWidget });
+      updateTabState(tab.key, { label: opts.title, daWidget: undefined, loading: true, progressPct: undefined });
       document.body.style.cursor = 'wait';
+      // Ingresso di primo livello (barra del documentale, cartella dell'albero):
+      // la scheda riparte da zero, quindi il percorso non deve accodarsi a
+      // quello della funzione precedente (SXADV-5783).
+      const params: Record<string, string> = { viewName: opts.viewName, title: opts.titoloVista ?? opts.title, newTask: '1' };
+      if (opts.filter) params.filter = opts.filter;
+      if (opts.orderBy) params.orderBy = opts.orderBy;
+      const action = opts.action || 'ListPage';
+      const replay = makeConfirmReplay(tab.key, tab.sid, (extra) => api.postAction(action, { ...params, ...extra }, undefined, tab.sid));
       try {
-        // Ingresso di primo livello (barra del documentale, cartella dell'albero):
-        // la scheda riparte da zero, quindi il percorso non deve accodarsi a
-        // quello della funzione precedente (SXADV-5783).
-        const params: Record<string, string> = { viewName: opts.viewName, title: opts.title, newTask: '1' };
-        if (opts.filter) params.filter = opts.filter;
-        if (opts.orderBy) params.orderBy = opts.orderBy;
-        const resp = await api.postAction(opts.action || 'ListPage', params, undefined, tab.sid);
-        processResponse(tab.key, resp);
+        const resp = await api.postAction(action, params, undefined, tab.sid);
+        processResponse(tab.key, resp, tab.sid, replay);
       } catch (e) {
-        updateTabState(tab.key, { loading: false });
+        updateTabState(tab.key, { loading: false, progressPct: undefined });
+        undoMenuChange(tab.key);
         discardPendingFocus();
         feedback.failure(e);
       } finally {
         document.body.style.cursor = '';
       }
     },
-    [updateTabState, processResponse, feedback],
+    [updateTabState, processResponse, makeConfirmReplay, undoMenuChange, feedback],
   );
 
-  const openCdmsView = useCallback(
-    (viewName: string, title: string, filter?: string) => {
-      const tab = getActiveTabState();
-      if (!tab) {
-        entraDallaHome({ tipo: 'cdms', viewName, title, filter });
+  // Una funzione del documentale sta in una scheda sua, in coda alle altre, come
+  // nel legacy (SXADV-5789.3): sovrapposta alla scheda attiva ne prendeva la
+  // Session, e il rigo vuoto lasciato da un Nuovo in Gestione Profili bloccava poi
+  // il Salva di Gestione Utenti. Richiederla torna sulla sua scheda e la riapre da
+  // capo, come il legacy: un Cestino gia' aperto deve mostrare l'ultimo cestinato e
+  // Aggiungi Albero un modulo vuoto. Se c'e' lavoro in sospeso lo chiede il server.
+  const openCdmsFunzione = useCallback(
+    (funzione: FunzioneApribile) => {
+      const opts = APERTURA_FUNZIONE[funzione];
+      const aperta = tabsRef.current.find((t) => t.cdmsFunzione === funzione);
+      if (aperta) {
+        setActiveTab(aperta.key);
+        if (!aperta.loading) void openCdmsViewInTab(aperta, opts);
         return;
       }
-      if (tab.loading) return;
-      openCdmsViewInTab(tab, { viewName, title, filter });
+      const tab = addTab(opts.title, 'cdms');
+      updateTabState(tab.key, { cdmsFunzione: funzione });
+      void openCdmsViewInTab(tab, opts);
     },
-    [getActiveTabState, entraDallaHome, openCdmsViewInTab],
+    [addTab, updateTabState, openCdmsViewInTab, setActiveTab],
   );
 
-  // Tabs holding the documentale pair, so re-entering the documentale activates
-  // them instead of opening a new pair every time.
-  const cdmsSessionTabsRef = useRef<{ search: string; recent: string } | null>(null);
-
-  // Entering the documentale opens its two working sessions, as the legacy
-  // client did in setupPanels(): "Ricerca" (query view) and "Documenti recenti"
-  // (documents by last revision). Unlike the legacy client this does not wipe
-  // the open tabs — the documentale lives inside the gestionale here, so the
-  // pair is added, reusing the current tab only when it is still empty
-  // (SXADV-5789).
+  // Il documentale ha le sue schede, come nel legacy dove e' una pagina a se': la
+  // barra mostra solo le sue, "Ricerca" e "Documenti recenti" in posizione 1 e 2
+  // (SXADV-5789.1), e quelle del gestionale restano vive dietro.
   const enterDocumentale = useCallback(() => {
+    ultimaSchedaRef.current.menu = activeTabRef.current;
     setSidebarMode('cdms');
-    const open = cdmsSessionTabsRef.current;
-    if (open && tabs.some((t) => t.key === open.search) && tabs.some((t) => t.key === open.recent)) {
-      setActiveTab(open.search);
+    const aperte = schedeDiArea(tabsRef.current, 'cdms');
+    if (aperte.length > 0) {
+      const ultima = ultimaSchedaRef.current.cdms;
+      const scheda = aperte.find((t) => t.key === ultima) ?? aperte[0];
+      setActiveTab(scheda.key);
+      // Apertura fallita (VPN, errore), anche della scheda che sta dietro: Ricerca e
+      // Recenti non si chiudono, e senza questo resterebbero vuote fino a un F5.
+      for (const t of aperte) {
+        const funzione = t.cdmsFunzione;
+        if (!t.ui && !t.loading && funzione && funzione !== 'listaNodo') {
+          void openCdmsViewInTab(t, APERTURA_FUNZIONE[funzione]);
+        }
+      }
       return;
     }
-    // Dalla Home la coppia riusa la scheda di lavoro, se e' ancora vuota.
-    const active = getActiveTabState() ?? getWorkTab();
-    const searchTab = active && !active.ui && !active.loading ? active : addTab();
-    const recentTab = addTab();
-    cdmsSessionTabsRef.current = { search: searchTab.key, recent: recentTab.key };
-    openCdmsViewInTab(searchTab, { viewName: 'cdmsRisorseQuery', title: 'Ricerca', action: 'QueryPage' });
-    openCdmsViewInTab(recentTab, { viewName: 'cdmsRisorseList', title: 'Documenti recenti', orderBy: 'dataUltimaRevisione desc' });
+    const searchTab = addTab('Ricerca', 'cdms');
+    const recentTab = addTab('Documenti recenti', 'cdms');
+    updateTabState(searchTab.key, { cdmsFunzione: 'ricerca' });
+    updateTabState(recentTab.key, { cdmsFunzione: 'recenti' });
+    void openCdmsViewInTab(searchTab, APERTURA_FUNZIONE.ricerca);
+    void openCdmsViewInTab(recentTab, APERTURA_FUNZIONE.recenti);
     setActiveTab(searchTab.key);
-  }, [tabs, getActiveTabState, getWorkTab, addTab, openCdmsViewInTab, setActiveTab]);
+  }, [addTab, updateTabState, openCdmsViewInTab, setActiveTab]);
 
-  // CDMS: clicking a folder in the tree opens a filtered document list in the active tab
+  // CDMS: una cartella dell'albero apre la lista filtrata in un'unica scheda, che le
+  // cartelle successive riusano (`listaNodo` del legacy).
   const handleCdmsFolderClick = useCallback(
     (cdmsId: string, folderName: string) => {
       // Extract UUID from cdmsId (part after last |)
       const uuid = cdmsId.substring(cdmsId.lastIndexOf('|') + 1);
-      openCdmsView('cdmsRisorseList', folderName, `exists(nodi[idNodoClass = '${uuid}'])`);
+      // La scheda porta il nome della cartella; lista, dettaglio e link di ritorno sono
+      // di "Gestione Documentale", come nel legacy (SXADV-5815.9).
+      const opts = { viewName: 'cdmsRisorseList', title: folderName, titoloVista: 'Gestione Documentale', orderBy: 'nickname', filter: `exists(nodi[idNodoClass = '${uuid}'])` };
+      const aperta = tabsRef.current.find((t) => t.cdmsFunzione === 'listaNodo');
+      if (aperta?.loading) return;
+      const tab = aperta ?? addTab(folderName, 'cdms');
+      if (!aperta) updateTabState(tab.key, { cdmsFunzione: 'listaNodo' });
+      setActiveTab(tab.key);
+      void openCdmsViewInTab(tab, opts);
     },
-    [openCdmsView],
+    [addTab, updateTabState, openCdmsViewInTab, setActiveTab],
   );
 
   // Campi digitati e non ancora spediti al server. Ogni richiesta si porta
@@ -1885,14 +1955,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const handleBannerClick = useCallback(
     (navigateTo: string) => {
       const label = findMenuLabel(menuItems, navigateTo);
-      if (label) {
+      if (sidebarMode === 'cdms') {
+        entraDalDocumentale(label ? { tipo: 'menu', menuId: navigateTo, label } : { tipo: 'azione', action: navigateTo });
+      } else if (label) {
         handleMenuClick(navigateTo, label);
       } else if (!entraDallaHome({ tipo: 'azione', action: navigateTo })) {
         // Fall back to generic action (server decides what to do)
         handleAction(navigateTo);
       }
     },
-    [menuItems, handleMenuClick, handleAction, entraDallaHome],
+    [menuItems, sidebarMode, entraDalDocumentale, handleMenuClick, handleAction, entraDallaHome],
   );
 
   // Ingresso di primo livello che NON ha una voce di menu (Gestione Profili
@@ -1947,9 +2019,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       case 'menu': void handleMenuClick(ingresso.menuId, ingresso.label); break;
       case 'funzione': openFunctionByAction(ingresso.label, ingresso.action, ingresso.params, ingresso.daWidget); break;
       case 'azione': void handleAction(ingresso.action); break;
-      case 'cdms': openCdmsView(ingresso.viewName, ingresso.title, ingresso.filter); break;
     }
-  }, [ingressoNonce, activeTab, handleMenuClick, openFunctionByAction, handleAction, openCdmsView]);
+  }, [ingressoNonce, activeTab, handleMenuClick, openFunctionByAction, handleAction]);
 
   // Request notification permission once on mount
   useEffect(() => {
@@ -1959,6 +2030,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Fire native browser notifications for new banNotification banners.
   // Tracks "already notified" locally so refreshes don't re-notify.
   const notifiedBannerKeysRef = useRef<Set<string>>(new Set());
+  // La notifica si clicca molto dopo: deve trovare il gestore di quel momento, non
+  // quello del disegno che l'ha creata, per cui si era ancora nel gestionale (SXADV-5789).
+  const handleBannerClickRef = useRef(handleBannerClick);
+  useEffect(() => { handleBannerClickRef.current = handleBannerClick; }, [handleBannerClick]);
   useEffect(() => {
     const banners = loginInfo.banners || [];
     for (const b of banners) {
@@ -1969,10 +2044,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       notify({
         title: 'Avviso',
         body: b.text || '',
-        onClick: b.navigateTo ? () => handleBannerClick(b.navigateTo!) : undefined,
+        onClick: b.navigateTo ? () => handleBannerClickRef.current(b.navigateTo!) : undefined,
       });
     }
-  }, [loginInfo.banners, handleBannerClick]);
+  }, [loginInfo.banners]);
 
   // Il campo e' stato scritto e non e' ancora partito con nessuna richiesta:
   // la riga in gestione ne tiene l'eco finche' il server non la rimanda
@@ -2067,13 +2142,34 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // manda). Il legacy disabilitava il "+" della barra schede quando il conto
   // era pieno (ui.js checkSessionLimit): qui il bottone si spegne allo stesso
   // modo e il clic, che antd lascia comunque passare, si ferma con un avviso.
-  const atSessionLimit = sessionLimit > 0 && tabs.length >= sessionLimit;
+  // Le schede del documentale non contano: la coppia si apre da sola e nel legacy
+  // stavano tutte in una Session (D0).
+  const atSessionLimit = sessionLimit > 0 && schedeDiArea(tabs, 'menu').length >= sessionLimit;
+  const schedeVisibili = schedeDiArea(tabs, sidebarMode);
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
     // Scheda ripristinata da un reload e mai aperta finora: si rende adesso.
     const tab = tabsRef.current.find((t) => t.key === key);
     if (tab?.restorePending) void loadRestoredTab(tab);
+  };
+
+  // La Home e' del gestionale: dal documentale si esce (SXADV-5789).
+  const vaiAllaHome = () => {
+    if (sidebarMode === 'cdms') {
+      ultimaSchedaRef.current.cdms = activeTabRef.current;
+      setSidebarMode('menu');
+    }
+    setActiveTab(HOME_KEY);
+  };
+
+  // Si torna al gestionale dov'era (SXADV-5789.4): Home compresa.
+  const tornaAlGestionale = () => {
+    ultimaSchedaRef.current.cdms = activeTabRef.current;
+    setSidebarMode('menu');
+    const ultima = ultimaSchedaRef.current.menu;
+    const scheda = tabsRef.current.find((t) => t.key === ultima && !isSchedaDocumentale(t));
+    handleTabChange(ultima === HOME_KEY ? HOME_KEY : scheda?.key ?? getWorkTab()?.key ?? HOME_KEY);
   };
 
   const handleTabEdit = (
@@ -2093,7 +2189,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // renderebbe attiva (la successiva, o la precedente se era l'ultima), anche
       // quando la si chiude stando sulla Home.
       if (workTabRef.current === key) {
-        const prima = tabsRef.current;
+        const prima = schedeDiArea(tabsRef.current, 'menu');
         const idx = prima.findIndex((t) => t.key === key);
         const resto = prima.filter((t) => t.key !== key);
         if (resto.length > 0) workTabRef.current = resto[Math.min(idx, resto.length - 1)].key;
@@ -2102,7 +2198,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // setActiveTab fotografa lo scorrimento (SXADV-6008), e un updater
       // eseguito piu' tardi, nel render, rimetterebbe in memoria quello della
       // scheda appena chiusa.
-      const prev = tabsRef.current;
+      // Nella stessa area: dal documentale non si finisce su una scheda del gestionale.
+      const prev = schedeDiArea(tabsRef.current, closed && isSchedaDocumentale(closed) ? 'cdms' : 'menu');
       const idx = prev.findIndex((t) => t.key === key);
       const next = prev.filter((t) => t.key !== key);
       if (activeTab === key && next.length > 0) {
@@ -2111,6 +2208,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         setActiveTab('');
       }
       setTabs((p) => p.filter((t) => t.key !== key));
+      if (closed) dimenticaSidDocumentale(closed.sid);
       delete formValuesRef.current[key];
       delete scrollByTabRef.current[key];
       // La Session resta viva sul server finche' non gliela si chiude: senza
@@ -2522,7 +2620,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // Elettronica so that Schermo intero sits right under Esci (SXADV-5955); in
   // documentale mode there is no email button and it follows Schermo intero.
   const cdmsToggleButton: AppBarButton =
-    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Torna al menu' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? setSidebarMode('menu') : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' };
+    { key: 'cdms', icon: sidebarMode === 'cdms' ? <AppstoreOutlined /> : <FileTextOutlined />, tooltip: sidebarMode === 'cdms' ? 'Gestionale' : 'Documentale', onClick: () => sidebarMode === 'cdms' ? tornaAlGestionale() : enterDocumentale(), visible: !!loginInfo.cdms, active: sidebarMode === 'cdms' };
 
   const appBarButtons: AppBarButton[] = [
     ...commonBarButtons,
@@ -2547,7 +2645,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     // terza non ha voce di menu e passa da openFunctionByAction (SXADV-5783).
     // Il tooltip e' "Gestione Profili" come nel documentale (SXADV-5784.Z); la
     // scheda resta intitolata alla funzione.
-    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openFunctionByAction('Gestione Profili Menu', 'ProfileManager', { navpath: 'menu' }), visible: true, active: currentTab?.functionAction === 'ProfileManager' },
+    { key: 'profmanager', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openFunctionByAction('Gestione Profili', 'ProfileManager', { navpath: 'menu' }), visible: true, active: currentTab?.functionAction === 'ProfileManager' },
     { key: 'stats', icon: <ClockCircleOutlined />, tooltip: 'Comandi in esecuzione', onClick: () => handleMenuClick('menu._$commstatList', 'Comandi in esecuzione'), visible: true, active: activeMenuId === 'menu._$commstatList' },
     { key: 'jdbc', icon: <DatabaseOutlined />, tooltip: 'Connessioni attive', onClick: () => handleMenuClick('menu._$jdbcstatList', 'Connessioni attive'), visible: true, active: activeMenuId === 'menu._$jdbcstatList' },
     { key: 'expb', icon: <BuildOutlined />, tooltip: 'Costruttore Espressioni', onClick: () => handleMenuClick('menu.expBuilderList', 'Costruttore Espressioni'), visible: true, active: activeMenuId === 'menu.expBuilderList' },
@@ -2561,10 +2659,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const cdmsBarButtons: AppBarButton[] = [
     ...commonBarButtons,
     cdmsToggleButton,
-    { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsView('cdmsProfiliList', 'Gestione Profili'), visible: !!loginInfo.cdmsAdmin },
-    { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsView('cdmsUtentiList', 'Gestione Utenti'), visible: !!loginInfo.cdmsAdmin },
-    { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => openFunctionByAction('Aggiungi Albero', 'AddPage', { viewName: 'cdmsNodiClassificazioneDetail' }), visible: !!loginInfo.cdmsAdmin },
-    { key: 'cdmsTrash', icon: <DeleteOutlined />, tooltip: 'Cestino', onClick: () => openCdmsView('cdmsRisorseListCestino', 'Cestino'), visible: true },
+    { key: 'cdmsProfili', icon: <TeamOutlined />, tooltip: 'Gestione Profili', onClick: () => openCdmsFunzione('profili'), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsUtenti', icon: <IdcardOutlined />, tooltip: 'Gestione Utenti', onClick: () => openCdmsFunzione('utenti'), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsNewTree', icon: <FolderAddOutlined />, tooltip: 'Aggiungi Albero', onClick: () => openCdmsFunzione('nuovoAlbero'), visible: !!loginInfo.cdmsAdmin },
+    { key: 'cdmsTrash', icon: <DeleteOutlined />, tooltip: 'Cestino', onClick: () => openCdmsFunzione('cestino'), visible: true },
     { key: 'cdmsWiki', icon: <ReadOutlined />, tooltip: 'Aiuto', onClick: () => window.open(loginInfo.wikiUrl, '_blank', 'noopener'), visible: !!loginInfo.wikiUrl },
   ];
 
@@ -2716,7 +2814,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               aria-pressed={isHome}
               type={isHome ? 'primary' : 'default'}
               icon={<HomeOutlined />}
-              onClick={() => setActiveTab(HOME_KEY)}
+              onClick={vaiAllaHome}
             />
           </Tooltip>
           {sidebarMode === 'menu' && !collapsed && (
@@ -2940,18 +3038,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             activeKey={activeTab}
             onChange={handleTabChange}
             onEdit={handleTabEdit}
+            hideAdd={sidebarMode === 'cdms'}
             addIcon={
               <Tooltip title={atSessionLimit ? `Limite di ${sessionLimit} sessioni raggiunto` : 'Nuova sessione'}>
                 <PlusOutlined />
               </Tooltip>
             }
             items={[
-              // La Home in testa: non si chiude e non e' una sessione (SXADV-62).
-              { key: HOME_KEY, label: <span><HomeOutlined /> Home</span>, closable: false },
-              ...tabs.map((t) => ({
+              // La Home in testa: non si chiude e non e' una sessione (SXADV-62). Nel
+              // documentale no: le sue schede partono dalla posizione 1 (SXADV-5789.1).
+              ...(sidebarMode === 'cdms' ? [] : [{ key: HOME_KEY, label: <span><HomeOutlined /> Home</span>, closable: false }]),
+              ...schedeVisibili.map((t) => ({
                 key: t.key,
                 label: t.label,
-                closable: tabs.length > 1,
+                closable: schedaChiudibile(t, schedeVisibili.length),
               })),
             ]}
           />
@@ -3114,9 +3214,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     <Empty
                       style={{ marginTop: 64 }}
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description="Scegli una funzione dal menu"
+                      description={sidebarMode === 'cdms' ? 'Scegli una cartella o una funzione' : 'Scegli una funzione dal menu'}
                     >
-                      <Button icon={<HomeOutlined />} onClick={() => setActiveTab(HOME_KEY)}>
+                      <Button icon={<HomeOutlined />} onClick={vaiAllaHome}>
                         Vai alla Home
                       </Button>
                     </Empty>
