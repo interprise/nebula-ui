@@ -152,6 +152,29 @@ export const numeroPertinente = (t: Trasformazione | null | undefined, r: Risult
   return !(contaSoloIGruppi(t) && ((r.gruppi || []).length > 0 || altri));
 };
 
+const SIMBOLI: Record<string, string> = { sum: 'Σ', avg: 'M', count: 'N.', min: 'Min', max: 'Max' };
+
+/**
+ * SXADV-6107.3: che cosa e' il numero grande, «Σ Totale doc.». Il simbolo e' il calcolo che
+ * da' il numero: con i gruppi quello del «Numero finale», senza quello di «Calcola». Il nome
+ * e' la colonna calcolata; un conteggio di righe non ne ha una.
+ */
+export const calcoloDelNumero = (
+  t: Trasformazione | null | undefined,
+  colonne?: Array<{ item?: string; etichetta?: string }> | null,
+): { simbolo: string; nome: string } | null => {
+  if (!t) return null;
+  const agg = t.agg || 'count';
+  const calcolo = raggruppaDavvero(t.group) ? t.outAgg || 'count' : agg;
+  if (!Object.prototype.hasOwnProperty.call(SIMBOLI, calcolo)) return null;
+  const simbolo = SIMBOLI[calcolo];
+  if (agg === 'count') return { simbolo, nome: 'righe' };
+  const c = (colonne || []).find((x) => x.item === t.col);
+  const nome = c?.etichetta || t.col;
+  // Una somma salvata senza colonna (prima di SXADV-6110.1): niente simbolo senza nome.
+  return nome ? { simbolo, nome } : null;
+};
+
 export const scrivi = (v: unknown, intero: boolean) => {
   const n = aNumero(v);
   if (n === null) return '—';

@@ -16,6 +16,8 @@ interface HomePanelProps {
   onNaviga?: (titolo: string, idWidget: number) => boolean;
   /** La scheda di lavoro puo' ricevere un'apertura adesso? (vedi DashboardPanel) */
   puoAprire?: () => boolean;
+  /** Come puoAprire, per la lista completa che apre una scheda sua (SXADV-6125). */
+  puoNavigare?: () => boolean;
   /**
    * «Torna al widget» (SXADV-5999.3): la Home si apre sulla dashboard, anche con
    * avvisi nuovi, e porta in vista questo widget. null/assente = apertura normale.
@@ -30,7 +32,7 @@ const APERTURA_MS = 30000;
 
 const { Title, Text } = Typography;
 
-const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga, puoAprire, mostraWidget }) => {
+const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriDettaglio, onNaviga, puoAprire, puoNavigare, mostraWidget }) => {
   // Memoizzato per davvero: era ricalcolato a ogni disegno, quindi il useMemo qui
   // sotto non teneva e a ogni ridisegno si rileggeva localStorage e si ricalcolava
   // il riconoscitore di ogni avviso, testo per testo (e hpText puo' essere lungo).
@@ -93,6 +95,19 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
     segnati.current = true;
   }, [cosa, banners, loginInfo.login]);
 
+  // La barra dei widget si ferma subito sotto la testata, che cambia altezza con la finestra.
+  const testataRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = testataRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const misura = () =>
+      el.parentElement?.style.setProperty('--home-testata-h', `${el.offsetHeight}px`);
+    misura();
+    const ro = new ResizeObserver(misura);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div
       style={{
@@ -102,6 +117,8 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
         width: '100%',
       }}
     >
+      {/* SXADV-6121: sulla dashboard la testata resta ferma mentre i widget scorrono. */}
+      <div ref={testataRef} className={cosa === 'dashboard' ? 'home-testata' : undefined}>
       {/* Welcome header */}
       {/* Sulla dashboard il benvenuto si stringe: com'era, spingeva i widget sotto la
           piega, e la Home esiste per far vedere quelli. Sugli avvisi resta com'era. */}
@@ -151,14 +168,16 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
               // Il numero che conta e' quello dei NUOVI, finche' ce ne sono: e' la
               // ragione per cui uno guarda li'.
               label: quantiNuovi > 0
-                ? `Avvisi (${quantiNuovi} ${quantiNuovi === 1 ? 'nuovo' : 'nuovi'})`
+                ? `Banner Informativi (${quantiNuovi} ${quantiNuovi === 1 ? 'nuovo' : 'nuovi'})`
                 : hasContent
-                  ? `Avvisi (${banners.length})`
-                  : 'Avvisi',
+                  ? `Banner Informativi (${banners.length})`
+                  : 'Banner Informativi',
               icon: <BellOutlined />,
             },
           ]}
         />
+      </div>
+
       </div>
 
       {cosa === 'dashboard' ? (
@@ -166,6 +185,7 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
           onApriDettaglio={onApriDettaglio}
           onNaviga={onNaviga}
           puoAprire={puoAprire}
+          puoNavigare={puoNavigare}
           mostraWidget={ritorno}
         />
       ) : hasContent ? (

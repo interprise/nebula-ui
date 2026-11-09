@@ -284,6 +284,8 @@ interface Props {
    * false, e qui non parte niente. Assente = sempre si'.
    */
   puoAprire?: () => boolean;
+  /** Come puoAprire, per la lista completa che apre una scheda sua (SXADV-6125). */
+  puoNavigare?: () => boolean;
   /**
    * «Torna al widget» (SXADV-5999.3): appena c'e' a schermo, il riquadro di questo
    * widget si porta in vista e si evidenzia per un momento. Una volta per valore.
@@ -478,7 +480,7 @@ const ogni = (min?: number) => {
  * criterio del pezzo. Quello che si vede — intestazioni, testi delle celle, conteggio —
  * e' quello che il server ha gia' calcolato quando il widget e' stato aggiunto.
  */
-const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, puoAprire, mostraWidget }) => {
+const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, puoAprire, puoNavigare, mostraWidget }) => {
   const feedback = useFeedback();
 
   /**
@@ -549,7 +551,8 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   const naviga = useCallback(
     async (w: Widget) => {
       if (!onNaviga || apertura.current) return;
-      if (puoAprire && !puoAprire()) return;
+      const puo = puoNavigare ?? puoAprire;
+      if (puo && !puo()) return;
       apertura.current = true;
       let aperto = false;
       try {
@@ -570,7 +573,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         if (!aperto) apertura.current = false;
       }
     },
-    [onNaviga, puoAprire, feedback, rifiuto],
+    [onNaviga, puoAprire, puoNavigare, feedback, rifiuto],
   );
   const [widget, setWidget] = useState<Widget[] | null>(null);
 
@@ -1207,8 +1210,10 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description={
           <span>
-            Nessun widget. Si aggiungono da una lista, con il pulsante{' '}
-            <b>Aggiungi alla dashboard</b>: il widget ricorda i filtri che stai usando.
+            Nessun widget. Si creano da una lista di risultati con il pulsante{' '}
+            <b>Aggiungi alla dashboard</b>, oppure si aggiungono con <b>Aggiungi widget</b>{' '}
+            scegliendo da un elenco di widget già esistenti, oppure ancora si ottengono
+            automaticamente dalla fase di distribuzione.
           </span>
         }
         style={{ padding: '40px 0' }}
@@ -1254,27 +1259,35 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               <Tag className="dash-widget-condiviso">da {w.autore}</Tag>
             ) : w.modificabile && w.condivisione?.ambito && w.condivisione.ambito !== 'privato' ? (
               <Tooltip title={descriviCondivisione(w.condivisione, sedi)}>
-                <Tag className="dash-widget-condiviso">condiviso</Tag>
+                <Tag className="dash-widget-condiviso" color="blue">condiviso</Tag>
               </Tooltip>
             ) : null}
-            {suPiuAziende(w) ? (
-              <Tooltip
-                title={(w.ambito?.codici || [])
-                  .map((c) => {
-                    const d = aziendeAbilitate.find((a) => a.codice === c)?.descrizione;
-                    return d ? `${c} — ${d}` : c;
-                  })
-                  .join(', ')
-                  + ((w.ambito?.escluse || []).length
-                    ? ` — escluse perche' li' hai un altro profilo: ${(w.ambito?.escluse || []).join(', ')}`
-                    : '')}
+            {suPiuAziende(w) && w.ambito?.possibile !== false ? (
+              <Popover
+                content={
+                  <div className="dash-aziende-elenco">
+                    <ul>
+                      {(w.ambito?.codici || []).map((c) => {
+                        const d = aziendeAbilitate.find((a) => a.codice === c)?.descrizione;
+                        return <li key={c}>{d ? `${c} — ${d}` : c}</li>;
+                      })}
+                    </ul>
+                    {(w.ambito?.escluse || []).length ? (
+                      <Typography.Text type="secondary">
+                        Escluse perche' li' hai un altro profilo: {(w.ambito?.escluse || []).join(', ')}
+                      </Typography.Text>
+                    ) : null}
+                  </div>
+                }
               >
                 <Tag className="dash-widget-ambito">
                   {w.ambito?.modo === 'tutte'
                     ? 'tutte le aziende'
                     : `${(w.ambito?.codici || []).length} ${(w.ambito?.codici || []).length === 1 ? 'azienda' : 'aziende'}`}
                 </Tag>
-              </Tooltip>
+              </Popover>
+            ) : w.ambito && w.ambito.possibile !== false && !suPiuAziende(w) ? (
+              <Tag className="dash-widget-ambito">azienda corrente</Tag>
             ) : null}
             <Space size={0}>
               {onNaviga ? (
@@ -1483,6 +1496,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               forma={w.forma}
               trasformazione={w.trasformazione}
               opzioni={w.opzioni}
+              colonne={w.colonne}
             />
           ) : null}
           {/* Le righe si mostrano se ci sono, qualunque sia lo stato: dopo un
