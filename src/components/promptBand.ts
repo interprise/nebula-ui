@@ -66,3 +66,25 @@ export function solvePromptBand(
   if (!converged) perCol = Math.max(perCol, need(minContentCol));
   return { cols, width: perCol ? Math.ceil(perCol * cols) : 0 };
 }
+
+/** Oltre questa larghezza un'etichetta non allarga la banda per stare su una riga:
+ *  va a capo, come nel legacy. Una sola etichetta lunga in fondo alla maschera
+ *  lasciava centinaia di pixel vuoti a sinistra di tutte le altre (SXADV-5934.0). */
+export const LONG_PROMPT_WIDTH = 220;
+
+/** La larghezza che l'etichetta pretende: intera se breve, altrimenti quella che le
+ *  basta su due righe, spezzata fra le parole dove la riga piu' lunga e' minima. */
+export function promptFitWidth(text: string, measure: (s: string) => number): number {
+  const full = measure(text);
+  if (full <= LONG_PROMPT_WIDTH) return full;
+  // Un <br> va gia' a capo da solo: basta la riga piu' lunga.
+  const lines = text.split(/<br\s*\/?>/i);
+  if (lines.length > 1) return Math.max(...lines.map((l) => measure(l.trim())), Math.min(full, LONG_PROMPT_WIDTH));
+  // Solo gli spazi veri spezzano: `\s` comprende anche U+00A0, dove il browser non va a capo.
+  const words = text.trim().split(/[ \t\r\n\f]+/);
+  let best = full;
+  for (let i = 1; i < words.length; i++) {
+    best = Math.min(best, Math.max(measure(words.slice(0, i).join(' ')), measure(words.slice(i).join(' '))));
+  }
+  return Math.max(best, Math.min(full, LONG_PROMPT_WIDTH));
+}

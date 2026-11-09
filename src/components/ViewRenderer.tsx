@@ -29,10 +29,11 @@ import { bareFieldName, echoText, type RowEcho } from './rowEcho';
 import type { FieldCaption } from '../controls/types';
 import TreeRenderer from './TreeRenderer';
 import { viewHasOlapCube } from './olap/detect';
-import { solvePromptBand, type LeadingPrompt } from './promptBand';
+import { promptFitWidth, solvePromptBand, type LeadingPrompt } from './promptBand';
 import { panelRowSwitch } from './addWait';
 import { staleSelection } from './editRowLifetime';
 import { sectionZoomTooltip } from './zoomLabels';
+import { isArrivalFocus } from '../services/focusRestore';
 
 /** Shows horizontal scrollbar only when mouse is near the bottom edge */
 const SCROLL_REVEAL_ZONE = 25; // pixels from bottom edge
@@ -336,7 +337,7 @@ function buildRuler(allRows: UIRow[], hostWidth: number, density: Density, total
     if (!first || first.visible === false || first.elementType !== ELTYPE_PROMPT) continue;
     leadingPrompts.push({
       span: first.colspan || 1,
-      width: first.prompt ? measurePromptWidth(first.prompt, font) + PROMPT_CELL_PADDING : 0,
+      width: first.prompt ? promptFitWidth(first.prompt, (t) => measurePromptWidth(t, font)) + PROMPT_CELL_PADDING : 0,
     });
   }
   const bandColsShared = leadingPrompts.length ? Math.min(...leadingPrompts.map((p) => p.span)) : 0;
@@ -495,7 +496,7 @@ function SplitTabPanel({ control, pageType, showBar, extraRight, onTabChange, on
 }): React.ReactElement {
   const selected = control.tabs?.find((t) => t.selected) ?? control.tabs?.[0];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+    <div className="split-tab-panel" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       {showBar && (
         <div className="tab-sticky-wrapper">
           <Tabs
@@ -513,7 +514,7 @@ function SplitTabPanel({ control, pageType, showBar, extraRight, onTabChange, on
         </div>
       )}
       {control.contentRows && (
-        <InTabPanelContext.Provider value={true}>
+        <StackedSectionsContext.Provider value={false}><InTabPanelContext.Provider value={true}>
         <div className="tab-content view-body-embedded" style={{ overflow: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {/* Same as the non-split tab path: the tab label names this content, so
               a heading repeating it is dropped (TabLabelContext). */}
@@ -527,7 +528,7 @@ function SplitTabPanel({ control, pageType, showBar, extraRight, onTabChange, on
             />
           </TabLabelContext.Provider>
         </div>
-        </InTabPanelContext.Provider>
+        </InTabPanelContext.Provider></StackedSectionsContext.Provider>
       )}
     </div>
   );
@@ -715,7 +716,7 @@ interface ViewRendererProps {
 // just left (the child detail's caret sits in its testata, so coming back the
 // parent's rows collapse to 22% and look gone). Keyed like ListRenderer's
 // lastSelectedByView so both survive the same navigation (SXADV-5544).
-type SplitState = { zone: 'form' | 'bottom' | null; manualPct: number | null };
+type SplitState = { zone: 'form' | 'bottom' | null; manualPct: number | null; path?: string };
 const splitByView = new Map<string, SplitState>();
 
 // Session ID context — used by remote combos to call the server
@@ -823,6 +824,19 @@ export const TabLabelContext = React.createContext<string | undefined>(undefined
  *  griglia — e in una vista senza split la griglia sta dentro la tabella di
  *  layout, dove "nascondere il resto" vuol dire nascondere righe di form. */
 export const SplitAreaContext = React.createContext<boolean>(false);
+
+/** True quando il pannello inferiore e' una pila di sezioni (due o piu' viste
+ *  incorporate senza tab, es. Sottoconti). Ogni griglia e' alta quanto il suo
+ *  contenuto e scorre l'area, come nel legacy: dividendo l'altezza in parti uguali
+ *  una griglia restava senza righe visibili (SXADV-5935). */
+export const StackedSectionsContext = React.createContext<boolean>(false);
+
+/** Le sezioni visibili del pannello inferiore, tab esclusi. */
+function bottomSectionCount(rows: UIRow[]): number {
+  return rows
+    .filter((r) => !r.cells.some((c) => c.control?.type === 'tab'))
+    .reduce((n, r) => n + r.cells.filter((c) => c.control && c.visible !== false && (!['embeddedView', 'detailView'].includes(c.control.type as string) || !!(c.control.rows ?? c.control.contentRows))).length, 0);
+}
 
 /** True per il contenuto di un tab del pannello inferiore. Serve a decidere
  *  DOVE vive il comando di ingrandimento: con una barra tab presente lo porta
@@ -1683,7 +1697,17 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   const NEUTRAL_PCT = 50;
   const FORM_FOCUS_PCT = 78;
   const BOTTOM_FOCUS_PCT = 22;
-  const [focusZone, setFocusZone] = React.useState<'form' | 'bottom' | null>(null);
+  // Il record nuovo ha una memoria sua: Nuovo e poi Annulla sulla stessa vista non
+  // deve sovrascrivere l'area del record da cui si era partiti (SXADV-5988).
+  const splitViewKey = `${splitSid}|${ui.viewName ?? ui.path ?? ''}`;
+  const splitKey = ui.newRecord ? `${splitViewKey}|nuovo` : splitViewKey;
+  // Una lista in mezzo smonta la vista. Tornando sullo STESSO record (il path porta
+  // la posizione) si riprende l'area; entrando su un altro si parte dal default.
+  const remembered = (): SplitState | undefined => {
+    const saved = splitByView.get(splitKey);
+    return saved && saved.path === ui.path ? saved : undefined;
+  };
+  const [focusZone, setFocusZone] = React.useState<'form' | 'bottom' | null>(() => remembered()?.zone ?? null);
   const focusZoneRef = React.useRef<'form' | 'bottom' | null>(null);
   // Specchio di `focusZone` per i gestori di eventi (setZone confronta la zona
   // corrente senza rientrare nel render). Si aggiorna QUI, dopo il commit, e non
@@ -1691,7 +1715,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // rende il render non ripetibile, e i due punti che lo facevano — cambio di
   // view e apertura di un nuovo record — ora passano dallo stato.
   React.useEffect(() => { focusZoneRef.current = focusZone; }, [focusZone]);
-  const [manualPct, setManualPct] = React.useState<number | null>(null);
+  const [manualPct, setManualPct] = React.useState<number | null>(() => remembered()?.manualPct ?? null);
   const [resizing, setResizing] = React.useState(false);
   const splitContainerRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -1700,17 +1724,27 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // view's remembered split — restoring what the user left, and never inheriting
   // the previous view's. Done during render rather than in an effect so the very
   // first paint of the restored view is already at the right ratio.
-  const splitKey = `${splitSid}|${ui.viewName ?? ui.path ?? ''}`;
   const [prevSplitKey, setPrevSplitKey] = React.useState(splitKey);
   if (prevSplitKey !== splitKey) {
     setPrevSplitKey(splitKey);
-    const saved = splitByView.get(splitKey);
-    setFocusZone(saved?.zone ?? null);
-    setManualPct(saved?.manualPct ?? null);
+    // Il ricordo di un record nuovo vale solo tornandoci da un figlio: un Nuovo dalla
+    // stessa vista, o con un altro path, e' un altro record e riparte dalla testata.
+    let saved = splitByView.get(splitKey);
+    if (ui.newRecord && saved && (prevSplitKey === splitViewKey || saved.path !== ui.path)) {
+      splitByView.delete(splitKey);
+      saved = undefined;
+    }
+    // Salvando un record nuovo la vista resta la stessa: senza un ricordo per il
+    // record salvato l'area non si muove.
+    const sameView = prevSplitKey === `${splitViewKey}|nuovo` || prevSplitKey === splitViewKey;
+    if (saved || !sameView) {
+      setFocusZone(saved?.zone ?? null);
+      setManualPct(saved?.manualPct ?? null);
+    }
   }
   React.useEffect(() => {
-    splitByView.set(splitKey, { zone: focusZone, manualPct });
-  }, [splitKey, focusZone, manualPct]);
+    splitByView.set(splitKey, { zone: focusZone, manualPct, path: ui.path });
+  }, [splitKey, focusZone, manualPct, ui.path]);
 
   // A brand-new record (server insert state) opens with the testata expanded.
   // At the neutral 50/50 the header fields — the very ones the user came here to
@@ -1728,7 +1762,8 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   const [prevNewRecordKey, setPrevNewRecordKey] = React.useState<string | null | undefined>(undefined);
   if (prevNewRecordKey !== newRecordKey) {
     setPrevNewRecordKey(newRecordKey);
-    if (newRecordKey) {
+    // Un ritorno su un record nuovo non ancora salvato ha gia' la sua area.
+    if (newRecordKey && !splitByView.get(splitKey)) {
       setFocusZone('form');
       setManualPct(null);
     }
@@ -1777,6 +1812,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // cure; see revealBottom. Keyboard focus still activates immediately — nothing
   // moves out from under a caret that arrived by Tab.
   const pointerDrivenRef = React.useRef(false);
+  const arrivalTargetRef = React.useRef<HTMLElement | null>(null);
   const onSplitPointerDown = React.useCallback(() => {
     pointerDrivenRef.current = true;
     // Not every press ends in a click (a drag released outside its element
@@ -1796,8 +1832,31 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
     // revealBottom below.
     if (t?.closest('.ant-tabs-nav')) return;
     const zone = zoneOf(t);
-    if (zone) setZone(zone);
+    if (!zone) return;
+    // Il fuoco che torna da solo sul campo dell'arrivo (si rientra nella finestra,
+    // si chiude una finestra di dialogo) non e' l'utente che cambia area.
+    if (t === arrivalTargetRef.current) return;
+    arrivalTargetRef.current = null;
+    // Il cursore messo dall'arrivo sulla pagina non dice dove l'utente sta
+    // lavorando: decide la testata solo se la vista non ha ancora una zona. Al
+    // ritorno da una vista figlia (indietro, Annulla) resta l'area com'era, invece
+    // di tornare al default di ingresso (SXADV-5988). Passa dall'aggiornamento di
+    // stato perche' la zona ricordata puo' essere ancora in coda al render.
+    if (isArrivalFocus()) {
+      arrivalTargetRef.current = t;
+      setFocusZone((cur) => cur ?? zone);
+      return;
+    }
+    setZone(zone);
   }, [setZone, zoneOf]);
+
+  // Il segno del fuoco d'arrivo cade quando il campo perde il fuoco dentro la
+  // pagina: restano fuori il cambio di finestra e l'apertura di una finestra di
+  // dialogo, da cui il fuoco torna da solo sullo stesso campo.
+  const onSplitBlur = React.useCallback((e: React.FocusEvent) => {
+    const inDialog = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('.ant-modal-root, .ant-drawer');
+    if (document.hasFocus() && !inDialog(e.relatedTarget) && !inDialog(e.target)) arrivalTargetRef.current = null;
+  }, []);
 
   // Picking a tab is a request to look at that tab's rows, so give them the room
   // — otherwise the tab highlights while its content stays pinned at 22% and the
@@ -1862,6 +1921,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // collapse the top half so the bottom panel (Tab/embeddedView) takes
   // everything below the action bar.
   const hasVisibleFormContent = formRows.some(isRowVisible);
+  const stackedSections = bottomSectionCount(bottomRows) > 1;
 
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
@@ -1869,7 +1929,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
       <FillHeightContext.Provider value={fillHeight}>
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
-      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
+      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onBlurCapture={onSplitBlur} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
         {zoomed && !embedded && <ZoomEscapeFallback section={panelZoom} />}
         {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
@@ -1912,7 +1972,8 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
             />
           </>
         )}
-        <div className="view-split-bottom">
+        <div className={`view-split-bottom${stackedSections ? ' view-split-bottom--stacked' : ''}`}>
+          <StackedSectionsContext.Provider value={stackedSections}>
           <SplitAreaContext.Provider value={true}>
           {bottomRows.map((row, ri) => {
             // Tab rows: render tab bar + content rows in a table sharing the master grid
@@ -1955,6 +2016,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
             );
           })}
           </SplitAreaContext.Provider>
+          </StackedSectionsContext.Provider>
         </div>
       </div>
       </PathContext.Provider>
@@ -2015,6 +2077,7 @@ const BottomPanelRow: React.FC<{
   onChange: (name: string, value: unknown) => void;
   onGridChange?: (name: string, values: string[]) => void;
 }> = ({ row, onAction, onChange, onGridChange }) => {
+  const stacked = React.useContext(StackedSectionsContext);
   return (
     <>
       {row.cells.map((cell, ci) => {
@@ -2030,7 +2093,7 @@ const BottomPanelRow: React.FC<{
         // Stessa regola che CellRenderer applica dentro la tabella.
         if (cell.visible === false) return null;
         return (
-          <div key={cell.id || ci} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div key={cell.id || ci} className={stacked ? 'bottom-section' : undefined} style={{ display: 'flex', flexDirection: 'column', flex: stacked ? '0 0 auto' : 1, minHeight: 0 }}>
             {renderContainerControl(cell.control, onAction, onChange, onGridChange)}
           </div>
         );

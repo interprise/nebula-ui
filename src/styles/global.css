@@ -450,7 +450,8 @@ html, body {
 .view-subtitle {
   font-size: var(--app-font-size-sm);
   font-weight: 400;
-  color: #8c8c8c;
+  font-style: italic;
+  color: #1f4e8c;
   padding: 0 0 6px;
   border-bottom: 1px solid #e8e8e8;
   margin-bottom: 4px;
@@ -1614,7 +1615,13 @@ body[style*="cursor: wait"] * {
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-left: 4px;
+}
+
+/* Freccia della tendina e calendario: in grigio sembravano spenti (SXADV-5647.6). */
+.ant-select:not(.ant-select-disabled) .ant-select-suffix,
+.ant-picker:not(.ant-picker-disabled) .ant-picker-suffix {
+  color: rgba(0, 0, 0, 0.88);
 }
 .negation-label {
   font-size: 11px;
@@ -2381,3 +2388,51 @@ body[style*="cursor: wait"] * {
 
 /* SXADV-5490: un totale piu' largo della sua colonna sconfina, non si taglia. */
 .ag-floating-bottom .ag-cell { overflow: visible; }
+
+/* Pannello inferiore a sezioni in sequenza (SXADV-5935): l'area scorre, ogni
+   sezione e' alta quanto il suo contenuto e si stacca dalla precedente. */
+.view-split-bottom--stacked {
+  overflow-y: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+.bottom-section + .bottom-section {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #d9d9d9;
+}
+.bottom-section .ag-layout-auto-height .ag-center-cols-viewport,
+.bottom-section .ag-layout-auto-height .ag-center-cols-container {
+  min-height: 0;
+}
+/* Un tab accanto alle sezioni non si riduce a zero nella colonna che scorre. */
+.view-split-bottom--stacked > .split-tab-panel {
+  flex: 0 0 70% !important;
+  min-height: 260px !important;
+}
+/* Griglia zoomata: resta solo la sua sezione e riempie l'area. */
+.view-split-bottom--stacked:has(.list-container--zoomed) {
+  overflow: hidden;
+}
+.view-split-bottom--stacked:has(.list-container--zoomed) > .bottom-section:not(:has(.list-container--zoomed)),
+.view-split-bottom--stacked:has(.list-container--zoomed) > .split-tab-panel {
+  display: none !important;
+}
+.view-split-bottom--stacked > .bottom-section:has(.list-container--zoomed) {
+  flex: 1 1 0 !important;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* SXADV-5915.1: la banda di continuazione non sborda oltre le colonne. */
+.ag-full-width-row.continuation-row {
+  overflow: visible;
+  background-image: linear-gradient(to right, transparent var(--grid-cols-width, 100%), var(--ag-background-color, #fff) var(--grid-cols-width, 100%));
+}
+/* SXADV-5915.2: il clic su una cella senza controllo non la fa sembrare modificabile
+   (si modifica nel pannello di riga). Da tastiera il segno resta. */
+.ag-cell.ag-cell-focus:not(:focus-visible):not(.ag-cell-last-left-pinned):not(:has(input, select, textarea, .ant-select)) {
+  border-color: transparent !important;
+  outline: none !important;
+}

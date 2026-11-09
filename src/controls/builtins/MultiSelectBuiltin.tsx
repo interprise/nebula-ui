@@ -19,7 +19,9 @@ const MultiSelectBuiltin: ControlComponent = ({ control, pageType, onAction, onC
       onAction={onAction}
       maxWidth={textMaxWidth}
     />,
-    control,
+    // Niente catenella: l'elenco si apre gia' dalla cartella, e dalla catenella
+    // arrivava senza la scelta selezionata (SXADV-5647.5).
+    control.navigateView ? { ...control, navigateView: undefined } : control,
     pageType,
     onAction,
     onChange,
