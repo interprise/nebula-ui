@@ -2718,8 +2718,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     }
   }, [isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, ui.inlineEdit, selectorInfo, onSelectRecord, onAction, markSelected, memKey, returnOwner]);
   openDetailRef.current = (command: string, path: string) => {
-    // Sul micro-detail il «>» non cambia pagina (NavigateDetailCommand): li'
-    // niente ritorno, ne' riga ricordata da riallineare.
+    // Sul micro-detail il «>» non cambia pagina (NavigateDetailCommand): nel
+    // legacy porta il rigo in modifica, e qui la modifica del rigo e' il
+    // pannello. Fa quindi quello che fa il clic sul rigo, invece di un
+    // NavigateDetail che non apriva niente (SXADV-5859.e).
+    if (!detailOpensPage({ isListEdit, isMultiEdit, inlineEdit: ui.inlineEdit })) {
+      const data = rowData.find((r) => r._selectorPath === path && !r._isContinuationRow);
+      if (data) {
+        activateRow(data);
+        return;
+      }
+    }
     if (detailOpensPage({ isListEdit, isMultiEdit, inlineEdit: ui.inlineEdit })) {
       rememberRow(memKey, path);
       alignedPathRef.current = null;
