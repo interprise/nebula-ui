@@ -10,7 +10,7 @@ const MultiSelectBuiltin: ControlComponent = ({ control, pageType, onAction, onC
   // dalla lista del legacy (SXADV-5859.c).
   const showsNoItems = control.maxItemsShown === 0 && pageType === 2;
   const handleChange = useControlChange(
-    showsNoItems ? { ...control, reload: true, option1: (control.option1 as string) || (control.controlName as string) } : control,
+    showsNoItems ? { ...control, reload: 'true', option1: (control.option1 as string) || (control.controlName as string) } : control,
     onChange,
     onAction,
   );

@@ -68,8 +68,11 @@ function renderMulti(control: Record<string, unknown>, pageType: number | undefi
   );
   const drawer = captured.drawer.at(-1);
   if (!drawer) throw new Error('il pannello non e\' stato reso');
-  const [annulla, conferma] = (drawer.extra as ReactElement<{ children: Array<ReactElement<{ onClick: () => void; type?: string }>> }>).props.children;
-  if (conferma.props.type !== 'primary') throw new Error('Conferma non trovato nel pannello');
+  // Per tipo e non per posizione: l'ordine dei pulsanti segue SXADV-5779 (Annulla a destra).
+  const pulsanti = (drawer.extra as ReactElement<{ children: Array<ReactElement<{ onClick: () => void; type?: string }>> }>).props.children;
+  const conferma = pulsanti.find((p) => p.props.type === 'primary');
+  const annulla = pulsanti.find((p) => p.props.type !== 'primary');
+  if (!conferma || !annulla) throw new Error('Conferma o Annulla non trovati nel pannello');
   return { ...h, control: c, conferma: conferma.props.onClick, annulla: annulla.props.onClick };
 }
 
