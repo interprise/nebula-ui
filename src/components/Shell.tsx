@@ -736,7 +736,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   }, [getWorkTab, updateTabState, setActiveTab, feedback]);
   const schedaInUso = (t: TabState) => !!(t.ui || t.menuId || t.functionAction || t.restorePending);
   const puoAggiungereScheda = useCallback((): boolean => {
-    if (sessionLimit <= 0 || tabsRef.current.length < sessionLimit) return true;
+    // Come atSessionLimit: le schede del documentale non contano (SXADV-5789).
+    if (sessionLimit <= 0 || schedeDiArea(tabsRef.current, 'menu').length < sessionLimit) return true;
     feedback.warning(`Non si possono tenere aperte piu' di ${sessionLimit} sessioni: chiuderne una per aprirne un'altra.`);
     return false;
   }, [sessionLimit, feedback]);
