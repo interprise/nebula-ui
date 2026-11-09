@@ -44,6 +44,8 @@ export interface WidgetDaModificare {
   opzioni?: Opzioni | null;
   /** Il dettaglio della lista: quello che apre il clic se il campo resta vuoto. */
   dettaglioPredefinito?: string | null;
+  /** Il campo «Apri il dettaglio con» c'e' solo per un amministratore (SXADV-6127). */
+  sceltaDettaglio?: boolean;
   /** Da quali aziende vengono i risultati adesso, e se la lista dipende dall'azienda. */
   ambito?: { modo?: string; codici?: string[]; possibile?: boolean } | null;
   /** `vista` c'e' sulle colonne prese dal dettaglio (SXADV-6001.1c). */
@@ -813,19 +815,23 @@ const ModificaWidget: React.FC<Props> = ({
             </>
           )}
 
-          {/* Per ogni forma: tornando alla lista il campo c'e' ancora. */}
-          <Form.Item
-            label="Apri il dettaglio con"
-            extra="Il clic su una riga apre questa vista. Se resta vuoto, si apre il dettaglio abituale della lista."
-          >
-            <Input
-              value={bozza.vistaDettaglio}
-              onChange={(e) => cambia({ vistaDettaglio: e.target.value })}
-              placeholder={widget?.dettaglioPredefinito || 'nessun dettaglio'}
-              allowClear
-              aria-label="Vista di dettaglio"
-            />
-          </Form.Item>
+          {/* Per ogni forma: tornando alla lista il campo c'e' ancora. Il nome della vista
+              e' tecnico: lo vede e lo cambia solo un amministratore (SXADV-6127). Per gli
+              altri la scelta salvata resta nella bozza e si rimanda uguale. */}
+          {widget?.sceltaDettaglio === true ? (
+            <Form.Item
+              label="Apri il dettaglio con"
+              extra="Il clic su una riga apre questa vista. Se resta vuoto, si apre il dettaglio abituale della lista."
+            >
+              <Input
+                value={bozza.vistaDettaglio}
+                onChange={(e) => cambia({ vistaDettaglio: e.target.value })}
+                placeholder={widget?.dettaglioPredefinito || 'nessun dettaglio'}
+                allowClear
+                aria-label="Vista di dettaglio"
+              />
+            </Form.Item>
+          ) : null}
 
           {/* SXADV-6000: da quali aziende vengono i risultati. Il server rifiuta una
               scelta vuota o un'azienda non abilitata, e il messaggio resta qui. */}

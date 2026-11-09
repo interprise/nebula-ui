@@ -144,6 +144,8 @@ interface Widget {
   dettaglio?: string | null;
   /** Il dettaglio della lista, segnaposto del campo in «Modifica widget». */
   dettaglioPredefinito?: string | null;
+  /** Chi guarda puo' scegliere a mano la vista di dettaglio: solo un amministratore (SXADV-6127). */
+  sceltaDettaglio?: boolean;
   /**
    * Da quali aziende vengono i risultati (SXADV-6000): `codici` sono quelle effettive
    * adesso; `possibile` dice se la lista dipende dall'azienda.

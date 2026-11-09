@@ -425,7 +425,7 @@ describe('SXADV-6110.1 l\'errore non sopravvive a quello che lo ha causato', () 
 
 describe('SXADV-6132 i testi di «Modifica widget»', () => {
   it('«Se resta vuoto, si apre il dettaglio abituale della lista»', async () => {
-    await apri(widget({ agg: 'count' }));
+    await apri(widget({ agg: 'count' }, { sceltaDettaglio: true }));
     expect(voce('Apri il dettaglio con')!.props.extra)
       .toBe('Il clic su una riga apre questa vista. Se resta vuoto, si apre il dettaglio abituale della lista.');
   });
