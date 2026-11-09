@@ -208,7 +208,7 @@ describe('regola del bordo di fuoco', () => {
 
 const OFFSETS_FN = js(`function widthsFromOffsets(${between(SRC, 'function widthsFromOffsets(', '/** Height a continuation row')}`);
 const widthsFromOffsets = new Function(`${OFFSETS_FN}; return widthsFromOffsets;`)() as (o: number[], s: number[]) => number[];
-const RENDERER = between(SRC, 'const ContinuationRowRenderer =', '/** Detect continuation rows');
+const RENDERER = between(SRC, 'const ContinuationRowRenderer =', '/** I valori delle righe principali');
 const clipsAtRow = () => {
   const row = rulesFor('.ag-full-width-row').filter((r) => /overflow/.test(r.body));
   return limitRules().some((r) => !/overflow:\s*visible/.test(r.body)) && !row.some((r) => /overflow:\s*visible/.test(r.body));
