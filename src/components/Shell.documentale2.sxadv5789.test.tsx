@@ -939,7 +939,8 @@ describe('I. cambio azienda dal documentale', () => {
   };
 
   async function cambiaAzienda(): Promise<void> {
-    const s = find((p) => p.className === 'header-select' && Array.isArray(p.options));
+    // La tendina delle aziende e' HeaderContextSelect (SXADV-6137): la si trova per etichetta.
+    const s = find((p) => p['aria-label'] === 'Azienda di accesso' && Array.isArray(p.options));
     expect(s, 'la tendina delle aziende').toBeDefined();
     (s!.props.onChange as (v: string) => void)('45');
     await assesta();

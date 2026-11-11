@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, useReducer, Suspense } from 'react';
-import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Select, Spin, ConfigProvider, Empty } from 'antd';
+import { Layout, Menu, Tabs, Breadcrumb, Badge, Dropdown, Space, Typography, Modal, Input, Button, Tooltip, Spin, ConfigProvider, Empty } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -94,6 +94,7 @@ import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
+import { HeaderContextSelect } from './HeaderContextSelect';
 import { centroIngranaggio } from './contextChangeGear';
 import { productLogo, applyBrandFavicon } from '../branding';
 import { treeHoldingTab, routesToTreePane, paneDetail } from './treeDetailRouting';
@@ -2983,9 +2984,10 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               {loginInfo.aziende && loginInfo.aziende.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Azienda:</Text>
-                  <Select
-                    size="small"
-                    className="header-select"
+                  {/* La descrizione sta in un input selezionabile, come nel
+                      legacy: si copia il codice azienda (SXADV-6137). */}
+                  <HeaderContextSelect
+                    aria-label="Azienda di accesso"
                     value={loginInfo.customerKey}
                     onChange={handleAziendaChange}
                     loading={contextChanging}
@@ -2995,7 +2997,6 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
                     // si stringe solo se la testata non ha posto.
                     style={hdrSelectStyle}
                     options={loginInfo.aziende}
-                    fieldNames={{ label: 'text', value: 'value' }}
                   />
                 </div>
               )}
@@ -3008,16 +3009,14 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               {loginInfo.sedi && loginInfo.sedi.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', whiteSpace: 'nowrap', minWidth: 0 }}>
                   <Text style={hdrLabelStyle}>Sede:</Text>
-                  <Select
-                    size="small"
-                    className="header-select"
+                  <HeaderContextSelect
+                    aria-label="Sede di accesso"
                     value={loginInfo.sede}
                     onChange={handleSedeChange}
                     loading={contextChanging}
                     disabled={contextChanging}
                     style={hdrSelectStyle}
                     options={loginInfo.sedi}
-                    fieldNames={{ label: 'text', value: 'value' }}
                   />
                 </div>
               )}

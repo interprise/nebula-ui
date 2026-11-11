@@ -1174,6 +1174,12 @@ tr.breakRow td {
   font-size: 12px;
 }
 
+/* SXADV-6137: a tendina chiusa la descrizione sta nell'input (HeaderContextSelect),
+   e un nome lungo che non ci sta finisce con i puntini invece di tagliarsi. */
+.header-select .ant-select-input {
+  text-overflow: ellipsis;
+}
+
 /* Identity block: highlighted background so the logged-in user reads at a glance
    (SXADV-5454.3). Sits at the far right, just before the login icon (5454.4b). */
 .login-chip {
