@@ -47,7 +47,14 @@ export interface Trasformazione {
   resto?: string;
   /** Le CHIAVI (`k`) dei gruppi da togliere dal calcolo, non i testi (SALESCENDE E1). */
   escludi?: string[];
+  /**
+   * SXADV-6042: il periodo in cui si raggruppa una colonna data. Assente = il valore com'e'
+   * (il giorno), come i widget salvati prima.
+   */
+  periodo?: Periodo;
 }
+
+export type Periodo = 'anno' | 'semestre' | 'trimestre' | 'mese' | 'giorno';
 
 /** Che notizia e' un numero che sale o scende (SALESCENDE S1). */
 export type Tono = 'bene' | 'attenzione' | 'neutro';

@@ -20,7 +20,7 @@ import { RisultatoVista } from './RisultatoWidget';
 import DateDellaRicerca from './DateDellaRicerca';
 import type { CriterioData, SceltaData } from './DateDellaRicerca';
 import { contaSoloIGruppi, oppostoDi, toniDi } from './risultato';
-import type { Opzioni, Risultato, Tono, Trasformazione } from './risultato';
+import type { Opzioni, Periodo, Risultato, Tono, Trasformazione } from './risultato';
 
 /** Un gruppo che l'anteprima offre da escludere (`dashboard.Preview`, SALESCENDE E6). */
 interface Candidato {
@@ -75,6 +75,12 @@ interface Bozza {
   titolo: string;
   forma: 'list' | 'kpi' | 'bar';
   gruppo: string | null;
+  /**
+   * SXADV-6042: il periodo della colonna data di raggruppamento. null = non scelto: su un
+   * widget salvato prima vale il giorno e non si scrive, cosi' un Salva che non lo tocca
+   * lascia la trasformazione com'era.
+   */
+  periodo: Periodo | null;
   agg: string;
   col: string | null;
   conFiltro: boolean;
@@ -151,6 +157,24 @@ const AGGREGATI = [
   { value: 'min', label: 'minimo' },
   { value: 'max', label: 'massimo' },
 ];
+const PERIODI: { value: Periodo; label: string }[] = [
+  { value: 'anno', label: 'anno' },
+  { value: 'semestre', label: 'semestre' },
+  { value: 'trimestre', label: 'trimestre' },
+  { value: 'mese', label: 'mese' },
+  { value: 'giorno', label: 'giorno (data completa)' },
+];
+const periodoDi = (v: unknown): Periodo | null =>
+  PERIODI.some((p) => p.value === v) ? (v as Periodo) : null;
+/** Una colonna data: il tipo e' il controllo della lista (Date, Timestamp). */
+const eData = (tipo: string | null | undefined) => /^(date|datetime|timestamp)$/i.test(tipo || '');
+/**
+ * Su una colonna di soli giorni (Date) un widget senza periodo raggruppa gia' per giorno:
+ * nessun periodo e «giorno» sono la stessa cosa. Su una data con l'ora no: senza periodo
+ * il gruppo e' l'istante esatto.
+ */
+const soloGiorno = (tipo: string | null | undefined) => /^date$/i.test(tipo || '');
+
 const OPERATORI = ['>', '>=', '<', '<=', '=', '!='].map((o) => ({ value: o, label: o }));
 const INTERVALLI = [15, 30, 60, 120, 240, 480, 1440].map((m) => ({
   value: m,
@@ -167,6 +191,7 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     titolo: w.titolo || '',
     forma,
     gruppo: (t.group || [])[0] || null,
+    periodo: (t.group || [])[0] ? periodoDi(t.periodo) : null,
     agg: t.agg || 'count',
     col: t.col || null,
     conFiltro: !!having,
@@ -200,6 +225,7 @@ const trasformazioneDa = (b: Bozza): Trasformazione | null => {
   if (b.forma === 'list') return null;
   const t: Trasformazione = { agg: b.agg };
   if (b.gruppo) t.group = [b.gruppo];
+  if (b.gruppo && b.periodo) t.periodo = b.periodo;
   if (b.agg !== 'count' && b.col) t.col = b.col;
   // Con la casella spuntata e il valore cancellato il filtro NON sparisce in silenzio:
   // va al server senza valore, e l'anteprima e il salvataggio dicono che manca.
@@ -462,11 +488,21 @@ const ModificaWidget: React.FC<Props> = ({
   }, [chiaveAnteprima, anteprimaDopo, widget, sid]);
 
   const cambia = (p: Partial<Bozza>) => {
+    // SXADV-6042: una colonna data nuova parte dal giorno, scritto; le altre non hanno periodo.
+    if (p.gruppo !== undefined && p.gruppo !== bozza?.gruppo && p.periodo === undefined)
+      p = { ...p, periodo: p.gruppo && eData(colonne.find((c) => c.value === p.gruppo)?.tipo) ? 'giorno' : null };
+    // Il periodo cambiato cambia le chiavi dei gruppi: esclusi e candidati non valgono piu'.
+    // Nessun periodo e giorno danno gli stessi gruppi.
+    const giornoImplicito = soloGiorno(colonne.find((c) => c.value === bozza?.gruppo)?.tipo);
+    const comeGiorno = (v: Periodo | null) => (v === null && giornoImplicito ? 'giorno' : v);
+    const altroPeriodo = p.periodo !== undefined && !!bozza && p.gruppo === undefined
+      && comeGiorno(p.periodo) !== comeGiorno(bozza.periodo);
     // I candidati sono valori della colonna di prima: non si offrono sul gruppo nuovo.
-    if (p.gruppo !== undefined && p.gruppo !== bozza?.gruppo) setCandidati([]);
+    if ((p.gruppo !== undefined && p.gruppo !== bozza?.gruppo) || altroPeriodo) setCandidati([]);
     setBozza((b) => {
       if (!b) return b;
       const n = { ...b, ...p };
+      if (altroPeriodo && p.escludi === undefined) n.escludi = [];
       // Cambiare «sale» porta «scende» all'opposto; dopo, «scende» si sceglie da se'.
       if (p.sale !== undefined && p.scende === undefined) n.scende = oppostoDi(p.sale);
       // Le chiavi escluse sono valori della colonna di raggruppamento: cambiata quella,
@@ -677,6 +713,21 @@ const ModificaWidget: React.FC<Props> = ({
                   aria-label="Raggruppa per"
                 />
               </Form.Item>
+              {bozza.gruppo
+                && (bozza.periodo || eData(colonne.find((c) => c.value === bozza.gruppo)?.tipo)) ? (
+                <Form.Item label="Periodo">
+                  <Select
+                    // Senza periodo su una data con l'ora i gruppi sono gli istanti: la select
+                    // non finge «giorno», che cosi' si puo' anche scegliere.
+                    value={bozza.periodo
+                      ?? (soloGiorno(colonne.find((c) => c.value === bozza.gruppo)?.tipo) ? 'giorno' : undefined)}
+                    placeholder="data e ora esatte"
+                    onChange={(v: Periodo) => cambia({ periodo: v })}
+                    options={PERIODI}
+                    aria-label="Periodo"
+                  />
+                </Form.Item>
+              ) : null}
               <Form.Item label="Calcola">
                 <Space.Compact style={{ width: '100%' }}>
                   <Select
