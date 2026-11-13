@@ -52,7 +52,15 @@ export interface Trasformazione {
    * (il giorno), come i widget salvati prima.
    */
   periodo?: Periodo;
+  /**
+   * SXADV-6114: l'ordine dei gruppi. Assente = decrescente sul valore calcolato, come i
+   * widget salvati prima; si scrive solo quando la scelta e' un'altra.
+   */
+  ordina?: { verso?: Verso; per?: OrdinaPer } | null;
 }
+
+export type Verso = 'desc' | 'asc';
+export type OrdinaPer = 'valore' | 'gruppo';
 
 export type Periodo = 'anno' | 'semestre' | 'trimestre' | 'mese' | 'giorno';
 

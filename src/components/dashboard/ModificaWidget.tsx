@@ -20,7 +20,7 @@ import { RisultatoVista } from './RisultatoWidget';
 import DateDellaRicerca from './DateDellaRicerca';
 import type { CriterioData, SceltaData } from './DateDellaRicerca';
 import { contaSoloIGruppi, oppostoDi, toniDi } from './risultato';
-import type { Opzioni, Periodo, Risultato, Tono, Trasformazione } from './risultato';
+import type { OrdinaPer, Opzioni, Periodo, Risultato, Tono, Trasformazione, Verso } from './risultato';
 
 /** Un gruppo che l'anteprima offre da escludere (`dashboard.Preview`, SALESCENDE E6). */
 interface Candidato {
@@ -83,6 +83,9 @@ interface Bozza {
   periodo: Periodo | null;
   agg: string;
   col: string | null;
+  /** SXADV-6114: l'ordine dei gruppi; desc + valore = quello di sempre. */
+  verso: Verso;
+  ordinaPer: OrdinaPer;
   conFiltro: boolean;
   op: string;
   valore: number | null;
@@ -175,6 +178,11 @@ const eData = (tipo: string | null | undefined) => /^(date|datetime|timestamp)$/
  */
 const soloGiorno = (tipo: string | null | undefined) => /^date$/i.test(tipo || '');
 
+const VERSI: { value: Verso; label: string }[] = [
+  { value: 'desc', label: 'Decrescente' },
+  { value: 'asc', label: 'Crescente' },
+];
+
 const OPERATORI = ['>', '>=', '<', '<=', '=', '!='].map((o) => ({ value: o, label: o }));
 const INTERVALLI = [15, 30, 60, 120, 240, 480, 1440].map((m) => ({
   value: m,
@@ -194,6 +202,8 @@ const daWidget = (w: WidgetDaModificare): Bozza => {
     periodo: (t.group || [])[0] ? periodoDi(t.periodo) : null,
     agg: t.agg || 'count',
     col: t.col || null,
+    verso: t.ordina?.verso === 'asc' ? 'asc' : 'desc',
+    ordinaPer: t.ordina?.per === 'gruppo' ? 'gruppo' : 'valore',
     conFiltro: !!having,
     op: (having && having.op) || '>',
     valore: Number.isFinite(val) ? val : 0,
@@ -227,6 +237,10 @@ const trasformazioneDa = (b: Bozza): Trasformazione | null => {
   if (b.gruppo) t.group = [b.gruppo];
   if (b.gruppo && b.periodo) t.periodo = b.periodo;
   if (b.agg !== 'count' && b.col) t.col = b.col;
+  // SXADV-6114: solo se non e' l'ordine di sempre, cosi' il widget che non lo cambia
+  // resta con la trasformazione di prima.
+  if (b.gruppo && (b.verso !== 'desc' || b.ordinaPer !== 'valore'))
+    t.ordina = { verso: b.verso, per: b.ordinaPer };
   // Con la casella spuntata e il valore cancellato il filtro NON sparisce in silenzio:
   // va al server senza valore, e l'anteprima e il salvataggio dicono che manca.
   if (b.gruppo && b.conFiltro)
@@ -433,6 +447,22 @@ const ModificaWidget: React.FC<Props> = ({
     null;
 
   const trasformazione = bozza ? trasformazioneDa(bozza) : null;
+  /**
+   * SXADV-6114: le colonne su cui ordinare sono le due del risultato raggruppato: il
+   * calcolo («Totale doc. (somma)») e la colonna di raggruppamento («Data doc.»). Le altre
+   * colonne della lista nei gruppi non ci sono piu'.
+   */
+  const opzioniOrdina: { value: OrdinaPer; label: string }[] = (() => {
+    if (!bozza) return [];
+    const nomeAgg = AGGREGATI.find((a) => a.value === bozza.agg)?.label || bozza.agg;
+    const colCalc = colonne.find((c) => c.value === bozza.col)?.label;
+    const calcolo = bozza.agg === 'count' ? nomeAgg : colCalc ? `${colCalc} (${nomeAgg})` : nomeAgg;
+    const gruppo = colonne.find((c) => c.value === bozza.gruppo)?.label || bozza.gruppo || '';
+    return [
+      { value: 'valore', label: String(calcolo) },
+      { value: 'gruppo', label: String(gruppo) },
+    ];
+  })();
   // Le scelte per «Escludi i gruppi»: i candidati dell'anteprima, piu' i gruppi gia'
   // esclusi che fra i candidati non ci sono (col testo noto, o la chiave).
   const opzioniEscludi = useMemo(() => {
@@ -753,6 +783,26 @@ const ModificaWidget: React.FC<Props> = ({
                   ) : null}
                 </Space.Compact>
               </Form.Item>
+              {bozza.gruppo ? (
+                <Form.Item label="Ordina">
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Select
+                      value={bozza.verso}
+                      onChange={(v: Verso) => cambia({ verso: v })}
+                      options={VERSI}
+                      style={{ width: '45%' }}
+                      aria-label="Tipo di ordinamento"
+                    />
+                    <Select
+                      value={bozza.ordinaPer}
+                      onChange={(v: OrdinaPer) => cambia({ ordinaPer: v })}
+                      options={opzioniOrdina}
+                      style={{ width: '55%' }}
+                      aria-label="Colonna di ordinamento"
+                    />
+                  </Space.Compact>
+                </Form.Item>
+              ) : null}
               {bozza.gruppo ? (
                 <Form.Item label="Tieni solo i gruppi con">
                   <Space.Compact style={{ width: '100%' }}>
