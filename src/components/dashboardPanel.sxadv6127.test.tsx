@@ -384,7 +384,7 @@ describe('SXADV-6127.3 widget su piu\' aziende: l\'elenco in un Popover', () => 
     await conWidget({ ambito: { modo: 'tutte', codici: ['44'], escluse: ['45', '46'], possibile: true } });
     expect(voci(1)).toEqual(['44']);
     expect(testoDi(popover(1)!.props.content)).toContain('Escluse perche\' li\' hai un altro profilo: 45, 46');
-    expect(testoDi(tagAmbito(1)[0])).toBe('tutte le aziende');
+    expect(testoDi(tagAmbito(1)[0])).toBe('tutte le mie aziende');
   });
 
   it('una sola scelta: «1 azienda»', async () => {
@@ -402,7 +402,7 @@ describe('SXADV-6127.3 widget su piu\' aziende: l\'elenco in un Popover', () => 
   it('codici assenti: non lancia', async () => {
     await conWidget({ ambito: { modo: 'tutte', possibile: true } });
     expect(voci(1)).toEqual([]);
-    expect(testoDi(tagAmbito(1)[0])).toBe('tutte le aziende');
+    expect(testoDi(tagAmbito(1)[0])).toBe('tutte le mie aziende');
   });
 });
 

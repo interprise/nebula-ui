@@ -111,7 +111,9 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
   return (
     <div
       style={{
-        maxWidth: cosa === 'dashboard' ? 1400 : 820,
+        // SXADV-6225.4: stessa larghezza su Dashboard e Avvisi, se no il commutatore
+        // cambia posto passando dall'una all'altra.
+        maxWidth: 1400,
         margin: '0 auto',
         padding: '32px 24px',
         width: '100%',
@@ -120,37 +122,26 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
       {/* SXADV-6121: sulla dashboard la testata resta ferma mentre i widget scorrono. */}
       <div ref={testataRef} className={cosa === 'dashboard' ? 'home-testata' : undefined}>
       {/* Welcome header */}
-      {/* Sulla dashboard il benvenuto si stringe: com'era, spingeva i widget sotto la
-          piega, e la Home esiste per far vedere quelli. Sugli avvisi resta com'era. */}
+      {/* Il benvenuto e' lo stesso su Dashboard e Avvisi (SXADV-6225.4): una riga sola,
+          perche' sulla dashboard il blocco alto spingeva i widget sotto la piega, ma un
+          po' piu' alta di prima. Diverso fra le due, faceva saltare il commutatore. */}
       <div
         style={{
           textAlign: 'center',
-          marginBottom: cosa === 'dashboard' ? 12 : 32,
-          padding: cosa === 'dashboard' ? '10px 20px' : '24px 20px',
+          marginBottom: 12,
+          padding: '18px 20px',
           background: 'linear-gradient(135deg, #f0f7ff 0%, #e6f4ff 100%)',
           borderRadius: 14,
           border: '1px solid #bae0ff',
         }}
       >
-        {cosa === 'dashboard' ? (
-          <Title level={5} style={{ margin: 0, color: '#003a8c' }}>
-            <HomeOutlined style={{ marginRight: 8 }} />
-            {welcomeText(loginInfo)}
-            <Text type="secondary" style={{ fontSize: 13, fontWeight: 400, marginLeft: 8 }}>
-              {loginInfo.profile}
-            </Text>
-          </Title>
-        ) : (
-          <>
-            <HomeOutlined style={{ fontSize: 40, color: '#1677ff', marginBottom: 10 }} />
-            <Title level={3} style={{ margin: 0, color: '#003a8c' }}>
-              {welcomeText(loginInfo)}
-            </Title>
-            <Text type="secondary" style={{ fontSize: 14 }}>
-              {loginInfo.profile}
-            </Text>
-          </>
-        )}
+        <Title level={4} style={{ margin: 0, color: '#003a8c' }}>
+          <HomeOutlined style={{ marginRight: 8 }} />
+          {welcomeText(loginInfo)}
+          <Text type="secondary" style={{ fontSize: 13, fontWeight: 400, marginLeft: 8 }}>
+            {loginInfo.profile}
+          </Text>
+        </Title>
       </div>
 
       <div style={{ marginBottom: 16 }}>
@@ -202,18 +193,6 @@ const HomePanel: React.FC<HomePanelProps> = ({ loginInfo, onBannerClick, onApriD
           style={{ marginTop: 40 }}
         />
       )}
-
-      {/* Hint footer */}
-      <div
-        style={{
-          marginTop: 40,
-          textAlign: 'center',
-          fontSize: 12,
-          color: '#8c8c8c',
-        }}
-      >
-        Seleziona una voce dal menu a sinistra per iniziare
-      </div>
     </div>
   );
 };

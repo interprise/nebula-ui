@@ -936,12 +936,13 @@ const ModificaWidget: React.FC<Props> = ({
 
           {/* SXADV-6000: da quali aziende vengono i risultati. Il server rifiuta una
               scelta vuota o un'azienda non abilitata, e il messaggio resta qui. */}
+          {/* SXADV-6225.3: niente piu' nota sulle righe aperte dalla Home. */}
           <Form.Item
             label="Aziende"
             extra={
               widget?.ambito?.possibile === false
                 ? 'Questa lista non dipende dall\'azienda.'
-                : 'Con piu\' aziende si aprono dalla Home solo le righe dell\'azienda corrente.'
+                : undefined
             }
           >
             <Radio.Group

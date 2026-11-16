@@ -1284,7 +1284,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               >
                 <Tag className="dash-widget-ambito">
                   {w.ambito?.modo === 'tutte'
-                    ? 'tutte le aziende'
+                    ? 'tutte le mie aziende'
                     : `${(w.ambito?.codici || []).length} ${(w.ambito?.codici || []).length === 1 ? 'azienda' : 'aziende'}`}
                 </Tag>
               </Popover>
