@@ -35,6 +35,7 @@ import ListSearchBox from './ListSearchBox';
 import { pathAtPosition, readFiltered, searchColumns, showsListSearch } from './listSearch';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
+import { computeFillCap, FILL_CAP_SLACK, tailBelow, type FillCapInput } from './fillCap';
 import {
   nomiInOrdine,
   ordinamentoVisualizzato,
@@ -2348,29 +2349,51 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       // ancestor, minus the edit panel when one is stacked below. The panel's
       // height is measured directly: deriving it from scrollHeight is circular
       // with a sibling panel — it just re-derives the grid's current height.
-      let bottomRef = window.innerHeight;
+      // Fill to the scroll container's CONTENT bottom: clientHeight already
+      // excludes the horizontal scrollbar and borders, so a wide grid's
+      // scrollbar doesn't push content past the fold. Without a scrolling
+      // ancestor the window is the scroller, filled to its very bottom as
+      // before (no rounding slack there: hence the + SLACK).
+      let scrollerEl: HTMLElement | null = null;
+      let scroller: FillCapInput['scroller'] = {
+        top: 0, borderTop: 0, paddingBottom: 0,
+        clientHeight: window.innerHeight + FILL_CAP_SLACK, scrollTop: 0,
+      };
       for (let p = el.parentElement; p; p = p.parentElement) {
         const s = getComputedStyle(p);
         if (s.overflowY === 'auto' || s.overflowY === 'scroll') {
-          // Fill to the scroll container's CONTENT bottom. Derive it from
-          // clientHeight (which already excludes the horizontal scrollbar and
-          // borders) so a wide grid's scrollbar doesn't push content past the
-          // fold. The -2 absorbs sub-pixel rounding.
-          const borderTop = parseFloat(s.borderTopWidth) || 0;
-          const padBottom = parseFloat(s.paddingBottom) || 0;
-          bottomRef = p.getBoundingClientRect().top + borderTop + p.clientHeight - padBottom - 2;
+          scrollerEl = p;
+          scroller = {
+            top: p.getBoundingClientRect().top,
+            borderTop: parseFloat(s.borderTopWidth) || 0,
+            paddingBottom: parseFloat(s.paddingBottom) || 0,
+            clientHeight: p.clientHeight,
+            scrollTop: p.scrollTop,
+          };
           break;
         }
       }
       const listCont = el.closest<HTMLElement>('.list-container');
       const panel = listCont?.parentElement?.querySelector<HTMLElement>('.edit-panel');
-      const panelH = panel ? panel.getBoundingClientRect().height : 0;
+      const panelRect = panel ? panel.getBoundingClientRect() : null;
       // The grid is one part of .list-container (title/pagination/padding are
       // the rest — grid-height-independent). Fill so that the panel, stacked
-      // right below .list-container, ends at the scroll container's bottom.
+      // right below .list-container, ends at the scroll container's bottom —
+      // leaving room for what the container holds below it: the cell padding
+      // at least. Ignoring it made the pane overflow by a few pixels and the
+      // scrollbars chase each other (SXADV-6146/6147).
       const listRect = (listCont ?? el).getBoundingClientRect();
       const nonGridChrome = Math.max(0, listRect.height - el.getBoundingClientRect().height);
-      setFillCapHeight(Math.max(120, Math.floor(bottomRef - panelH - listRect.top - nonGridChrome)));
+      const own = panel ?? listCont ?? el;
+      const ownBottom = (panelRect ?? listRect).bottom;
+      setFillCapHeight(computeFillCap({
+        scroller,
+        contentBottom: ownBottom + (scrollerEl ? tailBelow(own, scrollerEl) : 0),
+        listTop: listRect.top,
+        nonGridChrome,
+        panelHeight: panelRect ? panelRect.height : 0,
+        ownBottom,
+      }));
     };
     measure();
     // AG Grid / fonts settle a frame later — re-measure once the layout is final.
