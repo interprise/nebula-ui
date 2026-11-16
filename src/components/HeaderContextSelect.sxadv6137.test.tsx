@@ -16,8 +16,10 @@ import { HeaderContextSelect, type HeaderContextSelectProps } from './HeaderCont
 //  1. tendina CHIUSA: l'input contiene la descrizione scelta (a riposo, col
 //     fuoco, dopo la chiusura, dopo il blur); fuori elenco = il valore; nessun
 //     valore = vuoto;
-//  2. mousedown / click / dblclick sul TESTO non aprono la tendina, il testo
-//     resta (si deve poterlo selezionare);
+//  2. (rivisto da SXADV-6236) il clic SINGOLO sul testo apre la tendina, come
+//     la combo legacy; il doppio clic e il trascinamento che seleziona NON
+//     aprono e il testo resta selezionabile (niente preventDefault sul
+//     mousedown). Il dettaglio sta in HeaderContextSelect.sxadv6236.test.tsx;
 //  3. la tendina si apre con la freccia (suffisso), Freccia giu', Invio, Spazio;
 //     un carattere battuto non apre, non cambia il testo, non chiama onChange;
 //  4. tendina APERTA: input vuoto, tutte le opzioni, voce ATTIVA = valore
@@ -269,22 +271,29 @@ describe('SXADV-6137 — 1. tendina chiusa: descrizione nell\'input', () => {
   });
 });
 
-describe('SXADV-6137 — 2. il clic sul testo non apre, il testo si seleziona', () => {
-  it('2. mousedown / mouseup / click / dblclick sull\'input: niente tendina, testo intatto', async () => {
+describe('SXADV-6137 — 2. clic sul testo: il singolo apre (6236), il doppio seleziona', () => {
+  it('2. clic singolo sull\'input: la tendina si apre (entro 400 ms)', async () => {
     monta(props({ value: '46' }));
-    for (const t of ['mousedown', 'mouseup', 'click', 'dblclick'] as const) {
-      await mouseSu(input(), t);
-      expect(aperta(), `aperta dopo ${t}`).toBe(false);
-      expect(input().value, `testo dopo ${t}`).toBe(L46);
+    for (const t of ['mousedown', 'mouseup', 'click'] as const) await mouseSu(input(), t);
+    let ok = aperta();
+    for (let i = 0; i < 20 && !ok; i++) {
+      await act(async () => { await attendi(20); });
+      ok = aperta();
     }
+    expect(ok, 'aperta dopo il clic singolo').toBe(true);
   });
 
-  it('2. con il fuoco dentro, piu\' clic e un doppio clic sul testo non aprono e non svuotano', async () => {
+  it('2. con il fuoco dentro, un doppio clic sul testo non apre e non svuota', async () => {
     monta(props({ value: '46' }));
     await fuoco();
-    for (const t of ['mousedown', 'mouseup', 'click', 'mousedown', 'mouseup', 'click', 'dblclick'] as const) {
-      await mouseSu(input(), t);
+    // doppio clic stretto: detail 1 poi 2, poche ms fra gli eventi
+    for (const [t, d] of [['mousedown', 1], ['mouseup', 1], ['click', 1], ['mousedown', 2], ['mouseup', 2], ['click', 2], ['dblclick', 2]] as const) {
+      await act(async () => {
+        input().dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, detail: d }));
+        await attendi(5);
+      });
     }
+    await act(async () => { await attendi(500); });
     expect(aperta()).toBe(false);
     expect(input().value).toBe(L46);
   });
