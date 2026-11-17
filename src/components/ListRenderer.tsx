@@ -3390,10 +3390,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const hasGridActions = !!gridActions && !!(gridActions.addCommand || gridActions.xlsCommand || gridActions.printCommand);
 
   // «Cerca» (SXADV-4569): il server trova il rigo e porta la lista sulla sua
-  // pagina; qui, quando quella pagina c'e', la riga si evidenzia, si porta a
-  // vista e si apre come al clic: sulle liste col pannello di riga il cursore
-  // va sul primo campo scrivibile (l'Esito di un contatto nel tab Eventi di una
-  // campagna); sulle altre il cursore resta nel campo. Il bersaglio scade se la
+  // pagina; qui, quando quella pagina c'e', la riga si evidenzia e si porta a
+  // vista. Il pannello di riga non si apre e il cursore resta nel campo
+  // (SXADV-6242: Invio deve poter passare al rigo successivo). Il bersaglio scade se la
   // pagina non arriva (il pannello di un albero non riceve i cambi pagina).
   const searchPath = gridPath;
   const recordCount = pageInfo?.totalRows
@@ -3460,11 +3459,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         return;
       }
       let rowIndex: number | null = null;
-      let command: string | undefined;
       api.forEachNode((n: { data?: Record<string, unknown>; rowIndex?: number | null }) => {
         if (rowIndex == null && n.data?._selectorPath === path && !n.data?._isContinuationRow && n.rowIndex != null) {
           rowIndex = n.rowIndex;
-          command = n.data._selectorCommand as string | undefined;
         }
       });
       if (rowIndex == null) {
@@ -3480,26 +3477,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       requestAnimationFrame(() => revealRow(index));
       window.clearTimeout(revealTimerRef.current);
       revealTimerRef.current = window.setTimeout(() => revealRow(index), REVEAL_AFTER_PANEL_MS);
-      const outcome = rowClickOutcome({
-        isListEdit,
-        isMultiEdit,
-        hasGridCheckbox,
-        hasPanelTemplate: !!ui.panelTemplateKey,
-        command,
-        canEdit: !!selectorInfo.canEdit,
-        canUpdate: !!selectorInfo.canUpdate,
-      });
-      if (outcome === 'panel') {
-        onSelectRecord?.(path, { focusPanel: true });
-        return;
-      }
-      // Niente pannello: il fuoco resta nel campo, e Invio trova il rigo
-      // successivo come un «trova» qualsiasi; la riga trovata e' quella
-      // evidenziata, e si apre col clic.
+      // Il pannello di riga non si apre (SXADV-6242.1): se il primo rigo trovato
+      // non e' quello cercato, il pannello andrebbe chiuso prima di proseguire. Il
+      // fuoco resta nel campo, Invio trova il rigo successivo come un «trova»
+      // qualsiasi; la riga trovata e' quella evidenziata, e si apre col clic.
     };
     raf = requestAnimationFrame(attempt);
     return () => cancelAnimationFrame(raf);
-  }, [locateTarget, rowData, memKey, markSelected, isListEdit, isMultiEdit, hasGridCheckbox, ui.panelTemplateKey, selectorInfo, onSelectRecord, revealRow]);
+  }, [locateTarget, rowData, memKey, markSelected, revealRow]);
   const searchBox = showSearch && (
     <ListSearchBox
       listPath={searchPath as string}

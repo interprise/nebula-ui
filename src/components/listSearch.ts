@@ -75,6 +75,16 @@ export function locateParams(
   return params;
 }
 
+/**
+ * Il filtro attivo e' gia' questo testo in questa colonna (SXADV-6242): allora
+ * Invio non rimette il filtro ma passa al rigo successivo fra i filtrati.
+ */
+export function isSameFilter(filter: { text: string; col?: string } | null | undefined, text: string, column = ''): boolean {
+  if (!filter) return false;
+  const key = searchKey(text);
+  return !!key && foldKey(searchKey(filter.text)) === foldKey(key) && (filter.col ?? '') === column;
+}
+
 function foldKey(text: string): string {
   return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }

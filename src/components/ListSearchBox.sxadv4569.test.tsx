@@ -1004,7 +1004,9 @@ describe('ListSearchBox (SXADV-4569)', () => {
       let release: (v: unknown) => void = () => {};
       const locate = vi.fn(() => new Promise((r) => { release = r; }));
       const applyFilter = vi.fn(async () => ({ filtered: { count: 1 } }));
-      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+      // SXADV-6242: Invio cerca (LocateRow) solo col filtro gia' su quel testo;
+      // senza, Invio filtrerebbe.
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter, filter: { text: 'rossi' } });
       box.type('rossi');
       box.enter();
       await flush();
@@ -1072,7 +1074,8 @@ describe('ListSearchBox (SXADV-4569)', () => {
       const answers = [found(57), found(2)];
       const locate = vi.fn(async () => answers.shift());
       const applyFilter = vi.fn(async () => ({ filtered }));
-      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+      // SXADV-6242: col filtro gia' su «rossi» Invio cerca invece di filtrare.
+      const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter, filter: { text: 'rossi' } });
       box.type('rossi');
       box.enter();
       await flush();
@@ -1100,7 +1103,7 @@ describe('ListSearchBox (SXADV-4569)', () => {
     it('filtro attivo: Tag «Filtro: …» col testo, e il gruppo c\'e\' anche senza colonne', () => {
       const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), filter: { text: 'rossi' } });
       expect(box.root.props.placeholder).toBeUndefined(); // la radice e' il gruppo, non l'Input
-      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).includes('list-search-filter'));
+      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).split(/\s+/).includes('list-search-filter'));
       expect(tag).toBeDefined();
       const text = JSON.stringify(tag!.props.children, (_k, v) => (v && typeof v === 'object' && v.$$typeof ? undefined : v));
       expect(text).toContain('Filtro');
@@ -1111,7 +1114,7 @@ describe('ListSearchBox (SXADV-4569)', () => {
     it('filtro attivo su una colonna: il Tag nomina la colonna con la sua etichetta', async () => {
       const { filterLabel } = await import('./listSearch');
       const box = mount({ listPath: LIST, locate: vi.fn(), onFound: vi.fn(), applyFilter: vi.fn(), columns: COLS, filter: { text: 'rossi', col: 'descrizione' } });
-      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).includes('list-search-filter'));
+      const tag = findEl(box.root, (e) => typeof e.props.className === 'string' && (e.props.className as string).split(/\s+/).includes('list-search-filter'));
       const children = ([] as unknown[]).concat(tag!.props.children as unknown[]);
       expect(children).toContain(filterLabel('rossi', 'Descrizione'));
     });
@@ -1187,7 +1190,8 @@ describe('ListSearchBox (SXADV-4569)', () => {
         const answers = [found(57), found(2)];
         const locate = vi.fn(async () => answers.shift());
         const applyFilter = vi.fn(async () => ({ filtered }));
-        const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter });
+        // SXADV-6242: col filtro gia' su «rossi» Invio cerca invece di filtrare.
+        const box = mount({ listPath: LIST, locate, onFound: vi.fn(), applyFilter, filter: { text: 'rossi' } });
         box.type('rossi');
         box.enter();
         await flush();
