@@ -28,6 +28,8 @@ import { viewstateIdOf } from './listEditPosting';
 import { bareFieldName, echoText, type RowEcho } from './rowEcho';
 import type { FieldCaption } from '../controls/types';
 import TreeRenderer from './TreeRenderer';
+import FieldHelpIcon from './FieldHelpIcon';
+import { helpIconKey } from './fieldHelpKey';
 import { viewHasOlapCube } from './olap/detect';
 import { promptFitWidth, solvePromptBand, type LeadingPrompt } from './promptBand';
 import { panelRowSwitch } from './addWait';
@@ -2282,10 +2284,20 @@ const CellRenderer: React.FC<{
       const isCompact = (cell.control?.type === 'boolean' || cell.control?.type === 'checkbox')
         && !cell.control?.postPrompt;
       const docIcon = cell.control?.docIcon;
+      // La '?' di aiuto fuori da Redigi: il server la manda solo dove il testo
+      // esiste (UIControl.addJsonDocIcon), mai insieme a docIcon. Di solito la
+      // disegnano le decorazioni del campo (decorations.tsx); questa e' il
+      // ripiego per i controlli senza decorazioni e si toglie da sola.
+      const helpIcon = docIcon ? undefined : cell.control?.helpIcon;
       const configureIcon = cell.control?.configureIcon;
       // `has-side-icons` toglie il clipping alla cella: in una cella stretta
       // (una checkbox da `size="1"`, ~24px) l'icona finirebbe oltre il
       // bordo e l'`overflow:hidden` la mangerebbe — vedi global.css.
+      // La '?' di aiuto NON conta: quasi sempre sta nelle decorazioni del campo,
+      // e la disposizione da icone laterali (niente clipping, flex in riga)
+      // cambierebbe la resa del campo fuori dalle modalita' admin. Quando invece
+      // e' visibile quella della cella (controllo senza decorazioni), la stessa
+      // disposizione la dà il CSS (`.cell-help-wrap`, global.css).
       const hasSideIcons = !!(docIcon || configureIcon);
       // `cell-free-right`: la riga finisce qui e a destra ci sono colonne
       // libere — il campo puo' prendersele invece di farsi tagliare.
@@ -2298,7 +2310,7 @@ const CellRenderer: React.FC<{
         <td {...tdProps} className={cellClass}>
           {cell.control ? (
             <>
-              <span style={hasSideIcons ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : { display: 'block', width: '100%' }}>
+              <span className={helpIcon && !hasSideIcons ? 'cell-help-wrap' : undefined} style={hasSideIcons ? { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', width: '100%' } : helpIcon ? undefined : { display: 'block', width: '100%' }}>
                 <ControlRenderer control={cell.control} pageType={pageType} onAction={onAction} onChange={onChange} />
                 {docIcon && (
                   <BookOutlined
@@ -2307,6 +2319,7 @@ const CellRenderer: React.FC<{
                     onClick={() => onAction('NavigateHelp', { navpath: `${docIcon.viewName}|${docIcon.itemId}` })}
                   />
                 )}
+                {helpIcon && <FieldHelpIcon key={helpIconKey(helpIcon)} outside viewName={helpIcon.viewName} itemId={helpIcon.itemId} />}
                 {configureIcon && (
                   configureIcon.included
                     ? <CheckCircleFilled

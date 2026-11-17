@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons';
 import type { UIControl } from '../types/ui';
 import { useSyncedState, negationFieldName } from './helpers';
+import FieldHelpIcon from '../components/FieldHelpIcon';
+import { helpIconKey } from '../components/fieldHelpKey';
 
 /** Query "not" negation toggle. The raw `onChange` (Shell.handleFieldChange)
  *  writes to a ref without setState, so a controlled `checked={control.
@@ -59,7 +61,11 @@ export const withPostDecorations = (
   const hasNegation = control.negation && pageType === 0;
   const postPrompt = control.postPrompt;
 
-  const hasDecorations = nav || add || hasLookup || isMandatoryIcon || hasNegation || postPrompt;
+  // La '?' di aiuto fuori da Redigi (SXADV aiuto-campo): ultima, come nel
+  // legacy addPostDecoration. Il server non la manda mai insieme a docIcon.
+  const help = control.docIcon ? undefined : control.helpIcon;
+
+  const hasDecorations = nav || add || hasLookup || isMandatoryIcon || hasNegation || postPrompt || help;
   if (!hasDecorations) return element;
 
   const fieldName = control.name || control.id || '';
@@ -103,6 +109,7 @@ export const withPostDecorations = (
           onClick={() => onAction(add.command, { navpath: add.navpath, option1: add.controlName })}
         />
       )}
+      {help && <FieldHelpIcon key={helpIconKey(help)} viewName={help.viewName} itemId={help.itemId} />}
     </span>
   );
 };

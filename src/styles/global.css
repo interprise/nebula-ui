@@ -1675,6 +1675,56 @@ body[style*="cursor: wait"] * {
   flex-shrink: 0;
 }
 
+/* Cella di un campo con la '?' di aiuto. Di norma la '?' sta nelle decorazioni
+   del campo e la cella resta quella di sempre (blocco a tutta larghezza, col
+   clipping). Solo quando si vede la '?' della cella — controllo senza
+   decorazioni: sola lettura, custom — prende la disposizione delle icone
+   laterali delle modalità admin, perché l'icona stia accanto al controllo. */
+.cell-help-wrap {
+  display: block;
+  width: 100%;
+}
+.cell-help-wrap:has(> .help-icon-outside:not([hidden])) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.layout-table td.content-cell:has(> .cell-help-wrap > .help-icon-outside:not([hidden])) {
+  overflow: visible;
+}
+
+/* La '?' di aiuto sul campo, fuori da Redigi (legacy td.help -> showHelp). */
+.help-icon {
+  cursor: pointer;
+  font-size: var(--app-font-size);
+  margin-left: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  color: #1677ff;
+}
+.help-icon:hover { color: #4096ff; }
+.field-help-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.field-help-close {
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.45);
+}
+.field-help-close:hover { color: rgba(0, 0, 0, 0.88); }
+.field-help-popover {
+  max-width: 480px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.field-help-empty { color: rgba(0, 0, 0, 0.45); }
+/* L'editor di Redigi salva il testo dentro <p>: niente margini vuoti ai bordi del fumetto. */
+.field-help-text > :first-child { margin-top: 0; }
+.field-help-text > :last-child { margin-bottom: 0; }
+
 /* Companion fields (CONTENT without preceding PROMPT, e.g. newLine="false").
    NON devono allargarsi a riempire la cella — che spesso e' tutta la parte
    destra della riga — ma restare larghi quanto il campo dichiara.

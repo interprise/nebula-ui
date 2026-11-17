@@ -59,6 +59,9 @@ export interface UIControl {
   lookupViewName?: string;
   // documentation mode: icon to edit/view help text for this field
   docIcon?: { hasHelp: boolean; viewName: string; itemId: string };
+  // fuori da Redigi: la '?' che apre il testo di aiuto (GetItemHelp), solo dove esiste
+  // rev = revisione dei testi di quella vista radice: cambia quando un testo cambia
+  helpIcon?: { viewName: string; itemId: string; rev?: number };
   // configuration mode: green/red dot to include/exclude item per customer
   configureIcon?: { included: boolean; itemId: string };
   // post-decoration extras
