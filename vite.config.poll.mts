@@ -1,7 +1,7 @@
-// TEMPORARY — created by Claude to run the dev server while the system's
-// inotify watcher budget is exhausted (ENOSPC). Same config as vite.config.ts,
-// but the file watcher polls instead of registering inotify watches.
-// Delete when no longer needed.
+// Dev server for this machine, where Eclipse holds most of the inotify watcher
+// budget and `npm run dev` dies with ENOSPC. Same config as vite.config.ts, but
+// the file watcher polls instead of registering inotify watches.
+// Used by .claude/skills/verify: npx vite --config vite.config.poll.mts
 import base from './vite.config'
 
 export default {

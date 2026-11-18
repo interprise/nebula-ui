@@ -90,16 +90,37 @@ text, number, money, date, time, timestamp, durata, boolean, checkbox, combo (lo
 
 ## Build
 ```bash
-npm run dev      # Vite dev server on :5173, proxies /entrasp/controller* and /entrasp/images to :8080
+npm run dev      # Vite dev server on :5173, proxies /entrasp/controller*, images, doc, app-plugins to :9080
+npx vite --config vite.config.poll.mts   # same, polling watcher: on this machine `npm run dev` dies with ENOSPC
 npm run build    # Output to ../entrasp/WebContent/app/
+npm test         # vitest
 ```
 
 Build produces code-split chunks: app (~23KB), antd vendor, AG Grid vendor.
 
+## Who Tests, Who Implements (mandatory)
+
+Global rule from ~/.claude/CLAUDE.md, applied here (the how-to lives in the global skills `test-indipendenti`,
+`verifica-dal-vivo`, `dichiarare-verifica`, and in the project skill `verify`):
+
+- **Tests are written by a fresh independent agent** (Agent tool, `general-purpose`, never a fork), from the
+  ticket and from the legacy ExtJS behaviour, not from the implementation. A defect is a failing test, never a fix.
+  The session implements; a second fresh agent reviews the diff.
+- **The legacy client is the reference.** Same screens, same behaviour: a value that the legacy keeps (switching
+  session S1/S2, Annulla, F5) must survive here too.
+- **Green tests are not a running app.** Before declaring a UI change done, drive it in the browser against the
+  shared Tomcat :9080 (take the turn on the board) or, for client-only changes, against a `page.route` mock:
+  `.claude/skills/verify/SKILL.md` has the whole sequence (turn, start, login with `entrasp-sql --login-session`,
+  one host per session, bundle md5).
+- **Every commit states how it was verified**, in the body: `Verifica: <suite and count, who wrote the tests,
+  where it was run, what was not verified>`, or `Verifica: nessuna (<why>)`. On nebulaerp (the bundle commit)
+  and in Jira comments Claude and agents are never named: facts only.
+- **Flaky tests:** no sleeps, retries, `it.skip` or wider thresholds. Find the cause or delete the test and say
+  why in the commit and on the board.
+
 ## What's Left To Do
 - [ ] Interactive weekly calendar grid for `consuntivazione` (currently a flat bookings list)
 - [ ] Deferred controls (not currently used in production views): Gantt, Maps (GMap/Google/LgtcMap), Tree, OlapCube
-- [ ] End-to-end testing with running server
 - [ ] Keyboard navigation and shortcut handling (toolbar keys/shift hints)
 - [ ] Responsive behavior when sidebar collapses
 - [ ] Agenda sidebar panel
