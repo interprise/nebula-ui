@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import * as api from '../services/api';
 import type { MetadataRow } from '../services/api';
 import type { UIControl } from '../types/ui';
+import { useSyncedValue } from './helpers';
 
 /** Elenco vuoto condiviso: identita' stabile, cosi' il `filtered` memoizzato
  *  non si ricalcola a ogni render finche' non arriva un elenco vero. */
@@ -129,7 +130,10 @@ interface Props {
 const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const initialValue = (control.value as string) || '';
+  // Il testo segue il valore del server: frecce del pannello di riga, Nuovo che
+  // lo svuota, ricarica. Con `defaultValue` la textarea restava sul primo record
+  // mostrato e sembrava piena su un record nuovo vuoto (SXADV-6257).
+  const [text, setText] = useSyncedValue(control.value);
   const boName = (control.boName as string) || '';
   const allowMethods = !!control.allowMethods;
 
@@ -201,9 +205,10 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.target.value;
+    setText(v);
     onChange(v);
     trigger(v, e.target.selectionStart);
-  }, [onChange, trigger]);
+  }, [onChange, trigger, setText]);
 
   const insertItem = useCallback((item: MetadataRow) => {
     const ta = textareaRef.current;
@@ -214,13 +219,16 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
     const before = v.substring(0, startPos);
     const after = v.substring(caret);
     const newValue = before + item.name + after;
-    ta.value = newValue;
     const newCaret = before.length + item.name.length;
-    ta.setSelectionRange(newCaret, newCaret);
-    ta.focus();
+    setText(newValue);
+    // Il cursore dopo la voce inserita, quando React ha scritto il testo nuovo.
+    requestAnimationFrame(() => {
+      ta.setSelectionRange(newCaret, newCaret);
+      ta.focus();
+    });
     onChange(newValue);
     setOpen(false);
-  }, [onChange]);
+  }, [onChange, setText]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Ctrl+Space or Ctrl+ArrowDown: force-open suggestions at caret
@@ -264,7 +272,7 @@ const ExpBuilderControl: React.FC<Props> = ({ control, disabled, onChange }) => 
         name={control.name}
         title={control.hint as string | undefined}
         disabled={disabled}
-        defaultValue={initialValue}
+        value={text}
         rows={rows}
         spellCheck={false}
         autoComplete="off"

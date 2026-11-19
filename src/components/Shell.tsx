@@ -102,6 +102,7 @@ import { withRowNavpath, withRowPostPath } from './rowPostPath';
 import { releasedEditRow } from './editRowLifetime';
 import { cancelsUpload, clearPendingUpload, flushPendingUpload, hasPendingUpload } from '../services/pendingUpload';
 import { markPanelField, scopePanelValues, type PanelFieldRows } from './panelFieldScope';
+import { rowFlushNeeded, endsRowScope as endsRowScopeAction } from './rowFlush';
 import { APERTURA_FUNZIONE, dimenticaSidDocumentale, isSchedaDocumentale, prendiSidOrfani, ricordaSidDocumentale, schedaChiudibile, schedeDiArea, sidDiArea, type CdmsFunzione, type FunzioneApribile, type SidebarMode } from './cdmsTabs';
 
 const { Header, Content } = Layout;
@@ -1687,13 +1688,29 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       // Post va a buon fine: i comandi di pagina postano sulla posizione che
       // ricorda il server, non sul navpath, quindi portarlo nella navigazione
       // lo scriveva su un altro rigo (MD-VALORI-RESIDUI-DOPO-SALVA).
+      //
+      // Lo stesso per un'azione che non e' per la riga: il "Salva +" della barra
+      // in alto porta il navpath del documento, e il digitato del pannello
+      // restava indietro - riga nuova salvata vuota, poi un Post su un documento
+      // gia' lasciato (SXADV-6255, SXADV-6256). Regola in rowFlush.ts.
       const navActions = ['NextPage', 'PrevPage', 'FirstPage', 'LastPage', 'GotoPage', 'SortColumn', 'Refresh'];
       const isNav = navActions.includes(action);
-      const endsRowScope = isNav || action === 'DetailPage' || action === 'LocateRow' || action === 'FilterRows';
+      const endsRowScope = endsRowScopeAction(action);
       const openRow = editNavpathRef.current;
-      if (endsRowScope && openRow && params._afterFlush !== '1') {
+      {
         const rows = panelFieldRows(tab.key);
-        if ([...dirtyFieldsRef.current].some((n) => rows.get(n) === openRow)) {
+        // Campi del pannello che il server non ha ancora accettato: la mappa li
+        // toglie solo dopo una risposta senza errori. dirtyFieldsRef non basta,
+        // si svuota all'invio: dopo un Post respinto il secondo Salva+ partiva
+        // senza il digitato (revisione 6255).
+        const openRowDirty = !!openRow && [...rows.values()].includes(openRow);
+        // La riga a cui la richiesta darebbe i valori: la stessa regola di
+        // rowTarget piu' sotto, sui parametri come partirebbero.
+        const prospective = withRowPostPath(withRowNavpath(serverParams, openRow, tab.sid), openRow, tab.sid);
+        const prospectiveTarget = action === 'Add' ? (prospective.postPath ?? prospective.navpath) : prospective.navpath;
+        if (rowFlushNeeded({
+          action, rowTarget: prospectiveTarget, openRow, openRowDirty, afterFlush: params._afterFlush === '1',
+        }) && openRow) {
           const flushed = await handleActionRef.current('Post', { navpath: openRow });
           const blocked = !flushed || (flushed.errors ?? []).some(
             (e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');

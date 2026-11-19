@@ -35,6 +35,7 @@ import ListSearchBox from './ListSearchBox';
 import { pathAtPosition, readFiltered, searchColumns, showsListSearch } from './listSearch';
 import { fitWidthToContent, joinLineBreaks, oneLinePlainText, pageHasLineBreaks } from './oneLineContent';
 import { layoutToggleTooltip, sectionZoomTooltip } from './zoomLabels';
+import { recordRowSpan, scrollTopFor, type DisplayedRow } from './panelRowInView';
 import { computeFillCap, FILL_CAP_SLACK, tailBelow, type FillCapInput } from './fillCap';
 import {
   nomiInOrdine,
@@ -2609,6 +2610,71 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     applyClassByPath(editingPath ?? null, 'record-row-editing');
   }, [editingPath, applyClassByPath, rowData]);
 
+  // Il rigo in gestione nel pannello resta a vista quando le righe arrivano di
+  // nuovo (SXADV-6261): dopo "Salva" la griglia tornava in cima, dopo "Nuovo"
+  // le righe ad altezza automatica crescevano e spingevano il rigo nuovo sotto
+  // il bordo. Solo all'arrivo di righe nuove: il clic su un rigo e l'apertura
+  // del pannello hanno gia' chi li porta a vista (in una pila di sezioni e' il
+  // pannello, SXADV-5935). Per una finestra breve, finche' l'utente non mette
+  // mano alla griglia (rotella, clic, tasto): chi sta scorrendo non viene
+  // strappato. Coordinate dai nodi (rowTop/rowHeight), valide anche per righe
+  // non disegnate.
+  // La finestra parte all'arrivo delle righe e vale anche per il giro dopo,
+  // quando editingPath passa al rigo nuovo (dopo "Nuovo" arriva un disegno dopo).
+  const keptRowDataRef = useRef(rowData);
+  const rowsArrivedAtRef = useRef(Number.NEGATIVE_INFINITY);
+  useEffect(() => {
+    if (keptRowDataRef.current !== rowData) {
+      keptRowDataRef.current = rowData;
+      rowsArrivedAtRef.current = performance.now();
+    }
+    if (!panelShown || !editingPath) return;
+    if (performance.now() - rowsArrivedAtRef.current >= ALIGN_WINDOW_MS) return;
+    const container = gridContainerRef.current;
+    let userTookOver = false;
+    const takeOver = () => { userTookOver = true; };
+    const USER_EVENTS = ['wheel', 'pointerdown', 'keydown', 'touchstart'] as const;
+    USER_EVENTS.forEach((t) => container?.addEventListener(t, takeOver, { capture: true, passive: true }));
+    const since = rowsArrivedAtRef.current;
+    let raf = 0;
+    const rowEl = (index: number) =>
+      container?.querySelector<HTMLElement>(`.ag-row[row-index="${index}"]`) ?? null;
+    const keep = () => {
+      const api = gridApiRef.current;
+      const viewport = getGridViewport();
+      if (userTookOver || !api || api.isDestroyed() || !viewport) return;
+      const nodes: { rowTop?: number | null; rowHeight?: number | null; data?: Record<string, unknown> }[] = [];
+      api.forEachNodeAfterFilterAndSort((n: { rowTop?: number | null; rowHeight?: number | null; data?: Record<string, unknown> }) => { nodes.push(n); });
+      const rows: DisplayedRow[] = nodes.map((n) => ({
+        path: n.data?._selectorPath as string | undefined,
+        continuation: !!n.data?._isContinuationRow,
+      }));
+      const span = recordRowSpan(rows, editingPath);
+      const first = span && nodes[span.first];
+      const last = span && nodes[span.last];
+      if (span && first?.rowTop != null && last?.rowTop != null) {
+        if (contentHeight) {
+          // In una pila di sezioni scorre l'area, non la griglia. Le bande sono
+          // righe a tutta larghezza, in un altro contenitore: si cerca per
+          // indice in tutta la griglia. Prima il fondo, poi la cima, cosi' un
+          // record piu' alto dell'area mostra il rigo principale.
+          rowEl(span.last)?.scrollIntoView?.({ block: 'nearest' });
+          rowEl(span.first)?.scrollIntoView?.({ block: 'nearest' });
+        } else {
+          const record = { top: first.rowTop, bottom: last.rowTop + (last.rowHeight ?? 0) };
+          const top = scrollTopFor(record, viewport.scrollTop, viewport.clientHeight);
+          if (top != null) viewport.scrollTop = top;
+        }
+      }
+      if (performance.now() - since < ALIGN_WINDOW_MS) raf = requestAnimationFrame(keep);
+    };
+    raf = requestAnimationFrame(keep);
+    return () => {
+      cancelAnimationFrame(raf);
+      USER_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
+    };
+  }, [panelShown, editingPath, rowData, contentHeight, getGridViewport]);
+
   // L'eco del pannello sulla riga in gestione (SXADV-6048.2). Si scrivono
   // solo le celle dell'eco, sul SOLO nodo della riga, ricordando il valore del
   // server di ciascuna: togliendo l'eco si rimette quel valore, e solo dove la
@@ -3185,7 +3251,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const p = r._selectorPath as string | undefined;
       if (p && !r._isContinuationRow) rowPaths.push(p);
     }
-    const target = addedRowPath(rowPaths, pendingAddFieldRef.current, serverEditingPath) ?? serverEditingPath;
+    // Il currField conta dalla cima della pagina (SXADV-6258).
+    const info = pageInfoRef.current;
+    const pageStart = info ? (info.currentPage - 1) * info.pageSize : 0;
+    const target = addedRowPath(rowPaths, pendingAddFieldRef.current, serverEditingPath, pageStart) ?? serverEditingPath;
     let raf = 0;
     let tries = 0;
     const attempt = () => {

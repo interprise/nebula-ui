@@ -5,6 +5,7 @@ import { CloseOutlined, DeleteOutlined, UpOutlined, DownOutlined, SaveOutlined, 
 import type { UITree, UIRow, UICell, UIControl, ListHeader } from '../types/ui';
 import { ELTYPE_DUMMY, ELTYPE_SELECTOR } from '../types/ui';
 import ControlRenderer from '../controls/ControlRenderer';
+import { isCellRenderable } from '../controls/registry';
 import ViewRenderer, { PathContext } from './ViewRenderer';
 import { useHotkey, HotkeyPriority } from '../hooks/hotkeys';
 import { panelCellFloor, panelTableUnits, panelUnitWidths } from './editPanelLayout';
@@ -172,6 +173,14 @@ const CellContent: React.FC<{
   // spenta e' quello che fa il legacy in pagina di dettaglio - ed e' anche
   // quello che si vede nella griglia accanto (SXADV-5735 a).
   if (ctrl && ctrl.type === 'boolean') {
+    return <ControlRenderer control={ctrl} onAction={onAction} onChange={onChange ?? (() => {})} />;
+  }
+  // Un link-azione (Espandi..., un'azione di riga) non e' un valore: il suo
+  // testo e' il prompt, e reso come testo veniva una cella vuota. Si rende col
+  // suo controllo, con la stessa regola della griglia accanto, che lo mostra
+  // (registerCellRenderable): sul rigo nuovo con Tipo Scaglione "Fisso" l'Espandi
+  // compariva in griglia ma non nel pannello (SXADV-6263).
+  if (ctrl && ctrl.type && isCellRenderable(ctrl.type)) {
     return <ControlRenderer control={ctrl} onAction={onAction} onChange={onChange ?? (() => {})} />;
   }
   // Non-editable combos ship the human label as displayText (List) or

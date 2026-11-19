@@ -86,17 +86,18 @@ describe('bareFieldName', () => {
 // --- echoText -------------------------------------------------------------------------
 
 describe('echoText', () => {
-  describe('booleani: non si riflettono', () => {
+  // Dal SXADV-6262 i booleani si riflettono come Si'/No (prima: undefined).
+  describe('booleani: si riflettono come Si\'/No (SXADV-6262)', () => {
     for (const type of ['checkbox', 'boolean', 'bool', 'CheckBox', 'BOOLEAN', 'Bool']) {
-      it(`tipo ${type} -> undefined`, () => {
-        expect(echoText({ type }, true)).toBeUndefined();
-        expect(echoText({ type }, 'S')).toBeUndefined();
-        expect(echoText({ type }, '')).toBeUndefined();
+      it(`tipo ${type} -> Si'/No/vuoto`, () => {
+        expect(echoText({ type }, true)).toBe('S\u00ec');
+        expect(echoText({ type }, false)).toBe('No');
+        expect(echoText({ type }, '')).toBe('');
       });
     }
 
-    it('booleano con caption: resta undefined', () => {
-      expect(echoText({ type: 'checkbox' }, 'S', 'Si')).toBeUndefined();
+    it('booleano con caption: vince il valore, non la caption', () => {
+      expect(echoText({ type: 'checkbox' }, true, 'Qualcosa')).toBe('S\u00ec');
     });
   });
 
@@ -538,8 +539,8 @@ describe('echoText: scelta da elenco senza caption', () => {
     expect(echoText(undefined, '0101')).toBe('0101');
   });
 
-  it('i booleani restano undefined anche col valore vuoto (vince il tipo booleano)', () => {
-    expect(echoText({ type: 'checkbox' }, '')).toBeUndefined();
+  it('un booleano col valore vuoto da\' testo vuoto (vince il tipo booleano)', () => {
+    expect(echoText({ type: 'checkbox' }, '')).toBe('');
   });
 });
 

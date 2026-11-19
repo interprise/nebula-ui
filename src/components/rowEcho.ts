@@ -49,6 +49,28 @@ function groupThousands(s: string): string {
 const BOOLEAN_TYPES = new Set(['checkbox', 'boolean', 'bool']);
 const CHOICE_TYPE = /combo|lookup|select/;
 
+const YES = 'S\u00ec';
+const NO = 'No';
+
+/** Il valore di una casella come lo scrive la lista: `true` Si', `false` No,
+ *  niente (tre stati, non ancora scelto) vuoto, altro (non riconosciuto) nessuna eco. */
+function booleanText(value: unknown): string | undefined {
+  if (value === true || value === 'true') return YES;
+  if (value === false || value === 'false') return NO;
+  if (value == null || value === '') return '';
+  // Un valore che non so leggere: resta la cella del server.
+  return undefined;
+}
+
+/** Il valore di cella di una colonna booleana per il testo dell'eco: la cella
+ *  legge `true`/`false` dal valore (la casella di una multiEdit guarda
+ *  `value === true`), non il testo. */
+function booleanCellValue(text: string): boolean | null {
+  if (text === YES) return true;
+  if (text === NO) return false;
+  return null;
+}
+
 /** Testo scritto dall'utente dentro una colonna resa come HTML: si mostra
  *  com'e', non come markup. */
 function escapeHtml(s: string): string {
@@ -63,7 +85,10 @@ export function echoText(
   caption?: FieldCaption,
 ): string | undefined {
   const type = (ctrl?.type ?? '').toLowerCase();
-  if (BOOLEAN_TYPES.has(type)) return undefined;
+  // Una casella si legge Si'/No, come la colonna della lista (BOOLEAN_CODE_TABLE):
+  // senza eco la spunta data nel pannello non si vedeva sul rigo finche' non
+  // si salvava (SXADV-6262).
+  if (BOOLEAN_TYPES.has(type)) return booleanText(value);
   if (typeof caption === 'string') return caption;
   if (Array.isArray(caption)) return caption.map((c) => c.listText ?? c.text).join(', ');
   // Una scelta da elenco senza didascalia (Esc che rimette il valore di prima)
@@ -90,13 +115,15 @@ export function applyRowEcho(
   columns.forEach((col, i) => {
     const name = col?.control?.name;
     if (!name || !Object.prototype.hasOwnProperty.call(echo, name)) return;
-    const text = (col.control?.type ?? '').toLowerCase() === 'html' ? escapeHtml(echo[name].text) : echo[name].text;
+    const colType = (col.control?.type ?? '').toLowerCase();
+    const text = colType === 'html' ? escapeHtml(echo[name].text) : echo[name].text;
+    const cellValue: unknown = BOOLEAN_TYPES.has(colType) ? booleanCellValue(text) : text;
     const colKey = `col_${i}`;
     const displayKey = `_display_${i}`;
     const hasDisplay = Object.prototype.hasOwnProperty.call(data, displayKey);
-    if (data[colKey] === text && (!hasDisplay || data[displayKey] === text)) return;
+    if (data[colKey] === cellValue && (!hasDisplay || data[displayKey] === text)) return;
     out ??= { ...data };
-    out[colKey] = text;
+    out[colKey] = cellValue;
     if (hasDisplay) out[displayKey] = text;
   });
   return out ?? data;
