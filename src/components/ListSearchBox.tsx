@@ -71,6 +71,9 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({
     refusedRef.current = null;
   }, [filterKey, listPath]);
   const inputRef = useRef<InputRef>(null);
+  /** X del campo premuta mentre un'altra richiesta era in corso: il filtro si
+   *  toglie appena quella finisce (SXADV-6244.1). */
+  const clearPendingRef = useRef(false);
 
   // Una colonna sparita (lista ridisegnata con altre colonne) torna a «tutte»,
   // e resta tale se poi ricompare; la ricerca ricomincia.
@@ -120,6 +123,10 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({
     } finally {
       busyRef.current = false;
       setBusy(false);
+      if (clearPendingRef.current) {
+        clearPendingRef.current = false;
+        removeFilterRef.current();
+      }
     }
   }, [text, chosen, listPath, locate, onFound, feedback]);
 
@@ -154,8 +161,17 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({
     } finally {
       busyRef.current = false;
       setBusy(false);
+      if (clearPendingRef.current) {
+        clearPendingRef.current = false;
+        removeFilterRef.current();
+      }
     }
   }, [text, chosen, listPath, applyFilter, feedback]);
+  /** Il togli-filtro per la X differita, letto quando la richiesta in corso finisce. */
+  const removeFilterRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    removeFilterRef.current = () => { void runFilter(true); };
+  }, [runFilter]);
   // Invio (SXADV-6242): un testo nuovo mette il filtro, cosi' si vedono subito
   // solo i righi che lo contengono; con il filtro gia' su quel testo, Invio e
   // Maiusc+Invio passano al rigo successivo / precedente fra i filtrati. Dove il
@@ -189,6 +205,16 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({
         // Svuotato il campo, la ricerca ricomincia dall'inizio anche con lo stesso testo.
         if (!searchKey(e.target.value)) memoryRef.current = EMPTY_SEARCH;
         setText(e.target.value);
+      }}
+      // La X del campo con un filtro attivo (o appena messo) toglie anche il
+      // filtro: svuotare la ricerca deve far tornare tutti i righi (SXADV-6244.1).
+      // Cancellando a mano no: si sta battendo un testo nuovo, e il filtro resta
+      // finche' non si da' Invio. Con un'altra richiesta in corso si toglie appena
+      // finisce, altrimenti il campo si svuoterebbe e la lista resterebbe filtrata.
+      onClear={() => {
+        if (!filterActive && !appliedRef.current) return;
+        if (busyRef.current) clearPendingRef.current = true;
+        else void runFilter(true);
       }}
       // Invio filtra la lista (SXADV-6242); con il filtro gia' messo, Invio il
       // successivo e Maiusc+Invio il precedente, come il «trova» dei browser.
@@ -227,13 +253,20 @@ const ListSearchBox: React.FC<ListSearchBoxProps> = ({
               // Filtro attivo: imbuto pieno e scuro, si vede che la lista e' filtrata (SXADV-6242.3).
               icon={filterActive ? <FilterFilled /> : <FilterOutlined />}
               className={filterActive ? 'list-search-filter-btn list-search-filter-btn-active' : 'list-search-filter-btn'}
-              title={filterActive ? 'Filtro attivo: mostra solo i righi che contengono il testo' : 'Mostra solo i righi che lo contengono'}
+              title={!filterActive
+                ? 'Mostra solo i righi che lo contengono'
+                : !searchKey(text) || isSameFilter(filter, text, chosen)
+                  ? 'Filtro attivo: clic per toglierlo e vedere tutti i righi'
+                  : 'Filtro attivo: clic per filtrare invece per il testo nuovo'}
               aria-label="Filtra la lista"
               aria-pressed={filterActive}
-              disabled={busy || !searchKey(text)}
+              // Filtro attivo, l'imbuto e' un interruttore: lo toglie anche a campo
+              // vuoto, dove prima restava acceso e disabilitato (SXADV-6244.2).
+              disabled={busy || (!filterActive && !searchKey(text))}
               style={filterActive ? { ...STEP_STYLE, color: 'var(--ant-color-text, rgba(0, 0, 0, 0.88))' } : STEP_STYLE}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => void runFilter(false)}
+              // Con un testo diverso da quello filtrato, l'imbuto filtra per il nuovo.
+              onClick={() => void runFilter(filterActive && (!searchKey(text) || isSameFilter(filter, text, chosen)))}
             />
           )}
         </span>
