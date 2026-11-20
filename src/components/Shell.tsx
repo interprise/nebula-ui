@@ -21,27 +21,8 @@ import {
   DatabaseOutlined,
   BuildOutlined,
   SettingOutlined,
-  SafetyOutlined,
-  SafetyCertificateOutlined,
   IdcardOutlined,
-  CalculatorOutlined,
-  ApartmentOutlined,
-  CarOutlined,
-  TagsOutlined,
-  BarChartOutlined,
   HomeOutlined,
-  ControlOutlined,
-  ShoppingCartOutlined,
-  ShoppingOutlined,
-  SolutionOutlined,
-  MessageOutlined,
-  ContactsOutlined,
-  ProjectOutlined,
-  ScheduleOutlined,
-  InboxOutlined,
-  ToolOutlined,
-  ContainerOutlined,
-  ClusterOutlined,
   FolderAddOutlined,
   DeleteOutlined,
   ReadOutlined,
@@ -86,6 +67,7 @@ import { withoutPagedArrays } from '../services/positionalValues';
 import { extractFormValues, applyPendingValues, type PendingCaption } from './pendingEdits';
 import { snapshotScroll, applyScroll, SCROLL_RESTORE_ATTR, SCROLL_RESTORE_WINDOW_MS, type ScrollSnapshot } from './tabScrollMemory';
 import { effectiveMenuFilter, filterMenuTree } from './menuFilter';
+import { buildMenuItems, sidebarMenuBehaviour } from './sidebarMenu';
 import { consumePendingFocus, discardPendingFocus, focusAfterResponse } from '../services/focusRestore';
 import { notePageChange, settleReturns } from '../services/rowReturn';
 import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
@@ -369,87 +351,6 @@ function collectOpenKeys(items: MenuItem[]): string[] {
     }
   }
   return keys;
-}
-
-// Semantic glyph per top-level Module, keyed on the bare module id (the server id
-// arrives as "menu.<id>", so we strip the prefix before lookup — see moduleIconFor).
-// Collapsed inline menus otherwise render every Module with the same fallback glyph,
-// making them indistinguishable; a distinct icon per Module restores recognizability
-// (SXADV-5454.0.b — one icon per primary menu).
-const MODULE_ICONS: Record<string, React.ReactNode> = {
-  cfg: <SettingOutlined />,              // Configurazioni
-  allianz: <SafetyOutlined />,           // Allianz (assicurazioni)
-  anag: <IdcardOutlined />,              // Anagrafiche
-  ctb: <CalculatorOutlined />,           // Contabilità
-  soci: <TeamOutlined />,                // Libro Soci
-  art: <TagsOutlined />,                 // Articoli
-  imm: <HomeOutlined />,                 // Immobiliare
-  ven: <ShoppingCartOutlined />,         // Commerciale
-  chub: <MessageOutlined />,             // Communication Hub
-  acq: <ShoppingOutlined />,             // Acquisti
-  proj: <ProjectOutlined />,             // Attività a progetto
-  rap: <ScheduleOutlined />,             // Rapportini
-  man: <ToolOutlined />,                 // Manutenzioni
-  fat: <FileTextOutlined />,             // Fatturazione
-  prod: <BuildOutlined />,               // Produzione
-  int: <ApartmentOutlined />,            // Gestione Interna
-  log: <CarOutlined />,                  // Logistica
-  olap: <BarChartOutlined />,            // Statistiche
-  util: <ControlOutlined />,             // Utilità
-  age: <SolutionOutlined />,             // Sezione Agenti
-  cli: <ContactsOutlined />,             // Sezione Clienti
-  ant: <SafetyCertificateOutlined />,    // Antiriciclaggio
-  dom: <ClusterOutlined />,              // Domino (hub anagrafiche uniche centralizzate)
-  mag: <InboxOutlined />,                // Magazzino
-  mct: <ContainerOutlined />,            // Magazzino Conto Terzi
-};
-
-function moduleIconFor(id: string): React.ReactNode {
-  const bare = id.replace(/^menu\./, '');
-  return MODULE_ICONS[bare] ?? <AppstoreOutlined />;
-}
-
-function buildMenuItems(
-  items: MenuItem[],
-  level = 0,
-  // Collapsed (icon-only) sidebar: the Module name is nowhere on screen, so the
-  // flyout that opens on an icon has to carry it (SXADV-5454.6). Passed down
-  // only to know we are at the root; brandBg paints the header band.
-  collapsed = false,
-  brandBg = '#1E4176',
-): NonNullable<React.ComponentProps<typeof Menu>['items']> {
-  return items.map((item) => {
-    const icon = level === 0 ? moduleIconFor(item.id) : undefined;
-    const children = item.children && item.children.length > 0
-      ? buildMenuItems(item.children, level + 1, collapsed, brandBg)
-      : undefined;
-    return {
-      key: item.id,
-      label: item.description,
-      title: item.description,
-      // Tag top-level rows so CSS can render Modules distinctly from sub-functions,
-      // and give each Module its own semantic glyph (unmapped Modules fall back to
-      // AppstoreOutlined, so nothing regresses).
-      ...(level === 0 ? { className: 'menu-module', icon } : {}),
-      // Root Module, collapsed: wrap the functions in a group whose title is the
-      // Module itself. antd renders the group title at the top of the flyout, so
-      // the popup finally says which Module it belongs to; expanded, the parent
-      // row already says it and the group would just repeat it.
-      children: children && collapsed && level === 0
-        ? [{
-            type: 'group' as const,
-            key: `${item.id}__module-header`,
-            label: (
-              <span className="menu-module-header" style={{ background: brandBg }}>
-                {icon}
-                <span className="menu-module-header-text">{item.description}</span>
-              </span>
-            ),
-            children,
-          }]
-        : children,
-    };
-  });
 }
 
 // Fixed-width header labels so the Azienda/Sede selectors line up vertically
@@ -2966,11 +2867,13 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         </div>
         {sidebarMode === 'menu' ? (
           <>
-            <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#eaeef5', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
+            <ConfigProvider theme={{ components: { Menu: { itemHeight: 28, itemColor: 'rgba(0,0,0,0.88)', itemHoverColor: '#1677ff', subMenuItemBg: '#eaeef5', popupBg: '#eaeef5', itemBg: '#fff', itemSelectedColor: '#1677ff', itemSelectedBg: '#e6f4ff', itemMarginBlock: 0, itemMarginInline: 0, iconMarginInlineEnd: 8 } } }}>
               <Menu
                 key={menuNonce}
                 mode="inline"
                 inlineCollapsed={collapsed}
+                // Collassato: popup a clic e dentro la finestra (SXADV-6264/6270/6271).
+                {...sidebarMenuBehaviour(collapsed)}
                 items={buildMenuItems(filteredMenu, 0, collapsed, headerColor(loginInfo.bkColor))}
                 // Controlled selection: the internal (uncontrolled) one is lost on
                 // every remount (menuNonce) and is per-Menu, not per-tab. Keying it

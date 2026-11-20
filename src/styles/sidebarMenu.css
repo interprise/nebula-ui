@@ -1,0 +1,18 @@
+/* Popup del menu laterale collassato (SXADV-6270.2): stesso fondo dell'area
+   funzioni del menu espanso (.sidebar .ant-menu-sub.ant-menu-inline e
+   subMenuItemBg del tema in Shell), cosi' le funzioni si leggono come un blocco
+   anche quando escono in un popup. Le voci restano trasparenti sul fondo; la
+   voce selezionata e il passaggio del mouse li disegna il tema. */
+.ant-menu-submenu-popup.sidebar-menu-popup > .ant-menu-sub,
+.ant-menu-submenu-popup.sidebar-menu-popup .ant-menu-item-group-list {
+  background: #eaeef5;
+}
+.ant-menu-submenu-popup.sidebar-menu-popup .ant-menu-item:not(.ant-menu-item-selected),
+.ant-menu-submenu-popup.sidebar-menu-popup .ant-menu-submenu-title {
+  background: transparent;
+}
+/* La testata del modulo (sticky, SXADV-5454.6) copre le voci che le scorrono
+   sotto: prende lo stesso fondo del popup invece del bianco. */
+.ant-menu-submenu-popup.sidebar-menu-popup .ant-menu-item-group-title {
+  background: #eaeef5;
+}
