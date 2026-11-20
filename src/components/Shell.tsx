@@ -600,6 +600,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // patch della sola riga corrente e non ha modo di dire "questa riga non c'e'
   // piu'": la toglie il client, vedi removeListRow.
   const pendingRowRemovalRef = useRef<{ tabKey: string; path: string } | null>(null);
+  // L'azione rimasta in attesa dietro il Post di svuotamento della riga
+  // (rowFlush.ts) quando quel Post fa una domanda: la risposta rigioca il Post,
+  // e solo se il rigioco va a buon fine riparte l'azione. Per id del Post
+  // (parametro `_flushThen`), cosi' nessun altro rigioco la fa partire; un
+  // Annulla sulla stessa scheda la butta (revisione 6255).
+  type FlushThen = { tabKey: string; action: string; params: Record<string, string> };
+  const flushThenRef = useRef(new Map<string, FlushThen>());
+  const flushSeqRef = useRef(0);
+  // L'azione da far ripartire, presa dall'effetto al disegno successivo: con i
+  // gestori di quel disegno la scheda non risulta piu' in caricamento (il
+  // rigioco l'aveva messa cosi'), e un timer partiva a volte prima.
+  const flushResumeRef = useRef<FlushThen | null>(null);
+  const [flushResumeNonce, setFlushResumeNonce] = useState(0);
   // Bumped on every fresh menu payload to remount the sidebar Menu. The inline
   // Menu keeps its expanded submenus in internal state, so without a remount a
   // reload (Azienda/Sede change, manual reload) would inherit the previously
@@ -779,6 +792,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       onCancel: () => {
         pendingBreadcrumbsRef.current = null;
         pendingRowRemovalRef.current = null;
+        // Domanda rifiutata sul Post della riga: l'azione che aspettava non parte.
+        for (const [id, t] of flushThenRef.current) if (t.tabKey === tabKey) flushThenRef.current.delete(id);
         undoMenuChange(tabKey);
         // La domanda rifiutata ferma anche l'uscita verso il dettaglio: il
         // ritorno armato da chi l'ha chiesta non arrivera' (SXADV-5927).
@@ -1680,6 +1695,8 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const serverParams = { ...params };
       delete serverParams._noFormValues;
       delete serverParams._afterFlush;
+      const flushThen = params._flushThen;
+      delete serverParams._flushThen;
 
       // Pagine, ordinamento, Refresh e pagine di una griglia incorporata: la
       // riga del pannello non vale piu' (i suoi valori si scartano, piu' sotto).
@@ -1711,8 +1728,16 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         if (rowFlushNeeded({
           action, rowTarget: prospectiveTarget, openRow, openRowDirty, afterFlush: params._afterFlush === '1',
         }) && openRow) {
-          const flushed = await handleActionRef.current('Post', { navpath: openRow });
-          const blocked = !flushed || (flushed.errors ?? []).some(
+          // Se il Post fa una domanda, la risposta lo rigioca: l'azione resta
+          // in attesa del rigioco andato a buon fine, invece di perdersi
+          // (Salva+ da ricliccare, revisione 6255).
+          const flushId = `f${++flushSeqRef.current}`;
+          flushThenRef.current.set(flushId, { tabKey: tab.key, action, params: { ...params, _afterFlush: '1' } });
+          const flushed = await handleActionRef.current('Post', { navpath: openRow, _flushThen: flushId });
+          const errs = flushed?.errors ?? [];
+          const asks = errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');
+          if (!flushed || !asks || errs.some((e) => e.type === 'ERROR')) flushThenRef.current.delete(flushId);
+          const blocked = !flushed || errs.some(
             (e) => e.type === 'ERROR' || e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');
           if (blocked) return flushed;
           return handleActionRef.current(action, { ...params, _afterFlush: '1' });
@@ -1833,7 +1858,25 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const replay = makeConfirmReplay(tab.key, tab.sid, (extra) =>
         api.postAction(action, { ...sentParams, ...extra }, fv, tab.sid).then((r) => {
           settlePanelFields(r);
+          // Il rigioco del Post di svuotamento: andato a buon fine, riparte
+          // l'azione che aspettava, al disegno dopo la risposta (effetto
+          // flushResumeNonce); con un errore non parte; con un'altra domanda
+          // aspetta ancora.
+          const then = flushThen ? flushThenRef.current.get(flushThen) : undefined;
+          if (flushThen && then) {
+            const errs = r.errors ?? [];
+            const asks = errs.some((e) => e.type === 'CONFIRMATION' || e.type === 'YESNOCANCEL');
+            const failed = errs.some((e) => e.type === 'ERROR');
+            if (failed || !asks) flushThenRef.current.delete(flushThen);
+            if (!failed && !asks) {
+              flushResumeRef.current = then;
+              setFlushResumeNonce((n) => n + 1);
+            }
+          }
           return r;
+        }, (e) => {
+          if (flushThen) flushThenRef.current.delete(flushThen);
+          throw e;
         }));
       try {
         const resp = await api.postAction(action, sentParams, fv, tab.sid);
@@ -1864,6 +1907,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     [getActiveTabState, processResponse, updateTabState, onReloadMenu, makeConfirmReplay, feedback, answerAddWait, panelFieldRows, forgetPanelField]
   );
   useEffect(() => { handleActionRef.current = handleAction; }, [handleAction]);
+  // Riparte l'azione rimasta dietro il Post della riga che ha fatto una domanda
+  // (flushResumeRef). Aspetta che la scheda non sia piu' in caricamento (anche
+  // un lavoro asincrono partito dal rigioco); se nel frattempo e' attiva
+  // un'altra scheda, o la scheda non c'e' piu', l'azione non e' piu' sua.
+  useEffect(() => {
+    const r = flushResumeRef.current;
+    if (!r) return;
+    const tab = tabs.find((t) => t.key === r.tabKey);
+    if (!tab || activeTab !== r.tabKey) { flushResumeRef.current = null; return; }
+    if (tab.loading) return;
+    flushResumeRef.current = null;
+    void handleAction(r.action, r.params);
+  }, [flushResumeNonce, tabs, activeTab, handleAction]);
 
   // CDMS: open one of the documentale views (ricerca, document list, cestino,
   // gestione profili/utenti) in a given tab. Not menu items — these views live
