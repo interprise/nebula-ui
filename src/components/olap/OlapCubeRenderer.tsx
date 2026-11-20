@@ -10,6 +10,7 @@ import { pivot, type PivotedRow } from './pivot';
 import type { CubeRow } from './types';
 import { triggerDownload } from '../../services/api';
 import { useFeedback } from '../../hooks/feedback';
+import MultiSceltaSelect from '../MultiSceltaSelect';
 
 const { Text } = Typography;
 
@@ -287,11 +288,9 @@ const OlapCubeRenderer: React.FC<ControlComponentProps> = ({ control, onAction }
           const dim = meta!.dimensions.find((d) => d.name === zDim);
           const codes = zValues[zDim] ?? [];
           return (
-            <Select
+            <MultiSceltaSelect
               key={zDim}
-              mode="multiple"
               size="small"
-              allowClear
               maxTagCount={2}
               style={{ minWidth: 200, maxWidth: 360 }}
               placeholder={dim?.description || zDim}

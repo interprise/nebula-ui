@@ -128,6 +128,8 @@ const { default: ModificaWidget } = await import('./ModificaWidget');
 
 
 const { Button, Form, Radio, Select, Checkbox } = await import('antd');
+// I campi a scelte multiple passano da MultiSceltaSelect (SXADV-6268).
+const { default: MultiSceltaSelect } = await import('../MultiSceltaSelect');
 
 // Il «DOM» finto: quanto basta perche' antd non cerchi altro.
 const noop = () => {};
@@ -261,7 +263,7 @@ async function apri(w: Record<string, unknown>) {
 }
 
 const selezione = (nome: string) =>
-  elements(tree).find((e) => e.type === Select && e.props['aria-label'] === nome);
+  elements(tree).find((e) => (e.type === Select || e.type === MultiSceltaSelect) && e.props['aria-label'] === nome);
 const periodo = () => selezione('Periodo');
 const scegli = async (nome: string, v: unknown) => {
   const s = selezione(nome);

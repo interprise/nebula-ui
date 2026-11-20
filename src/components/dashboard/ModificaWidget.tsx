@@ -21,6 +21,7 @@ import DateDellaRicerca from './DateDellaRicerca';
 import type { CriterioData, SceltaData } from './DateDellaRicerca';
 import { contaSoloIGruppi, oppostoDi, toniDi } from './risultato';
 import type { OrdinaPer, Opzioni, Periodo, Risultato, Tono, Trasformazione, Verso } from './risultato';
+import MultiSceltaSelect from '../MultiSceltaSelect';
 
 /** Un gruppo che l'anteprima offre da escludere (`dashboard.Preview`, SALESCENDE E6). */
 interface Candidato {
@@ -703,9 +704,7 @@ const ModificaWidget: React.FC<Props> = ({
               label="Colonne dal dettaglio"
               extra="Campi della scheda di dettaglio che la lista non mostra: si aggiungono in fondo e si riempiono col prossimo aggiornamento."
             >
-              <Select
-                mode="multiple"
-                allowClear
+              <MultiSceltaSelect
                 value={bozza.colonneDettaglio}
                 onChange={(v: string[]) => {
                   // Una colonna del dettaglio tolta non resta scelta nel calcolo: il
@@ -837,9 +836,7 @@ const ModificaWidget: React.FC<Props> = ({
                   label="Escludi i gruppi"
                   extra="Si tolgono dal calcolo e il widget lo dice. Si sceglie fra i gruppi dell'anteprima."
                 >
-                  <Select
-                    mode="multiple"
-                    allowClear
+                  <MultiSceltaSelect
                     value={bozza.escludi}
                     onChange={(v: string[]) => cambia({ escludi: v })}
                     options={opzioniEscludi}
@@ -956,8 +953,7 @@ const ModificaWidget: React.FC<Props> = ({
               <Radio value="tutte">Tutte le mie aziende ({(aziende || []).length})</Radio>
             </Radio.Group>
             {bozza.ambito === 'scelte' && widget?.ambito?.possibile !== false ? (
-              <Select
-                mode="multiple"
+              <MultiSceltaSelect
                 value={bozza.aziendeScelte}
                 onChange={(v: string[]) => cambia({ aziendeScelte: v })}
                 options={(aziende || []).map((a) => ({
