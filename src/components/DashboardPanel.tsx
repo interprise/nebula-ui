@@ -200,6 +200,10 @@ const SceltaColonne: React.FC<{
   onRipristina: () => void;
 }> = ({ colonne, mostrate, ordine, personalizzata, onNascoste, onRipristina }) => {
   const [aperto, setAperto] = useState(false);
+  // Il suggerimento e' governato qui (SXADV-6275): lasciato ad antd, restava «aperto»
+  // mentre il popover lo nascondeva (l'uscita del mouse non arriva a un tooltip gia'
+  // spento) e ricompariva alla chiusura del popover, sopra l'icona puntata dopo.
+  const [suggerimento, setSuggerimento] = useState(false);
   const visibili = new Set(mostrate);
   const contenuto = (
     <div className="dash-scelta-colonne">
@@ -225,6 +229,7 @@ const SceltaColonne: React.FC<{
         disabled={!personalizzata}
         onClick={() => {
           setAperto(false);
+          setSuggerimento(false);
           onRipristina();
         }}
       >
@@ -239,9 +244,12 @@ const SceltaColonne: React.FC<{
       title="Colonne da mostrare"
       content={contenuto}
       open={aperto}
-      onOpenChange={setAperto}
+      onOpenChange={(v) => {
+        setAperto(v);
+        setSuggerimento(false);
+      }}
     >
-      <Tooltip title={aperto ? undefined : 'Colonne'}>
+      <Tooltip title="Colonne" open={suggerimento && !aperto} onOpenChange={(v) => setSuggerimento(v && !aperto)}>
         <Button type="text" size="small" icon={<TableOutlined />} aria-label="Colonne" />
       </Tooltip>
     </Popover>
@@ -286,7 +294,7 @@ interface Props {
    * false, e qui non parte niente. Assente = sempre si'.
    */
   puoAprire?: () => boolean;
-  /** Come puoAprire, per la lista completa che apre una scheda sua (SXADV-6125). */
+  /** Come puoAprire, per chi apre una scheda sua se quella di lavoro e' in uso: lista completa (SXADV-6125), record di una riga (SXADV-6276). */
   puoNavigare?: () => boolean;
   /**
    * «Torna al widget» (SXADV-5999.3): appena c'e' a schermo, il riquadro di questo
@@ -519,7 +527,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
   const apriRecord = useCallback(
     async (w: Widget, chiave: string) => {
       if (!onApriDettaglio || apertura.current) return;
-      if (puoAprire && !puoAprire()) return;
+      // Come la lista completa: va in una scheda sua se quella di lavoro e' in uso (SXADV-6276).
+      const puo = puoNavigare ?? puoAprire;
+      if (puo && !puo()) return;
       apertura.current = true;
       let aperto = false;
       try {
@@ -542,7 +552,7 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
         if (!aperto) apertura.current = false;
       }
     },
-    [onApriDettaglio, puoAprire, feedback, rifiuto],
+    [onApriDettaglio, puoAprire, puoNavigare, feedback, rifiuto],
   );
 
   /**

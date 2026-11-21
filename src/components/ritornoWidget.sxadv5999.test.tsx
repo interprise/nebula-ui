@@ -523,7 +523,7 @@ describe('SXADV-5999.3 R1: un altro ingresso di primo livello toglie il ricordo'
     expect(collegamento()).toBeUndefined();
   });
 
-  it('un secondo ingresso da un ALTRO widget lo sostituisce col nuovo', async () => {
+  it('un secondo ingresso da un ALTRO widget va nella sua scheda: ognuna tiene il proprio widget', async () => {
     await navigaDallaHome('Fatture da incassare', 7);
     await cliccaCasetta();
     await rigaDallaHome('Ordini aperti', 9);
@@ -531,7 +531,10 @@ describe('SXADV-5999.3 R1: un altro ingresso di primo livello toglie il ricordo'
     expect(c).toBeDefined();
     expect(nome(c!)).toContain('Ordini aperti');
     expect(nome(c!)).not.toContain('Fatture da incassare');
-    expect(scheda().daWidget).toEqual({ idWidget: 9, titolo: 'Ordini aperti' });
+    // SXADV-6276: con la scheda di lavoro in uso il record va in una scheda nuova, che
+    // ricorda il suo widget; quella di prima tiene il proprio.
+    expect(scheda('tab_2').daWidget).toEqual({ idWidget: 9, titolo: 'Ordini aperti' });
+    expect(scheda().daWidget).toEqual({ idWidget: 7, titolo: 'Fatture da incassare' });
   });
 
   it('dopo un ingresso da widget, uno dal menu dalla Home toglie il ricordo', async () => {

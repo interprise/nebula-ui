@@ -16,7 +16,7 @@ interface HomePanelProps {
   onNaviga?: (titolo: string, idWidget: number) => boolean;
   /** La scheda di lavoro puo' ricevere un'apertura adesso? (vedi DashboardPanel) */
   puoAprire?: () => boolean;
-  /** Come puoAprire, per la lista completa che apre una scheda sua (SXADV-6125). */
+  /** Come puoAprire, per chi apre una scheda sua se quella di lavoro e' in uso: lista completa (SXADV-6125), record di una riga (SXADV-6276). */
   puoNavigare?: () => boolean;
   /**
    * «Torna al widget» (SXADV-5999.3): la Home si apre sulla dashboard, anche con

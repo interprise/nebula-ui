@@ -1992,14 +1992,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     [getActiveTabState, updateTabState, handleAction, entraDallaHome],
   );
 
-  // SXADV-62: il clic su una riga di un widget apre il suo record nella scheda della
-  // Home, come ingresso di primo livello: la scheda prende il titolo del widget e la
-  // history riparte da zero. Il record lo cerca ViewByKey con la chiave della riga.
+  // SXADV-62: il clic su una riga di un widget apre il suo record come ingresso di
+  // primo livello: la scheda prende il titolo del widget e la history riparte da zero.
+  // Il record lo cerca ViewByKey con la chiave della riga. Dalla Home, come la lista
+  // completa, non sovrascrive una sessione gia' in uso: ne apre una (SXADV-6276).
+  // Le righe stanno solo sulla Home: se nel frattempo (ApriRecord e' asincrona)
+  // l'utente e' passato a una scheda, quella non si tocca e il clic cade.
   const handleApriDettaglio = useCallback(
     (titolo: string, viewName: string, chiave: string, idWidget?: number) =>
-      openFunctionByAction(titolo, 'ViewByKey', { viewName, DOKey: chiave },
-        idWidget !== undefined ? { idWidget, titolo } : undefined),
-    [openFunctionByAction],
+      entraDallaHome({
+        tipo: 'funzione', label: titolo, action: 'ViewByKey',
+        params: { viewName, DOKey: chiave },
+        daWidget: idWidget !== undefined ? { idWidget, titolo } : undefined,
+      }, true),
+    [entraDallaHome],
   );
 
   // SXADV-5999.2: «Naviga» su un widget apre la lista della sua ricerca, rifatta oggi,

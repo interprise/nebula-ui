@@ -657,11 +657,13 @@ describe('SXADV-6125 «Naviga» dalla Home', () => {
     expect(collegamento()).toBeDefined();
   });
 
-  it('il clic su una RIGA resta nella scheda di lavoro (non e\' «Naviga»)', async () => {
+  // SXADV-6276 ha esteso alla riga quello che 6125 faceva per «Naviga»: la scheda in uso
+  // non si sovrascrive. Il caso completo e' in Shell.apriRecordNuovaScheda.sxadv6276.
+  it('anche il clic su una RIGA non sovrascrive la scheda di lavoro in uso (SXADV-6276)', async () => {
     await schedaInUso();
     await rigaDallaHome('Fatture', 7);
-    expect(schede()).toHaveLength(1);
-    expect(schedaAttiva()).toBe('tab_1');
+    expect(schede()).toHaveLength(2);
+    expect(schedaAttiva()).toBe(schede()[1].key);
   });
 
   it('fuori dalla Home «Naviga» resta nella scheda corrente', async () => {
