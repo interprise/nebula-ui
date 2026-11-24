@@ -8,6 +8,7 @@ import {
   calcoloDelNumero,
   conSegno,
   conteggio,
+  intestazioneDeiGruppi,
   numeroPertinente,
   scrivi,
   tonoDelta,
@@ -54,12 +55,41 @@ const conParziale = (testo: string, r: Risultato) =>
   r.completo === false ? `${testo} (parziale)` : testo;
 
 /**
+ * Un'etichetta di colonna come testo su una riga. Il <br/> che nella lista manda a capo qui
+ * diventa uno spazio: senza, «Totale<br/>doc.» si leggerebbe «Totaledoc.».
+ */
+const etichettaPiana = (raw: string) => listHeaderLabel(raw.replace(/<br\s*\/?>/gi, ' ')).text;
+
+/** SXADV-6107.4: che cosa sono le due colonne dell'elenco dei gruppi, gia' filtrato. */
+const intestazione = (p: Props) => {
+  const i = intestazioneDeiGruppi(p.trasformazione, p.colonne);
+  return i ? { gruppo: etichettaPiana(i.gruppo), valore: i.valore ? etichettaPiana(i.valore) : '' } : null;
+};
+
+/** I nomi delle due colonne, fuori dall'elenco: nell'elenco c'e' un li per gruppo. */
+const Intestazione: React.FC<{ testa: { gruppo: string; valore: string } | null; classe: string }> = ({
+  testa,
+  classe,
+}) =>
+  testa ? (
+    <div className={classe}>
+      <span className="dash-parziale-etichetta" title={testa.gruppo}>
+        {testa.gruppo}
+      </span>
+      <span className="dash-parziale-valore" title={testa.valore}>
+        {testa.valore}
+      </span>
+    </div>
+  ) : null;
+
+/**
  * I totali di ciascun gruppo sotto il numero (SXADV-6013): con un raggruppamento il
  * numero da solo dice quanto, non dove. Gruppi e ordine sono quelli del server, primi N
  * e «Altri» come nelle barre. Il totale generale si aggiunge solo se il numero grande
  * non lo e' gia' (somma dei gruppi).
  */
-const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
+const Parziali: React.FC<Props> = (p) => {
+  const { risultato: r, trasformazione } = p;
   const gruppi = r.gruppi || [];
   const altri = r.altri && aNumero(r.altri.valore) !== null ? r.altri : null;
   if (!(trasformazione?.group || []).length || (gruppi.length === 0 && !altri)) return null;
@@ -74,7 +104,9 @@ const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
     </li>
   );
   return (
-    <ul className="dash-parziali">
+    <>
+      <Intestazione testa={intestazione(p)} classe="dash-parziali-intestazione" />
+      <ul className="dash-parziali">
       {gruppi.map((g, i) =>
         riga(`g${i}`, g.etichetta || g.k || '(vuoto)', scrivi(g.valore, intero))
       )}
@@ -89,14 +121,15 @@ const Parziali: React.FC<Props> = ({ risultato: r, trasformazione }) => {
       {totale !== null && trasformazione?.outAgg !== 'sum'
         ? riga('totale', 'Totale', conParziale(scrivi(totale, intero), r), 'dash-parziale-totale')
         : null}
-    </ul>
+      </ul>
+    </>
   );
 };
 
 const CalcoloDelNumero: React.FC<{ calcolo: ReturnType<typeof calcoloDelNumero> }> = ({ calcolo }) =>
   calcolo ? (
     <div className="dash-numero-calcolo">
-      <span className="dash-numero-simbolo">{calcolo.simbolo}</span> {listHeaderLabel(calcolo.nome).text}
+      <span className="dash-numero-simbolo">{calcolo.simbolo}</span> {etichettaPiana(calcolo.nome)}
     </div>
   ) : null;
 
@@ -113,7 +146,7 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni, colonn
   if (!numeroPertinente(trasformazione, r))
     return (
       <div className="dash-numero" data-forma="kpi">
-        <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} />
+        <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} colonne={colonne} />
         <Base r={r} />
       </div>
     );
@@ -140,13 +173,14 @@ const Numero: React.FC<Props> = ({ risultato: r, trasformazione, opzioni, colonn
           <span className="dash-numero-delta-testo">rispetto all&apos;aggiornamento precedente</span>
         </div>
       ) : null}
-      <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} />
+      <Parziali risultato={r} forma="kpi" trasformazione={trasformazione} colonne={colonne} />
       <Base r={r} />
     </div>
   );
 };
 
-const Barre: React.FC<Props> = ({ risultato: r, trasformazione }) => {
+const Barre: React.FC<Props> = (p) => {
+  const { risultato: r, trasformazione } = p;
   const intero = conteggio(trasformazione, true);
   const gruppi = r.gruppi || [];
   const altri = r.altri && aNumero(r.altri.valore) !== null ? r.altri : null;
@@ -175,6 +209,7 @@ const Barre: React.FC<Props> = ({ risultato: r, trasformazione }) => {
     );
   return (
     <div className="dash-barre" data-forma="bar">
+      <Intestazione testa={intestazione(p)} classe="dash-barre-intestazione" />
       <ul>
         {gruppi.map((g, i) =>
           barra(`g${i}`, g.etichetta || g.k || '(vuoto)', aNumero(g.valore) ?? 0)

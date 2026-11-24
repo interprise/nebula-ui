@@ -190,6 +190,35 @@ export const calcoloDelNumero = (
   return nome ? { simbolo, nome } : null;
 };
 
+/**
+ * SXADV-6107.4: le intestazioni dell'elenco dei gruppi, «Totale doc. | N. righe». Senza,
+ * l'elenco mostra coppie di valori che non dicono che cosa sono. A sinistra le colonne di
+ * «Raggruppa per» (col periodo, se non e' il giorno); a destra il calcolo PER GRUPPO, cioe'
+ * «Calcola» (`agg`): il «Numero finale» (`outAgg`) e' gia' detto sopra il numero grande.
+ */
+export const intestazioneDeiGruppi = (
+  t: Trasformazione | null | undefined,
+  colonne?: Array<{ item?: string; etichetta?: string }> | null,
+): { gruppo: string; valore: string } | null => {
+  if (!t || !raggruppaDavvero(t.group)) return null;
+  // Spazi attorno al nome: il server li toglie e trova la colonna, quindi anche qui.
+  const etichetta = (item: string) => {
+    const nome = item.trim();
+    return (colonne || []).find((c) => c.item === nome)?.etichetta || nome;
+  };
+  const voci: unknown[] = Array.isArray(t.group) ? t.group : [t.group];
+  const nomi = voci
+    .filter((g): g is string => typeof g === 'string' && !!g.trim())
+    .map((g) => etichetta(g));
+  if (t.periodo && t.periodo !== 'giorno') nomi[0] = `${nomi[0]} (${t.periodo})`;
+  const agg = t.agg || 'count';
+  let valore = '';
+  if (agg === 'count') valore = 'N. righe';
+  else if (Object.prototype.hasOwnProperty.call(SIMBOLI, agg) && t.col)
+    valore = `${SIMBOLI[agg]} ${etichetta(t.col)}`;
+  return { gruppo: nomi.join(' / '), valore };
+};
+
 export const scrivi = (v: unknown, intero: boolean) => {
   const n = aNumero(v);
   if (n === null) return '—';

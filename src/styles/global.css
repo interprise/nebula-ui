@@ -2451,6 +2451,34 @@ body[style*="cursor: wait"] * {
   font-weight: 600;
   border-bottom: none;
 }
+/* SXADV-6107.4: i nomi delle due colonne sopra l'elenco dei gruppi, come in una lista. */
+.dash-parziali-intestazione,
+.dash-barre-intestazione {
+  display: grid;
+  /* Il nome del gruppo tiene almeno 6em: un calcolo dal nome lungo va a capo, non lo
+     cancella (widget stretti, 2 colonne su 12). */
+  grid-template-columns: minmax(min(6em, 50%), 1fr) minmax(0, auto);
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.65));
+  border-bottom: 1px solid var(--app-border);
+  padding-bottom: 1px;
+}
+.dash-parziali-intestazione .dash-parziale-valore,
+.dash-barre-intestazione .dash-parziale-valore {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.dash-parziali-intestazione {
+  margin-top: 6px;
+}
+.dash-parziali-intestazione + .dash-parziali {
+  margin-top: 0;
+}
+.dash-barre-intestazione {
+  margin-bottom: 4px;
+}
 .dash-barre-totale {
   display: flex;
   justify-content: space-between;
