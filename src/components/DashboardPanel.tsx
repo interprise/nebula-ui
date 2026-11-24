@@ -1305,8 +1305,9 @@ const DashboardPanel: React.FC<Props> = ({ ricarica, onApriDettaglio, onNaviga, 
               {onNaviga ? (
                 // Rifa' la ricerca adesso, non apre la fotografia del widget: il
                 // suggerimento lo dice, perche' su liste grosse costa quanto la
-                // ricerca dal menu (SXADV-5999.2, deciso il 23/10).
-                <Tooltip title="Rifai la ricerca completa adesso">
+                // ricerca dal menu (SXADV-5999.2, deciso il 23/10). Il testo e'
+                // quello chiesto dal collaudo (SXADV-5999.4, 23/11).
+                <Tooltip title="Rigenera lista d'origine">
                   <Button
                     type="text"
                     size="small"
