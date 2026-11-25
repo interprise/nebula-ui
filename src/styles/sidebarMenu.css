@@ -16,3 +16,13 @@
 .ant-menu-submenu-popup.sidebar-menu-popup .ant-menu-item-group-title {
   background: #eaeef5;
 }
+
+/* Menu collassato: ancora del tooltip col nome del modulo (SXADV-6277). Copre
+   tutta la riga del modulo (il titolo del sottomenu e' position: relative), cosi'
+   il tooltip si aggancia al bordo destro della colonna e non al testo nascosto.
+   Non prende eventi: li ascolta il titolo. */
+.menu-module-tooltip-anchor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

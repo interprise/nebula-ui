@@ -30,6 +30,7 @@ import {
 } from '@ant-design/icons';
 import type { MenuItem } from '../types/ui';
 import '../styles/sidebarMenu.css';
+import { ModuleRailLabel } from './ModuleRailLabel';
 
 /**
  * Il menu laterale (sidebar di Shell): voci e comportamento dei popup.
@@ -131,7 +132,11 @@ export function buildMenuItems(
       : undefined;
     return {
       key: item.id,
-      label: item.description,
+      // Collassato, il modulo e' solo un'icona: il nome esce in un tooltip
+      // al passaggio del mouse e al fuoco (SXADV-6277).
+      label: collapsed && level === 0 && children
+        ? <ModuleRailLabel name={item.description ?? ''} />
+        : item.description,
       title: item.description,
       // Tag top-level rows so CSS can render Modules distinctly from sub-functions,
       // and give each Module its own semantic glyph (unmapped Modules fall back to
