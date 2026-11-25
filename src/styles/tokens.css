@@ -105,9 +105,11 @@
 
   /* Ingranaggio del cambio Azienda/Sede (SXADV-5980.z). Fisso: non segue il
    * colore di testata dell'azienda (con un'azienda rossa sembrava un errore) e
-   * non ha una variante scura, perche' lo stesso grigio si legge sul bianco
-   * (4,7:1) e sul quasi nero #141414 (3,9:1), sopra il 3:1 che WCAG 1.4.11
-   * chiede a un elemento grafico. Il nero sullo scuro farebbe 1,1:1. */
+   * non ha una variante scura: oggi sotto l'ingranaggio c'e' sempre il bianco
+   * dell'area (anche con data-theme="dark"), e se un giorno l'area diventasse
+   * scura lo stesso grigio si legge ancora: 4,7:1 sul bianco, 3,9:1 sul quasi
+   * nero #141414, sopra il 3:1 che WCAG 1.4.11 chiede a un elemento grafico.
+   * Il nero sullo scuro farebbe 1,1:1. */
   --app-context-gear: #737373;
 
   /* Testo attenuato di una riga di dettaglio, sotto quelle che contano: i

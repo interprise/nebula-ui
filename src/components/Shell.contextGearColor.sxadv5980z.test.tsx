@@ -5,8 +5,9 @@ import { createRoot, type Root } from 'react-dom/client';
 
 // SXADV-5980.z — durante il cambio di Azienda o Sede l'ingranaggio che gira
 // (strato role="status", contenitore .context-change-gear) ha un colore FISSO:
-// var(--app-context-gear), grigio in :root e NON rovesciato sotto il tema scuro
-// (l'area resta bianca anche li'). Non deve prendere il
+// var(--app-context-gear), un grigio neutro che si legge sia sul chiaro sia
+// sullo scuro (oggi l'area sotto l'ingranaggio e' sempre bianca, anche con
+// data-theme="dark"; il tema scuro non e' ancora acceso). Non deve prendere il
 // colore di testata dell'azienda da cui si parte (loginInfo.bkColor): con
 // un'azienda rossa sembrava un errore. La testata invece continua a seguire
 // bkColor.
@@ -262,8 +263,11 @@ describe('SXADV-5980.z — ingranaggio del cambio azienda/sede: colore fisso', (
         for (const r of server.pending.splice(0)) r({});
         colori.push(c);
         if (bk) {
-          const nudo = bk.replace('#', '').toLowerCase();
-          expect(c.toLowerCase(), `bkColor ${bk} non deve finire nell'ingranaggio`).not.toContain(nudo);
+          // jsdom scrive i colori come rgb(...): si confronta in quella forma
+          const h = bk.replace('#', '');
+          const rgb = `rgb(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)})`;
+          expect(c.toLowerCase(), `bkColor ${bk} non deve finire nell'ingranaggio`).not.toContain(rgb);
+          expect(c.toLowerCase()).not.toContain(h.toLowerCase());
         }
       }
       expect(new Set(colori).size, `colori visti: ${colori.join(', ')}`).toBe(1);
@@ -338,8 +342,33 @@ describe('SXADV-5980.z — il token --app-context-gear in tokens.css', () => {
     expect(root).toMatch(/--app-context-gear\s*:\s*[^;]+;/);
   });
 
-  it('--app-context-gear non e\' ridefinito nel blocco [data-theme=\'dark\'] (sfondo dell\'area sempre bianco)', async () => {
-    const dark = blocco(await leggi(), "[data-theme='dark']");
-    expect(dark).not.toContain('--app-context-gear');
+  // Il valore conta quanto il nome: un token rosso farebbe tornare il difetto.
+  // Ogni definizione del token (in qualunque blocco, tema scuro compreso) deve
+  // essere un grigio neutro con contrasto >= 3:1 (WCAG 1.4.11, elemento
+  // grafico) su tutti gli sfondi che puo' avere sotto: bianco dell'area,
+  // riquadro di benvenuto della Home (#f0f7ff -> #e6f4ff), quasi nero.
+  const lum = (hex: string) => {
+    const c = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contrasto = (a: string, b: string) => {
+    const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+  };
+
+  it('ogni definizione di --app-context-gear e\' un grigio neutro leggibile su chiaro e scuro', async () => {
+    const defs = [...(await leggi()).matchAll(/--app-context-gear\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
+    expect(defs.length).toBeGreaterThanOrEqual(1);
+    for (const v of defs) {
+      const m = /^#([0-9a-f]{6})$/i.exec(v);
+      expect(m, `valore ${v}: atteso #rrggbb`).not.toBeNull();
+      const hex = m![1].toLowerCase();
+      const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      expect(Math.max(r, g, b) - Math.min(r, g, b), `${v} non e' un grigio neutro`).toBeLessThanOrEqual(8);
+      for (const sfondo of ['ffffff', 'f0f7ff', 'e6f4ff', 'f5f5f5', '141414']) {
+        expect(contrasto(hex, sfondo), `${v} su #${sfondo}`).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 });
