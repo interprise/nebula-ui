@@ -2741,7 +2741,11 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
               display: 'flex',
             }}
           >
-            <SettingOutlined spin style={{ fontSize: 40, color: headerColor(loginInfo.bkColor) }} />
+            {/* Colore fisso, non quello della testata: il bkColor e' ancora
+                quello dell'azienda che si lascia, e con un'azienda rossa
+                l'ingranaggio sembrava un errore (SXADV-5980.z). Il grigio del
+                token si legge sia sul chiaro sia sullo scuro (tokens.css). */}
+            <SettingOutlined spin style={{ fontSize: 40, color: 'var(--app-context-gear)' }} />
           </div>
         </div>
       )}
