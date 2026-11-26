@@ -2506,7 +2506,8 @@ body[style*="cursor: wait"] * {
 .ag-floating-bottom .ag-cell { overflow: visible; }
 
 /* Pannello inferiore a sezioni in sequenza (SXADV-5935): l'area scorre, ogni
-   sezione e' alta quanto il suo contenuto e si stacca dalla precedente. */
+   sezione e' alta quanto il suo contenuto e si stacca dalla precedente. Senza
+   tab l'area non scorre: scorre .view-flow, testata compresa (SXADV-6300). */
 .view-split-bottom--stacked {
   overflow-y: auto;
   padding-bottom: 8px;
@@ -2539,6 +2540,48 @@ body[style*="cursor: wait"] * {
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+/* SXADV-6300: dettaglio con sole sezioni impilate (nessun tab) = un unico
+   flusso, come nel legacy. Scorre il contenitore che tiene testata e sezioni;
+   ne' la testata ne' l'area delle sezioni hanno una barra propria. */
+.view-flow {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #f0f2f5;
+  scrollbar-width: thin;
+}
+.view-split-body {
+  display: contents;
+}
+/* La testata larga scorre in orizzontale da sola (SXADV-5677), le sezioni no. */
+.view-flow > .view-split-form--flow {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.view-flow > .view-split-bottom--flow {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
+}
+/* Sezione a campi piu' larga della pagina: barra orizzontale sua, non in
+   fondo a tutte le sezioni. */
+.view-split-bottom--flow > .bottom-section {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* Sezione ingrandita: prende l'area intera, come nella pila a scorrimento. */
+.view-flow:has(.list-container--zoomed) {
+  overflow: hidden;
+}
+.view-flow > .view-split-bottom--flow:has(.list-container--zoomed) {
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 /* SXADV-5915.1: la banda di continuazione non sborda oltre le colonne. */

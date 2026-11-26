@@ -345,6 +345,9 @@ const CELL_NAV_WIDTH = 18;
 // wrapped record pays a second time) is where the height was actually won.
 const GRID_ROW_HEIGHT = 22;
 const GRID_CONTINUATION_ROW_HEIGHT = 18;
+/** Record oltre i quali una sezione impilata smette di crescere e scorre da sé
+ *  (una ventina, la misura delle griglie annidate fissata su SXADV-5935). */
+const SECTION_MAX_RECORDS = 20;
 /** Continuation rows holding an interactive control need to fit it — at 18px an
  *  antd small Select (24px) bled over the row below, and on lists where EVERY
  *  record carries such a control (Fatture: the "Stampa" selector) that row is
@@ -1099,7 +1102,8 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
      disponibile (SXADV-5651). */
   const canZoom = !!embedded && inSplitArea && !inTabPanel && !!gridId;
   const isZoomed = canZoom && zoomedGridId === gridId;
-  /* In una pila di sezioni la griglia e' alta quanto il contenuto; zoomata torna a riempire. */
+  /* In una pila di sezioni la griglia e' alta quanto il contenuto, con un tetto
+     oltre SECTION_MAX_RECORDS record (vedi autoHeight); zoomata torna a riempire. */
   const contentHeight = !!embedded && inStackedSections && !isZoomed;
   /* Modalità una-riga: le bande di continuazione diventano colonne vere, il
      record sta su una linea sola e la griglia scorre in orizzontale con le
@@ -2183,6 +2187,86 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     return [row, ...bands];
   }, [ui.totals, ui.columns, ui.continuationHeaders, oneLine, flatTotals]);
 
+  /* Sezione impilata con molti record (SXADV-6300): alta quanto il contenuto
+     fino a SECTION_MAX_RECORDS record; oltre si ferma lì e scorre per conto suo
+     con le intestazioni ferme. Il tetto si calcola dai NODI della griglia
+     (rowTop della prima riga visualizzata del primo record escluso: comprende
+     bande di continuazione, rotture, ordinamento del client) più quello che la
+     griglia occupa fuori dal corpo (intestazioni anche su più righe, totali,
+     barra orizzontale). E si RIcalcola: i testi a capo e le bande crescono dopo
+     il primo disegno (SXADV-5770.2), la larghezza cambia, le colonne pure. Prima
+     della prima misura vale una stima a righe singole, mai la griglia distesa. */
+  const sectionRecordCount = useMemo(
+    () => rowData.reduce((n, r) => (!r._isContinuationRow && !r._isBreakRow ? n + 1 : n), 0),
+    [rowData],
+  );
+  const needsSectionCap = contentHeight && sectionRecordCount > SECTION_MAX_RECORDS;
+  const [sectionCapHeight, setSectionCapHeight] = useState<number | null>(null);
+  if (!needsSectionCap && sectionCapHeight != null) setSectionCapHeight(null);
+  const autoHeight = contentHeight && !needsSectionCap;
+  const autoHeightRef = useRef(autoHeight);
+  autoHeightRef.current = autoHeight;
+  /** Rimisura del tetto, chiamata anche da onModelUpdated: un ordinamento nel
+   *  browser cambia quali sono i primi record senza cambiare dati ne' DOM. */
+  const scheduleCapRef = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    if (!needsSectionCap) return;
+    const host = gridContainerRef.current;
+    if (!host) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const api = gridApiRef.current;
+      const viewport = host.querySelector<HTMLElement>('.ag-body-viewport');
+      if (!api || api.isDestroyed() || !viewport) return;
+      let main = 0;
+      let top: number | null | undefined = null;
+      const count = api.getDisplayedRowCount();
+      for (let i = 0; i < count; i++) {
+        const node = api.getDisplayedRowAtIndex(i);
+        const d = node?.data as Record<string, unknown> | undefined;
+        if (d && !d._isContinuationRow && !d._isBreakRow && ++main > SECTION_MAX_RECORDS) { top = node?.rowTop; break; }
+      }
+      if (top == null) return;
+      const chrome = host.getBoundingClientRect().height - viewport.clientHeight;
+      const next = Math.ceil(chrome + top);
+      setSectionCapHeight((prev) => (prev != null && Math.abs(prev - next) < 1 ? prev : next));
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    scheduleCapRef.current = schedule;
+    // Il corpo della griglia cambia altezza a ogni riga che cresce, la griglia
+    // cambia larghezza col layout: entrambi rimisurano.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
+    ro?.observe(host);
+    // Il contenitore delle righe cresce con le righe; il viewport si accorcia
+    // quando compare la barra orizzontale.
+    const watched = new Map<string, Element>();
+    const watchBody = () => {
+      for (const sel of ['.ag-center-cols-container', '.ag-body-viewport']) {
+        const el = host.querySelector(sel);
+        const prev = watched.get(sel);
+        if (el && el !== prev) { if (prev) ro?.unobserve(prev); ro?.observe(el); watched.set(sel, el); }
+      }
+    };
+    // Solo per riacquisire viewport e contenitore quando AG Grid li crea o li
+    // ricrea: le righe disegnate scorrendo non devono svegliare la misura.
+    const missing = () => ['.ag-center-cols-container', '.ag-body-viewport']
+      .some((sel) => !watched.get(sel)?.isConnected);
+    const mo = typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(() => { if (missing()) { watchBody(); schedule(); } })
+      : null;
+    mo?.observe(host, { childList: true, subtree: true });
+    watchBody();
+    schedule();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      ro?.disconnect();
+      mo?.disconnect();
+      if (scheduleCapRef.current === schedule) scheduleCapRef.current = null;
+    };
+  }, [needsSectionCap, rowData]);
+
+
   // Report the ordered records (main rows: path + onboard edit data) so the
   // edit panel hydrates on selection and steps prev/next — all client-side,
   // no round-trip. Source of truth for _selectorPath/_editData is here.
@@ -2686,7 +2770,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       windowByTickRef.current = true;
     }
     if (!panelShown || !editingPath) return;
-    if (contentHeight && windowByTickRef.current) return;
+    if (autoHeight && windowByTickRef.current) return;
     if (performance.now() - rowsArrivedAtRef.current >= ALIGN_WINDOW_MS) return;
     const container = gridContainerRef.current;
     let userTookOver = false;
@@ -2711,8 +2795,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       const first = span && nodes[span.first];
       const last = span && nodes[span.last];
       if (span && first?.rowTop != null && last?.rowTop != null) {
-        if (contentHeight) {
-          // In una pila di sezioni scorre l'area, non la griglia. Le bande sono
+        if (autoHeight) {
+          // In una pila di sezioni, griglia alta quanto il contenuto: scorre
+          // l'area, non la griglia. Con il tetto (SXADV-6300) scorre la griglia
+          // e vale il ramo sotto, sulle coordinate dei nodi. Le bande sono
           // righe a tutta larghezza, in un altro contenitore: si cerca per
           // indice in tutta la griglia. Prima il fondo, poi la cima, cosi' un
           // record piu' alto dell'area mostra il rigo principale.
@@ -2731,7 +2817,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       cancelAnimationFrame(raf);
       USER_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [panelShown, editingPath, rowData, contentHeight, getGridViewport, revealEditingTick]);
+  }, [panelShown, editingPath, rowData, autoHeight, getGridViewport, revealEditingTick]);
 
   // L'eco del pannello sulla riga in gestione (SXADV-6048.2). Si scrivono
   // solo le celle dell'eco, sul SOLO nodo della riga, ricordando il valore del
@@ -3408,8 +3494,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       if (!viewport || !el) return false;
       const v = viewport.getBoundingClientRect();
       const r = el.getBoundingClientRect();
-      // In una pila di sezioni a scorrere e' l'area: la griglia e' sempre "tutta a vista".
-      const area = el.closest('.view-split-bottom--stacked')?.getBoundingClientRect();
+      // In una pila di sezioni a scorrere e' l'area (o, a flusso unico, la pagina
+      // intera — SXADV-6300): la griglia e' sempre "tutta a vista".
+      const area = (el.closest('.view-flow') ?? el.closest('.view-split-bottom--stacked'))?.getBoundingClientRect();
       if (area && (r.top < area.top - 1 || r.bottom > area.bottom + 1)) return false;
       return r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
     };
@@ -3513,10 +3600,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         if (viewport && viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1) {
           viewport.scrollTop = viewport.scrollHeight;
         }
-        if (contentHeight) gridContainerRef.current?.querySelector('.ag-center-cols-container .ag-row:last-child')?.scrollIntoView?.({ block: 'nearest' });
+        if (autoHeightRef.current) gridContainerRef.current?.querySelector('.ag-center-cols-container .ag-row:last-child')?.scrollIntoView?.({ block: 'nearest' });
       } else if (!inView(target.id)) {
         api.ensureIndexVisible(target.rowIndex, 'middle');
-        if (contentHeight) gridContainerRef.current?.querySelector(`.ag-center-cols-container [row-id="${target.id}"]`)?.scrollIntoView?.({ block: 'nearest' });
+        if (autoHeightRef.current) gridContainerRef.current?.querySelector(`.ag-center-cols-container [row-id="${target.id}"]`)?.scrollIntoView?.({ block: 'nearest' });
       }
       if (armed && inView(target.id)) focusRow(api, target.rowIndex);
       if (performance.now() - since < ALIGN_WINDOW_MS) raf = requestAnimationFrame(attempt);
@@ -3810,7 +3897,12 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           if (!embedded) {
             return { width: '100%', flex: 1, minHeight: 0 };
           }
-          if (contentHeight) return { width: '100%', maxWidth: '100%', boxSizing: 'border-box' };
+          if (contentHeight) {
+            if (autoHeight) return { width: '100%', maxWidth: '100%', boxSizing: 'border-box' };
+            // Prima misura: stima a righe singole (intestazione + righe + barra).
+            const height = sectionCapHeight ?? GRID_HEADER_HEIGHT + SECTION_MAX_RECORDS * GRID_ROW_HEIGHT + 16;
+            return { width: '100%', maxWidth: '100%', boxSizing: 'border-box', height };
+          }
           // Embedded grid (form section, tab, or stacked above the in-flow edit
           // panel): FILL the space measured down to the container bottom / the
           // panel top (fillCapHeight — the layout-table ancestors block CSS
@@ -3846,7 +3938,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           // Righe nuove possono far comparire la barra verticale, che toglie
           // spazio in larghezza senza nessun evento di dimensione: si rimisura
           // dopo il disegno.
-          onModelUpdated={() => requestAnimationFrame(measureColsOverflow)}
+          onModelUpdated={() => { requestAnimationFrame(measureColsOverflow); scheduleCapRef.current?.(); }}
           context={{ onAction, onChange, headersByField, onBoolToggle: handleBoolToggle, selectorPad: isListEdit && ui.hasDetailView ? SELECTOR_NAV_WIDTH : 0 }}
           onRowClicked={handleRowClicked}
           onCellKeyDown={handleCellKeyDown as any}
@@ -3861,7 +3953,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           suppressCellFocus={!isMultiEdit && !isListEdit}
           singleClickEdit={isMultiEdit || isListEdit}
           enterNavigatesVerticallyAfterEdit
-          domLayout={contentHeight ? 'autoHeight' : undefined}
+          domLayout={autoHeight ? 'autoHeight' : undefined}
           // Griglia vuota = solo intestazioni, come nel legacy: nessun messaggio
           // nel corpo, che finiva sopra i nomi colonna. Il conteggio a zero lo
           // danno già il paginatore e la toolbar (SXADV-5688.1).

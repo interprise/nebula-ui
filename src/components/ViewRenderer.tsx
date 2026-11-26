@@ -828,9 +828,10 @@ export const TabLabelContext = React.createContext<string | undefined>(undefined
 export const SplitAreaContext = React.createContext<boolean>(false);
 
 /** True quando il pannello inferiore e' una pila di sezioni (due o piu' viste
- *  incorporate senza tab, es. Sottoconti). Ogni griglia e' alta quanto il suo
- *  contenuto e scorre l'area, come nel legacy: dividendo l'altezza in parti uguali
- *  una griglia restava senza righe visibili (SXADV-5935). */
+ *  incorporate, es. Sottoconti). Ogni griglia e' alta quanto il suo contenuto fino
+ *  a una ventina di record, oltre si ferma e scorre da se'; scorre l'area (o, senza
+ *  tab, la pagina intera: SXADV-6300). Dividendo l'altezza in parti uguali una
+ *  griglia restava senza righe visibili (SXADV-5935). */
 export const StackedSectionsContext = React.createContext<boolean>(false);
 
 /** Le sezioni visibili del pannello inferiore, tab esclusi. */
@@ -1646,17 +1647,26 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
 
   if (!embedded && pageType === 2) {
     // Find where the bottom panel starts: scan from the end
+    // I righi nascosti IN CODA, sotto l'ultimo pannello, non contano: su Conto -
+    // Dettaglio dopo le due liste ci sono un suggerimento e un link visibili solo
+    // per i conti clienti/fornitori, e bastava la loro presenza per lasciare le
+    // liste nella testata, alte quanto il minimo di riempimento (SXADV-6300).
+    // Restano nella testata, dove non disegnano niente. Sopra il primo pannello
+    // trovato vale la regola di sempre: ci si ferma al primo rigo non pannello,
+    // visibile o no, cosi' una vista della testata non scende accanto a un tab
+    // a seconda dei dati del record.
     let splitIdx = ui.rows.length;
     for (let i = ui.rows.length - 1; i >= 0; i--) {
       if (isBottomPanelRow(ui.rows[i])) {
         splitIdx = i;
-      } else {
-        break; // Stop at first non-panel row from the bottom
+      } else if (splitIdx < ui.rows.length || isRowVisible(ui.rows[i])) {
+        break; // Stop at first non-panel row above the panels (or visible in the tail)
       }
     }
     if (splitIdx < ui.rows.length) {
-      formRows = ui.rows.slice(0, splitIdx);
-      bottomRows = ui.rows.slice(splitIdx);
+      const tail = ui.rows.slice(splitIdx);
+      formRows = [...ui.rows.slice(0, splitIdx), ...tail.filter((r) => !isBottomPanelRow(r))];
+      bottomRows = tail.filter(isBottomPanelRow);
     }
     // Extract actionBar rows from form rows so they stay fixed above the scroll area
     actionBarRows = formRows.filter(isActionBarRow);
@@ -1928,30 +1938,24 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // everything below the action bar.
   const hasVisibleFormContent = formRows.some(isRowVisible);
   const stackedSections = bottomSectionCount(bottomRows) > 1;
+  // Solo sezioni impilate, nessun tab (Sottoconti: cinque liste): la pagina e'
+  // un unico flusso come nel legacy — testata e poi le sezioni, una sola
+  // barra di scorrimento — invece di due aree con l'inferiore da qualche
+  // centinaio di pixel che faceva scorrere le sezioni dentro di se' e ne
+  // lasciava vedere tre su cinque (SXADV-6300). Con un tab resta la divisione:
+  // la barra dei tab deve restare a vista mentre la testata scorre.
+  const flowSections = stackedSections
+    && !bottomRows.some((r) => r.cells.some((c) => c.control?.type === 'tab'));
 
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
-    return (
-      <FillHeightContext.Provider value={fillHeight}>
-      <ViewNameContext.Provider value={ui.viewName}>
-      <PathContext.Provider value={ui.path}>
-      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onBlurCapture={onSplitBlur} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {zoomed && !embedded && <ZoomEscapeFallback section={panelZoom} />}
-        {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
-        {actionBarRows.length > 0 && (
-          <div className="action-bar-sticky">
-            {actionBarRows.map((row, ri) => (
-              <RowRenderer key={row.id || `ab_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} asDiv />
-            ))}
-          </div>
-        )}
-        {hasVisibleFormContent && !zoomed && (
+    const formBlock = hasVisibleFormContent && !zoomed && (
           <>
             <div
-              className={`view-split-form${resizing ? ' view-split-form--resizing' : ''}`}
+              className={`view-split-form${flowSections ? ' view-split-form--flow' : ''}${resizing ? ' view-split-form--resizing' : ''}`}
               onMouseMove={edgeScroll.onMouseMove}
               onMouseLeave={edgeScroll.onMouseLeave}
-              style={{ flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
+              style={flowSections ? undefined : { flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
             >
               <table ref={tableRef} className="layout-table" style={tableStyle}>
                 <tbody>
@@ -1971,14 +1975,17 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                 </tbody>
               </table>
             </div>
-            <div
-              className="view-split-resizer"
-              onMouseDown={onResizerMouseDown}
-              title="Trascina per ridimensionare"
-            />
+            {!flowSections && (
+              <div
+                className="view-split-resizer"
+                onMouseDown={onResizerMouseDown}
+                title="Trascina per ridimensionare"
+              />
+            )}
           </>
-        )}
-        <div className={`view-split-bottom${stackedSections ? ' view-split-bottom--stacked' : ''}`}>
+        );
+        const bottomBlock = (
+        <div className={`view-split-bottom${stackedSections ? ' view-split-bottom--stacked' : ''}${flowSections ? ' view-split-bottom--flow' : ''}`}>
           <StackedSectionsContext.Provider value={stackedSections}>
           <SplitAreaContext.Provider value={true}>
           {bottomRows.map((row, ri) => {
@@ -2024,6 +2031,25 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
           </SplitAreaContext.Provider>
           </StackedSectionsContext.Provider>
         </div>
+        );
+    return (
+      <FillHeightContext.Provider value={fillHeight}>
+      <ViewNameContext.Provider value={ui.viewName}>
+      <PathContext.Provider value={ui.path}>
+      <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onBlurCapture={onSplitBlur} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
+        {zoomed && !embedded && <ZoomEscapeFallback section={panelZoom} />}
+        {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
+        {actionBarRows.length > 0 && (
+          <div className="action-bar-sticky">
+            {actionBarRows.map((row, ri) => (
+              <RowRenderer key={row.id || `ab_${ri}`} row={row} pageType={pageType} onAction={onAction} onChange={onChange} onGridChange={onGridChange} asDiv />
+            ))}
+          </div>
+        )}
+        {/* Stesso elemento nei due casi, cambia solo la classe: una sezione che
+            si accende o si spegne (1 <-> 2 sezioni) non deve rimontare testata e
+            griglie. Senza flusso il contenitore e' `display: contents`. */}
+        <div className={flowSections ? 'view-flow' : 'view-split-body'}>{formBlock}{bottomBlock}</div>
       </div>
       </PathContext.Provider>
       </ViewNameContext.Provider>
