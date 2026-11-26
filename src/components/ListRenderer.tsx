@@ -773,6 +773,10 @@ type ContCell = {
   title?: string;
   /** Nome del controllo, dalle etichette della banda (SXADV-6294). */
   name?: string;
+  /** La catenella verso contentViewName, se il server l'ha emessa per la cella:
+   *  come nella prima banda (withCellNav), il legacy la disegnava dopo il valore
+   *  in qualunque banda (SXADV-6298). */
+  nav?: CellNavDescriptor;
 };
 
 // Render a single continuation cell. Custom (cell-renderable) controls
@@ -816,10 +820,24 @@ const ContinuationCell = ({
       );
     }
   }
-  if (cell.html) {
-    return <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: serverHtml(cell.html, HTML_POLICY.cell) }} />;
+  if (!cell.nav) {
+    return cell.html
+      ? <span className={cell.cls} style={merged} dangerouslySetInnerHTML={{ __html: serverHtml(cell.html, HTML_POLICY.cell) }} />
+      : <span className={cell.cls} style={merged} title={cell.title}>{cell.text}</span>;
   }
-  return <span className={cell.cls} style={merged} title={cell.title}>{cell.text}</span>;
+  // Con la catenella il riquadro della cella (larghezza, overflow, classi) sta
+  // sul contenitore: e' lui l'elemento della banda, e uno span interno con la
+  // larghezza tornerebbe inline e la perderebbe, spostando le celle dopo. L'icona
+  // flotta a destra PRIMA del testo, cosi' resta sulla sua riga anche quando il
+  // testo e' un blocco (modalita' una-riga).
+  return (
+    <span className={cell.cls} style={merged} title={cell.title}>
+      <CellNavIcon nav={cell.nav} rowPath={rowPath} onAction={onAction} />
+      {cell.html
+        ? <span dangerouslySetInnerHTML={{ __html: serverHtml(cell.html, HTML_POLICY.cell) }} />
+        : cell.text}
+    </span>
+  );
 };
 
 /** Colonne bloccate in modalità una-riga quando il server non dice nulla. Lo
@@ -1737,7 +1755,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           const val = String(cell.control.displayValue ?? cell.control.value ?? '');
           // In list data mode controls lack type; detect HTML by content
           const hasHtml = ctrlType === 'html' || looksLikeServerHtml(val);
-          cells.push(hasHtml ? { html: val, colspan, cls, style } : { text: serverText(val), colspan, cls, style });
+          const nav = cell.control.navigateView as CellNavDescriptor | undefined;
+          const base = hasHtml ? { html: val, colspan, cls, style } : { text: serverText(val), colspan, cls, style };
+          cells.push(nav ? { ...base, nav } : base);
         } else {
           cells.push({ text: '', colspan });
         }
