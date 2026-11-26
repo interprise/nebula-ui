@@ -2589,6 +2589,24 @@ body[style*="cursor: wait"] * {
   overflow: visible;
   background-image: linear-gradient(to right, transparent var(--grid-cols-width, 100%), var(--ag-background-color, #fff) var(--grid-cols-width, 100%));
 }
+/* SXADV-6299: la banda di rottura e l'ultima banda di un record su piu' righe.
+   Il bordo di una riga a tutta larghezza andrebbe fino al bordo destro della
+   griglia: lo si spegne e il separatore si disegna come sfondo, largo quanto le
+   colonne. La banda di rottura tiene l'overflow nascosto di AG Grid: e' piu'
+   alta della riga e cosi' resta tagliata come prima, senza scendere sul record
+   sotto. */
+.ag-full-width-row.break-row,
+.ag-full-width-row.continuation-row-last {
+  border-bottom-color: transparent;
+  background-image:
+    linear-gradient(to right, transparent var(--grid-cols-width, 100%), var(--ag-background-color, #fff) var(--grid-cols-width, 100%)),
+    linear-gradient(to top, var(--ag-border-color) 1px, transparent 1px);
+  background-size: 100% 100%, var(--grid-cols-width, 100%) 100%;
+  background-repeat: no-repeat;
+  /* Gli strati coprono anche la striscia del bordo, dove cade il separatore
+     (allineato ai bordi delle righe normali). */
+  background-origin: border-box;
+}
 /* SXADV-5915.2: il clic su una cella senza controllo non la fa sembrare modificabile
    (si modifica nel pannello di riga). Da tastiera il segno resta. */
 .ag-cell.ag-cell-focus:not(:focus-visible):not(.ag-cell-last-left-pinned):not(:has(input, select, textarea, .ant-select)) {

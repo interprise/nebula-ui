@@ -585,7 +585,12 @@ const CustomCellRenderer = (params: ICellRendererParams) => {
 // Full-width renderer for break rows (group separators)
 const BreakRowRenderer = (params: ICellRendererParams) => {
   return (
-    <div style={{
+    <div className="break-row-band" style={{
+      // Come il rigo principale e le bande di continuazione, la banda finisce
+      // con l'ultima colonna: il suo colore non prosegue nel vuoto a destra
+      // (SXADV-6299, come SXADV-5915.1). Senza misura resta piena.
+      width: 'var(--grid-cols-width, 100%)',
+      boxSizing: 'border-box',
       background: 'linear-gradient(to bottom, #dae6f4 0%, #c2d6eb 100%)',
       fontWeight: 'bold',
       fontSize: 11,
@@ -3064,6 +3069,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
   const getRowClass = (params: { data?: Record<string, unknown> }) => {
     const rowCls = params.data?._rowCls as string | undefined;
+    if (params.data?._isBreakRow) return 'break-row';
     if (params.data?._isContinuationRow) {
       const base = params.data._isLastContinuationRow
         ? 'continuation-row continuation-row-last'
