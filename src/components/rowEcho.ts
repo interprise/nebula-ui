@@ -103,15 +103,78 @@ export function echoText(
   return String(value);
 }
 
+/** Prefisso del campo che porta, nella riga principale in modalita' una-riga,
+ *  il nome del controllo di una cella di banda promossa a colonna. */
+export const CONT_NAME_PREFIX = '_contname_';
+
+/** Le celle di una banda di continuazione col nome del loro controllo
+ *  (SXADV-6294). Nei dati di lista le celle non lo portano: lo portano le
+ *  etichette della banda (`ui.continuationHeaders[banda]`), allineate alle
+ *  celle per UNITA' di colonna (colspan cumulativo, da 0). Una cella prende il
+ *  nome dell'etichetta che comincia nella sua stessa unita'. */
+export function nameContinuationCells<T extends { colspan?: number }>(
+  cells: T[],
+  headers: ReadonlyArray<{ colspan?: number; control?: string }> | undefined,
+): Array<T & { name?: string }> {
+  if (!headers || headers.length === 0) return cells.map((c) => ({ ...c }));
+  const byUnit = new Map<number, string>();
+  let u = 0;
+  for (const h of headers) {
+    if (h.control) byUnit.set(u, h.control);
+    u += h.colspan || 1;
+  }
+  let unit = 0;
+  return cells.map((c) => {
+    const name = byUnit.get(unit);
+    unit += c.colspan || 1;
+    return name ? { ...c, name } : { ...c };
+  });
+}
+
+type EchoCell = { name?: string; text?: string; html?: string; control?: unknown };
+
+/** La banda di continuazione con l'eco sulle celle che hanno un nome nell'eco.
+ *  I controlli personalizzati (cella con `control`) restano dei loro. */
+function applyContinuationEcho(data: Record<string, unknown>, echo: RowEcho): Record<string, unknown> {
+  const cells = data._continuationCells as EchoCell[] | undefined;
+  if (!Array.isArray(cells)) return data;
+  let next: EchoCell[] | null = null;
+  cells.forEach((cell, i) => {
+    const name = cell?.name;
+    if (!name || cell.control || !Object.prototype.hasOwnProperty.call(echo, name)) return;
+    const text = echo[name].text;
+    if (cell.text === text && cell.html === undefined) return;
+    next ??= cells.slice();
+    const { html: _html, ...rest } = cell;
+    void _html;
+    next[i] = { ...rest, text };
+  });
+  return next ? { ...data, _continuationCells: next } : data;
+}
+
 /** La riga di AG Grid con l'eco applicata alle colonne con lo stesso nome di
- *  controllo. Stesso oggetto se non cambia niente; mai modificato sul posto. */
+ *  controllo; per una banda di continuazione, alle sue celle (SXADV-6294).
+ *  Stesso oggetto se non cambia niente; mai modificato sul posto. */
 export function applyRowEcho(
   data: Record<string, unknown>,
   echo: RowEcho,
   columns: readonly ListColumn[] | undefined,
 ): Record<string, unknown> {
-  if (!columns || data._isContinuationRow || data._isBreakRow) return data;
+  if (data._isBreakRow || data._isTotalsRow) return data;
+  if (data._isContinuationRow) return applyContinuationEcho(data, echo);
   let out: Record<string, unknown> | null = null;
+  // Una-riga: le celle delle bande sono colonne `cont_<banda>_<unita'>` della
+  // riga principale, col nome del controllo in `_contname_<campo>` (SXADV-6294).
+  for (const key of Object.keys(data)) {
+    if (!key.startsWith(CONT_NAME_PREFIX)) continue;
+    const name = data[key];
+    if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(echo, name)) continue;
+    const field = key.slice(CONT_NAME_PREFIX.length);
+    if (data[field] === echo[name].text) continue;
+    out ??= { ...data };
+    out[field] = echo[name].text;
+  }
+  if (!columns) return out ?? data;
   columns.forEach((col, i) => {
     const name = col?.control?.name;
     if (!name || !Object.prototype.hasOwnProperty.call(echo, name)) return;

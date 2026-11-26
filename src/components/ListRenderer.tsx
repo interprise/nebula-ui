@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { serverHtml, serverText, HTML_POLICY, looksLikeServerHtml } from '../services/serverHtml';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, type ColDef, type RowClickedEvent, type ICellRendererParams, type CellValueChangedEvent, type GridApi, type IRowNode, themeAlpine } from 'ag-grid-community';
-import { applyRowEcho, pruneEcho, type EchoEntry, type RowEcho } from './rowEcho';
+import { applyRowEcho, pruneEcho, nameContinuationCells, CONT_NAME_PREFIX, type EchoEntry, type RowEcho } from './rowEcho';
 import { Button, Dropdown, Pagination, Space, Tooltip, Typography } from 'antd';
 import { CheckOutlined, PlusOutlined, RightOutlined, FileExcelOutlined, PrinterOutlined, ExpandOutlined, CompressOutlined, ColumnWidthOutlined, ColumnHeightOutlined, LinkOutlined, VerticalRightOutlined, VerticalLeftOutlined } from '@ant-design/icons';
 import type { UITree, UIRow, UICell, UIControl, ListHeader, ListAction, ListColumn, ListRecord, RowEditData, ListTotals } from '../types/ui';
@@ -771,6 +771,8 @@ type ContCell = {
   style?: string;
   /** Suggerimento della cella (banda dei totali: il perché del «—»). */
   title?: string;
+  /** Nome del controllo, dalle etichette della banda (SXADV-6294). */
+  name?: string;
 };
 
 // Render a single continuation cell. Custom (cell-renderable) controls
@@ -1777,7 +1779,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
 
       // Continuation row: first cell is DUMMY (elementType 9)
       if (isContinuationRow(row)) {
-        const contCells = buildContinuationCells(row);
+        // Col nome del controllo, dalle etichette della banda: serve all'eco del
+        // pannello di riga sulle righe dopo la prima (SXADV-6294).
+        const contCells = nameContinuationCells(buildContinuationCells(row), continuationHeaders?.[contRowIdx]);
         if (oneLine) {
           // Fusione nella riga principale del record, che è l'ultima inserita.
           const target = rows.length > 0 ? rows[rows.length - 1] : null;
@@ -1792,6 +1796,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
                 target[field] = text;
                 target[`_contcell_${field}`] = cell;
               }
+              if (cell.name) target[`${CONT_NAME_PREFIX}${field}`] = cell.name;
               const known = flatCols.get(field);
               if (known) {
                 known.hasContent = known.hasContent || filled;
@@ -1805,8 +1810,15 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
           contRowIdx++;
           continue;
         }
-        // Skip empty continuation rows (all dummy/empty cells)
-        if (contCells.every(c => !c.html && !c.text)) {
+        // Skip empty continuation rows (all dummy/empty cells) — tranne quelle di
+        // un record nuovo con campi: li' finira' l'eco di quello che si scrive
+        // nel pannello, e senza la banda non si vedrebbe (SXADV-6294).
+        let mainOfRecord: Record<string, unknown> | undefined;
+        for (let k = rows.length - 1; k >= 0 && !mainOfRecord; k--) {
+          if (!rows[k]._isContinuationRow) mainOfRecord = rows[k];
+        }
+        const keepForNew = !!mainOfRecord?._isNew && contCells.some(c => c.name && !c.control);
+        if (!keepForNew && contCells.every(c => !c.html && !c.text)) {
           contRowIdx++;
           continue;
         }
@@ -2700,7 +2712,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // riga selezionata), altrimenti tornerebbero vecchie alla riapertura.
   const rowEchoRef = useRef(rowEcho);
   const echoLiveRef = useRef(isEchoLive);
-  const echoAppliedRef = useRef<{ node: IRowNode; originals: Record<string, unknown>; texts: Record<string, unknown> } | null>(null);
+  // Un record disteso su piu' righe ha l'eco su tutti i suoi nodi: la riga
+  // principale e le bande di continuazione (SXADV-6294).
+  type EchoApplied = { node: IRowNode; originals: Record<string, unknown>; texts: Record<string, unknown> };
+  const echoAppliedRef = useRef<EchoApplied[]>([]);
   const echoAnsweredRef = useRef(new WeakSet<EchoEntry>());
   useEffect(() => {
     rowEchoRef.current = rowEcho;
@@ -2709,13 +2724,14 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   const syncRowEcho = useCallback(() => {
     const api = gridApiRef.current;
     if (!api) return;
-    const prev = echoAppliedRef.current;
-    echoAppliedRef.current = null;
+    const prevAll = echoAppliedRef.current;
+    echoAppliedRef.current = [];
     // I dati di un nodo senza l'eco messa qui: il valore del server dove la
     // cella porta ancora il testo dell'eco.
     const withoutEcho = (node: IRowNode): Record<string, unknown> => {
       const data = node.data as Record<string, unknown>;
-      if (!prev || prev.node !== node) return data;
+      const prev = prevAll.find((p) => p.node === node);
+      if (!prev) return data;
       let out: Record<string, unknown> | null = null;
       for (const [k, v] of Object.entries(prev.originals)) {
         if (data[k] !== prev.texts[k]) continue;
@@ -2731,30 +2747,32 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     const echo = want
       ? Object.fromEntries(Object.entries(want.echo).filter(([, e]) => !echoAnsweredRef.current.has(e)))
       : {};
-    let target: IRowNode | undefined;
+    const targets: IRowNode[] = [];
     if (want && Object.keys(echo).length > 0) {
       api.forEachNode((n) => {
         const d = n.data as Record<string, unknown> | undefined;
-        if (!target && d && d._selectorPath === want.path && !d._isContinuationRow && !d._isBreakRow) target = n;
+        if (d && d._selectorPath === want.path && !d._isBreakRow && !d._isTotalsRow) targets.push(n);
       });
     }
-    // Il nodo che portava l'eco e non la porta piu': si rimettono i valori
-    // del server, se e' ancora nella griglia (righe nuove = nodi nuovi).
-    if (prev && prev.node !== target && prev.node.id != null && api.getRowNode(prev.node.id) === prev.node) {
+    // I nodi che portavano l'eco e non la portano piu': si rimettono i valori
+    // del server, se sono ancora nella griglia (righe nuove = nodi nuovi).
+    for (const prev of prevAll) {
+      if (targets.includes(prev.node) || prev.node.id == null || api.getRowNode(prev.node.id) !== prev.node) continue;
       const restored = withoutEcho(prev.node);
       if (restored !== prev.node.data) prev.node.updateData(restored);
     }
-    if (!target) return;
-    const base = withoutEcho(target);
-    const patched = applyRowEcho(base, echo, ui.columns);
-    if (patched !== target.data) target.updateData(patched);
-    if (patched === base) return;
-    const originals: Record<string, unknown> = {};
-    const texts: Record<string, unknown> = {};
-    for (const k of Object.keys(patched)) {
-      if (patched[k] !== base[k]) { originals[k] = base[k]; texts[k] = patched[k]; }
+    for (const target of targets) {
+      const base = withoutEcho(target);
+      const patched = applyRowEcho(base, echo, ui.columns);
+      if (patched !== target.data) target.updateData(patched);
+      if (patched === base) continue;
+      const originals: Record<string, unknown> = {};
+      const texts: Record<string, unknown> = {};
+      for (const k of Object.keys(patched)) {
+        if (patched[k] !== base[k]) { originals[k] = base[k]; texts[k] = patched[k]; }
+      }
+      echoAppliedRef.current.push({ node: target, originals, texts });
     }
-    echoAppliedRef.current = { node: target, originals, texts };
   }, [ui.columns]);
   useEffect(() => { syncRowEcho(); }, [rowEcho, isEchoLive, editingPath, syncRowEcho]);
   // Righe nuove dal server: le voci gia' partite hanno avuto risposta.
