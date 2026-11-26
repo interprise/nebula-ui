@@ -112,7 +112,7 @@ export const CONT_NAME_PREFIX = '_contname_';
  *  etichette della banda (`ui.continuationHeaders[banda]`), allineate alle
  *  celle per UNITA' di colonna (colspan cumulativo, da 0). Una cella prende il
  *  nome dell'etichetta che comincia nella sua stessa unita'. */
-export function nameContinuationCells<T extends { colspan?: number }>(
+export function nameContinuationCells<T extends { colspan?: number; text?: string; html?: string; control?: unknown }>(
   cells: T[],
   headers: ReadonlyArray<{ colspan?: number; control?: string }> | undefined,
 ): Array<T & { name?: string }> {
@@ -170,9 +170,18 @@ export function applyRowEcho(
     const name = data[key];
     if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(echo, name)) continue;
     const field = key.slice(CONT_NAME_PREFIX.length);
-    if (data[field] === echo[name].text) continue;
+    const text = echo[name].text;
+    // La colonna promossa si disegna da `_contcell_<campo>` (FlatContinuationRenderer):
+    // il solo campo piatto (ordinamento, copia) a schermo non si vedeva.
+    const cellKey = `_contcell_${field}`;
+    const cell = data[cellKey] as EchoCell | undefined;
+    if (cell?.control) continue;
+    if (data[field] === text && cell?.text === text && cell.html === undefined) continue;
     out ??= { ...data };
-    out[field] = echo[name].text;
+    out[field] = text;
+    const { html: _html, ...rest } = cell ?? {};
+    void _html;
+    out[cellKey] = { ...rest, text };
   }
   if (!columns) return out ?? data;
   columns.forEach((col, i) => {

@@ -239,6 +239,9 @@ describe('applyRowEcho: riga di continuazione (SXADV-6294)', () => {
 });
 
 // --- applyRowEcho in modalita' una-riga ------------------------------------------------
+// Le celle di banda promosse a colonne si DISEGNANO da `_contcell_<campo>`
+// (FlatContinuationRenderer legge solo quella): l'eco deve aggiornare il campo
+// e anche la cella, altrimenti a schermo non si vede niente.
 
 describe('applyRowEcho: riga principale in modalita\' una-riga (SXADV-6294)', () => {
   function oneLineRow(extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -247,41 +250,95 @@ describe('applyRowEcho: riga principale in modalita\' una-riga (SXADV-6294)', ()
       col_1: 'Fattura 12',
       cont_0_0: 'Condizione di Pagamento',
       _contname_cont_0_0: 'prompt',
+      _contcell_cont_0_0: { colspan: 4, text: 'Condizione di Pagamento' },
       cont_0_4: 'vecchio',
       _contname_cont_0_4: 'content',
+      _contcell_cont_0_4: { colspan: 14, text: 'vecchio', html: '<b>vecchio</b>', cls: 'x' },
       cont_0_18: '30',
       _contname_cont_0_18: 'size',
+      _contcell_cont_0_18: { colspan: 2, text: '30', cls: 'number' },
       ...extra,
     };
   }
 
-  it('il campo di banda col nome nell\'eco prende il testo digitato', () => {
+  it('il campo di banda col nome nell\'eco prende il testo digitato, anche nella cella disegnata', () => {
     const data = oneLineRow();
     const out = applyRowEcho(data, { content: entry('content', 'nuovo') }, MAIN_COLUMNS);
     expect(out).not.toBe(data);
     expect(out.cont_0_4).toBe('nuovo');
+    // la cella da cui si disegna: testo nuovo, html tolto, il resto conservato
+    expect(out._contcell_cont_0_4).toEqual({ colspan: 14, text: 'nuovo', cls: 'x' });
+    expect(out._contcell_cont_0_4).not.toBe(data._contcell_cont_0_4);
+    // i campi non toccati restano quelli, con la loro identita'
     expect(out.cont_0_0).toBe('Condizione di Pagamento');
     expect(out.cont_0_18).toBe('30');
+    expect(out._contcell_cont_0_0).toBe(data._contcell_cont_0_0);
+    expect(out._contcell_cont_0_18).toBe(data._contcell_cont_0_18);
     expect(out._contname_cont_0_4).toBe('content');
   });
 
-  it('non modifica la riga ricevuta', () => {
+  it('non modifica la riga ricevuta ne\' le sue celle', () => {
     const data = oneLineRow();
     const snapshot = deepCopy(data);
     applyRowEcho(data, { content: entry('content', 'nuovo') }, MAIN_COLUMNS);
     expect(data).toEqual(snapshot);
   });
 
-  it('campo di banda vuoto (assente) ma col nome: l\'eco lo riempie', () => {
-    const data = oneLineRow({ cont_1_2: undefined, _contname_cont_1_2: 'note' });
-    delete data.cont_1_2;
+  it('campo di banda vuoto (assente) ma col nome: l\'eco lo riempie e crea la cella { text }', () => {
+    const data = oneLineRow({ _contname_cont_1_2: 'note' });
     const out = applyRowEcho(data, { note: entry('note', 'scritto') }, MAIN_COLUMNS);
     expect(out.cont_1_2).toBe('scritto');
+    expect(out._contcell_cont_1_2).toEqual({ text: 'scritto' });
+    expect('_contcell_cont_1_2' in data).toBe(false);
   });
 
-  it('valore gia\' uguale: stessa riga', () => {
-    const data = oneLineRow();
+  it('valore e cella gia\' uguali, senza html: stessa riga', () => {
+    const data = oneLineRow({
+      _contcell_cont_0_4: { colspan: 14, text: 'vecchio' },
+    });
     expect(applyRowEcho(data, { content: entry('content', 'vecchio') }, MAIN_COLUMNS)).toBe(data);
+  });
+
+  it('valore uguale ma la cella ha ancora html: riga nuova, html tolto', () => {
+    const data = oneLineRow();
+    const out = applyRowEcho(data, { content: entry('content', 'vecchio') }, MAIN_COLUMNS);
+    expect(out).not.toBe(data);
+    expect(out._contcell_cont_0_4).toEqual({ colspan: 14, text: 'vecchio', cls: 'x' });
+  });
+
+  it('valore uguale ma la cella ha un testo diverso: riga nuova con la cella allineata', () => {
+    const data = oneLineRow({ _contcell_cont_0_4: { colspan: 14, text: 'altro' } });
+    const out = applyRowEcho(data, { content: entry('content', 'vecchio') }, MAIN_COLUMNS);
+    expect(out).not.toBe(data);
+    expect(out._contcell_cont_0_4).toEqual({ colspan: 14, text: 'vecchio' });
+  });
+
+  it('valore uguale ma la cella manca: riga nuova con la cella creata', () => {
+    const data = oneLineRow();
+    delete data._contcell_cont_0_4;
+    const out = applyRowEcho(data, { content: entry('content', 'vecchio') }, MAIN_COLUMNS);
+    expect(out).not.toBe(data);
+    expect(out._contcell_cont_0_4).toEqual({ text: 'vecchio' });
+  });
+
+  it('cella con control (renderer personalizzato): ne\' il campo ne\' la cella cambiano', () => {
+    const cell = { colspan: 14, text: 'vecchio', control: { type: 'button' } };
+    const data = oneLineRow({ _contcell_cont_0_4: cell });
+    const out = applyRowEcho(data, { content: entry('content', 'nuovo') }, MAIN_COLUMNS);
+    expect(out).toBe(data);
+    expect(out.cont_0_4).toBe('vecchio');
+    expect(out._contcell_cont_0_4).toBe(cell);
+  });
+
+  it('cella con control accanto a un campo normale: solo il campo normale prende l\'eco', () => {
+    const cell = { colspan: 14, text: 'vecchio', control: { type: 'button' } };
+    const data = oneLineRow({ _contcell_cont_0_4: cell });
+    const echo: RowEcho = { content: entry('content', 'nuovo'), size: entry('size', '60') };
+    const out = applyRowEcho(data, echo, MAIN_COLUMNS);
+    expect(out.cont_0_4).toBe('vecchio');
+    expect(out._contcell_cont_0_4).toBe(cell);
+    expect(out.cont_0_18).toBe('60');
+    expect(out._contcell_cont_0_18).toEqual({ colspan: 2, text: '60', cls: 'number' });
   });
 
   it('eco su colonna principale e campo di banda insieme', () => {
@@ -293,6 +350,7 @@ describe('applyRowEcho: riga principale in modalita\' una-riga (SXADV-6294)', ()
     const out = applyRowEcho(data, echo, MAIN_COLUMNS);
     expect(out.col_1).toBe('Fattura 13');
     expect(out.cont_0_18).toBe('60');
+    expect((out._contcell_cont_0_18 as { text?: string }).text).toBe('60');
   });
 
   it('nome non nell\'eco: stessa riga', () => {

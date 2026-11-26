@@ -353,6 +353,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
   React.useLayoutEffect(() => {
     if (lastPathRef.current === path) return;
     lastPathRef.current = path;
+    // Ad altezza ferma un record piu' alto scorre dentro il pannello: quello
+    // dopo riparte dalla cima, non dallo scorrimento del precedente.
+    if (panelRef.current) panelRef.current.scrollTop = 0;
     if (arrowStepRef.current) arrowStepRef.current = false;
     else setLockedHeight(null);
   }, [path]);

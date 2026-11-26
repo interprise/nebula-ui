@@ -1223,6 +1223,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // senza farlo ripartire a ogni disegno (SXADV-6293).
   const onSelectRecordRef = useRef(onSelectRecord);
   onSelectRecordRef.current = onSelectRecord;
+  const editablePanelPathsRef = useRef(editablePanelPaths);
+  editablePanelPathsRef.current = editablePanelPaths;
+  /** `chiave|rigo` del ritorno dal «Dettaglio» gia' riaperto nel pannello. */
+  const panelReopenedRef = useRef<string | null>(null);
   // Il «>» della riga apre la pagina di dettaglio come il clic su una lista che
   // naviga, e al ritorno deve rimettere il fuoco su quella riga (SXADV-5927).
   // Assegnata dopo activateRow, da cui prende ricordo, evidenza e ritorno.
@@ -2645,17 +2649,24 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // Anche un passo delle frecce del pannello apre la finestra: la selezione
   // cambia solo nel client, righe nuove non ne arrivano, e la riga gialla
   // usciva dalla vista (SXADV-6295). Il clic su un rigo no: e' gia' a vista.
+  // In una pila di sezioni pero' a scorrere sarebbe l'area intera, pannello
+  // compreso: la freccia premuta scapperebbe da sotto il puntatore (SXADV-6290).
+  // Li' il passo delle frecce non allinea.
   const keptRevealTickRef = useRef(revealEditingTick);
+  const windowByTickRef = useRef(false);
   useEffect(() => {
     if (keptRowDataRef.current !== rowData) {
       keptRowDataRef.current = rowData;
       rowsArrivedAtRef.current = performance.now();
+      windowByTickRef.current = false;
     }
     if (keptRevealTickRef.current !== revealEditingTick) {
       keptRevealTickRef.current = revealEditingTick;
       rowsArrivedAtRef.current = performance.now();
+      windowByTickRef.current = true;
     }
     if (!panelShown || !editingPath) return;
+    if (contentHeight && windowByTickRef.current) return;
     if (performance.now() - rowsArrivedAtRef.current >= ALIGN_WINDOW_MS) return;
     const container = gridContainerRef.current;
     let userTookOver = false;
@@ -3348,6 +3359,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
     let focused = false;
     const giveUp = () => {
       if (!armed) return;
+      panelReopenedRef.current = null;
       disarmReturn(memKey);
       gridContainerRef.current?.removeAttribute(ROW_RETURN_ATTR);
       // La lista non ha trovato la riga (cancellata nel dettaglio, su un'altra
@@ -3454,9 +3466,6 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         alignedPathRef.current = match;
         target = nodes.find((n) => n.path === match) ?? null;
         if (!target) { giveUp(); return; }
-        // Usciti dal «Dettaglio» del pannello: si rientra nella «Gestione riga»
-        // di quel rigo, non nella sola lista (SXADV-6293).
-        if (armed === 'panel') onSelectRecordRef.current?.(match);
         // Ritorno su una scheda di sessione: la posizione la rimette la Shell,
         // com'era quando la si e' lasciata (SXADV-6008); la riga ricordata si
         // evidenzia soltanto.
@@ -3464,6 +3473,19 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         since = performance.now();
       }
       if (userTookOver) { giveUp(); return; }
+      // Usciti dal «Dettaglio» del pannello: si rientra nella «Gestione riga»
+      // di quel rigo, non nella sola lista (SXADV-6293). Una volta per ritorno
+      // (la finestra rifa' girare l'effetto a ogni rowData, e un pannello chiuso
+      // con Esc non si riapre), e solo su un rigo il cui pannello si apre
+      // davvero, come per il clic: l'elenco di quei righi arriva un disegno dopo
+      // le righe, quindi si riprova a ogni giro finche' la finestra dura.
+      if (armed === 'panel' && panelReopenedRef.current !== `${memKey}|${target.path}`) {
+        const editable = editablePanelPathsRef.current;
+        if (!editable || editable.has(target.path)) {
+          panelReopenedRef.current = `${memKey}|${target.path}`;
+          onSelectRecordRef.current?.(target.path);
+        }
+      }
       if (armed === 'new') {
         // Il rigo nuovo e' in fondo, con le sue bande sotto: la griglia va
         // scorsa fino in fondo, non con la riga a meta' (SXADV-5927).
