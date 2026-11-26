@@ -1364,6 +1364,8 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
 
   // Step to the previous/next record from the panel — pure client-side reselection.
   const currentIndex = selectedPath ? recordPaths.indexOf(selectedPath) : -1;
+  // La griglia porta a vista la riga gialla a ogni passo (SXADV-6295).
+  const [revealTick, setRevealTick] = React.useState(0);
   const navigateRecord = React.useCallback((delta: number) => {
     const cur = selectedPathRef.current;
     const idx = cur ? recordPaths.indexOf(cur) : -1;
@@ -1374,6 +1376,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     selectedPathRef.current = next;
     setEditRow?.(next);
     setSelectedPath(next);
+    setRevealTick((t) => t + 1);
   }, [recordPaths, setEditRow, flushSelected]);
 
   // The panel FORM template is cacheable (sid-free, keyed by panelTemplateKey).
@@ -1476,6 +1479,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
         editingPath={isListEdit ? editingPath : null}
         rowEcho={isListEdit ? rowEcho : null}
         isEchoLive={isFieldDirty}
+        revealEditingTick={revealTick}
       />
       {showPanel && hydratedPanel && (
         <DataVersionContext.Provider value={panelDataVersion}>

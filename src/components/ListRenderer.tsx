@@ -1048,9 +1048,12 @@ interface ListRendererProps {
   /** Il campo (nome a filo) non e' ancora partito con una richiesta. All'arrivo
    *  di righe nuove dal server le voci dell'eco gia' partite smettono di valere. */
   isEchoLive?: (wire: string) => boolean;
+  /** listEdit: cresce a ogni passo delle frecce del pannello. La riga in
+   *  gestione si porta a vista anche senza righe nuove dal server (SXADV-6295). */
+  revealEditingTick?: number;
 }
 
-const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, onRowsReplaced, pendingAdd, embedded, panelShown, editablePanelPaths, editingPath, rowEcho, isEchoLive }) => {
+const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onGridChange, onSelectRecord, onRecordPaths, onRowsReplaced, pendingAdd, embedded, panelShown, editablePanelPaths, editingPath, rowEcho, isEchoLive, revealEditingTick = 0 }) => {
   // A grid inside a tab does not repeat the tab's own label (the documents
   // "Righe fattura" case — see TabLabelContext).
   const titleEchoesTab = useIsTabLabelEcho(ui.header?.title);
@@ -2623,9 +2626,17 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // quando editingPath passa al rigo nuovo (dopo "Nuovo" arriva un disegno dopo).
   const keptRowDataRef = useRef(rowData);
   const rowsArrivedAtRef = useRef(Number.NEGATIVE_INFINITY);
+  // Anche un passo delle frecce del pannello apre la finestra: la selezione
+  // cambia solo nel client, righe nuove non ne arrivano, e la riga gialla
+  // usciva dalla vista (SXADV-6295). Il clic su un rigo no: e' gia' a vista.
+  const keptRevealTickRef = useRef(revealEditingTick);
   useEffect(() => {
     if (keptRowDataRef.current !== rowData) {
       keptRowDataRef.current = rowData;
+      rowsArrivedAtRef.current = performance.now();
+    }
+    if (keptRevealTickRef.current !== revealEditingTick) {
+      keptRevealTickRef.current = revealEditingTick;
       rowsArrivedAtRef.current = performance.now();
     }
     if (!panelShown || !editingPath) return;
@@ -2673,7 +2684,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
       cancelAnimationFrame(raf);
       USER_EVENTS.forEach((t) => container?.removeEventListener(t, takeOver, { capture: true }));
     };
-  }, [panelShown, editingPath, rowData, contentHeight, getGridViewport]);
+  }, [panelShown, editingPath, rowData, contentHeight, getGridViewport, revealEditingTick]);
 
   // L'eco del pannello sulla riga in gestione (SXADV-6048.2). Si scrivono
   // solo le celle dell'eco, sul SOLO nodo della riga, ricordando il valore del
