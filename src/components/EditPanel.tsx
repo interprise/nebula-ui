@@ -322,6 +322,41 @@ const EditPanel: React.FC<EditPanelProps> = ({
   useHotkey('Escape', onClose, { priority: HotkeyPriority.editPanel, allowWhileTyping: true });
 
   const path = rowPath ?? panel.path ?? '';
+
+  // Frecce di riga ad altezza ferma (SXADV-6290). L'altezza del pannello segue
+  // il contenuto del record, e la griglia sopra cede esattamente quello spazio:
+  // un record con piu' righe di testo alzava la testata, e il puntatore non era
+  // piu' sulla freccia appena premuta. Alla prima freccia l'altezza si fissa a
+  // quella che ha; finche' si scorre con le frecce resta quella, e un record piu'
+  // alto scorre dentro il pannello (la testata e' sticky). Qualunque altro cambio
+  // di riga - clic in griglia, Nuovo, Cancella - la libera.
+  const [lockedHeight, setLockedHeight] = React.useState<number | null>(null);
+  const arrowStepRef = React.useRef(false);
+  const step = (delta: number) => {
+    if (!onNavigate) return;
+    if (lockedHeight == null) {
+      const h = panelRef.current?.getBoundingClientRect().height ?? 0;
+      if (h > 0) {
+        // Subito nel DOM, non solo al prossimo disegno: chi misura durante
+        // onNavigate trova gia' l'altezza ferma.
+        if (panelRef.current) panelRef.current.style.height = `${h}px`;
+        setLockedHeight(h);
+      }
+    }
+    arrowStepRef.current = true;
+    onNavigate(delta);
+    // Una freccia che non cambia riga non deve far passare per suo il cambio
+    // successivo: il segno vale solo per il giro sincrono del clic.
+    setTimeout(() => { arrowStepRef.current = false; }, 0);
+  };
+  const lastPathRef = React.useRef(path);
+  React.useLayoutEffect(() => {
+    if (lastPathRef.current === path) return;
+    lastPathRef.current = path;
+    if (arrowStepRef.current) arrowStepRef.current = false;
+    else setLockedHeight(null);
+  }, [path]);
+
   // La forma la decide il SERVER (buildPanelTemplate) e la manda in formShape:
   // e' la form di dettaglio dove la lista ha una detailViewName. La deduzione
   // qui sotto resta solo per un server che non manda formShape, e non e' piu'
@@ -378,16 +413,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
     <PathContext.Provider value={path}>
       {/* In attesa del rigo nuovo niente clic ne' tasti nel pannello (inert):
           quello che vi si scrivesse andrebbe sul rigo che sta per lasciare. */}
-      <div {...editPanelWaitAttrs(waiting)} ref={panelRef}>
+      <div {...editPanelWaitAttrs(waiting)} ref={panelRef}
+        style={lockedHeight != null ? { height: lockedHeight } : undefined}>
         <div className="edit-panel-head">
           <span className="edit-panel-title">Gestione riga</span>
           {waiting && <span className="edit-panel-waiting" role="status">Nuovo rigo in arrivo…</span>}
           {onNavigate && (
             <span className="edit-panel-head-actions">
               <Button type="text" size="small" icon={<UpOutlined />} disabled={!hasPrev}
-                onClick={() => onNavigate(-1)} aria-label="Record precedente" title="Record precedente" />
+                onClick={() => step(-1)} aria-label="Record precedente" title="Record precedente" />
               <Button type="text" size="small" icon={<DownOutlined />} disabled={!hasNext}
-                onClick={() => onNavigate(1)} aria-label="Record successivo" title="Record successivo" />
+                onClick={() => step(1)} aria-label="Record successivo" title="Record successivo" />
             </span>
           )}
           <span className="edit-panel-head-actions">
