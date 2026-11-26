@@ -5,8 +5,10 @@
  *  lasciava la griglia in cima (SXADV-5927). Vale un ritorno solo: la lista lo
  *  disarma appena l'ha applicato, e un ingresso di primo livello (voce di menu,
  *  `newTask`) li disarma tutti, perche' da li' non si torna piu' alla lista.
- *  Chiave = sid + vista, come la riga ricordata in rowSelectionMemory. */
-export type ReturnMode = 'row' | 'new';
+ *  Chiave = sid + vista, come la riga ricordata in rowSelectionMemory.
+ *  'panel' e' il «Dettaglio» del pannello di riga: come 'row', e in piu' al
+ *  ritorno il pannello si riapre su quel rigo, dove l'utente era (SXADV-6293). */
+export type ReturnMode = 'row' | 'new' | 'panel';
 /** `owner` e' la lista che ha armato il ritorno (per una lista incorporata il
  *  padre del suo percorso, `listOwnerOf`): la chiave sid + vista non basta,
  *  perche' il dettaglio di un rigo puo' contenere una griglia della stessa

@@ -1300,7 +1300,7 @@ const ListView: React.FC<ViewRendererProps> = (props) => {
     if (detail && detail.action === action && detail.params.navpath === params?.navpath) {
       const { memKey, owner } = listReturnKey(sid, ui, !!props.embedded);
       rememberRow(memKey, detail.params.navpath);
-      armReturn(memKey, 'row', owner);
+      armReturn(memKey, 'panel', owner);
     }
     return onAction(action, params);
   }, [rowActions, sid, ui, props.embedded, onAction]);

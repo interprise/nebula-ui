@@ -1219,6 +1219,10 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
   // selector column doesn't force the columnDefs memo to rebuild each render.
   const onActionRef = useRef(onAction);
   onActionRef.current = onAction;
+  // Per il ritorno dal «Dettaglio» del pannello, letta dall'effetto del ritorno
+  // senza farlo ripartire a ogni disegno (SXADV-6293).
+  const onSelectRecordRef = useRef(onSelectRecord);
+  onSelectRecordRef.current = onSelectRecord;
   // Il «>» della riga apre la pagina di dettaglio come il clic su una lista che
   // naviga, e al ritorno deve rimettere il fuoco su quella riga (SXADV-5927).
   // Assegnata dopo activateRow, da cui prende ricordo, evidenza e ritorno.
@@ -3414,7 +3418,7 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         const match = armed === 'new'
           ? lastRecordPath(nodes)
           : findRememberedRow(stored ?? '', nodes.map((n) => n.path), !!embedded);
-        if (!match && armed === 'row' && embedded && stored) {
+        if (!match && (armed === 'row' || armed === 'panel') && embedded && stored) {
           // La lista del tab ricreata al ritorno riparte da pagina 1: si chiede
           // la pagina del rigo, e la risposta rifa' girare questo effetto con
           // le righe nuove (5957.2B). Si aspetta al piu' PAGE_WAIT_MS: se la
@@ -3450,6 +3454,9 @@ const ListRenderer: React.FC<ListRendererProps> = ({ ui, onAction, onChange, onG
         alignedPathRef.current = match;
         target = nodes.find((n) => n.path === match) ?? null;
         if (!target) { giveUp(); return; }
+        // Usciti dal «Dettaglio» del pannello: si rientra nella «Gestione riga»
+        // di quel rigo, non nella sola lista (SXADV-6293).
+        if (armed === 'panel') onSelectRecordRef.current?.(match);
         // Ritorno su una scheda di sessione: la posizione la rimette la Shell,
         // com'era quando la si e' lasciata (SXADV-6008); la riga ricordata si
         // evidenzia soltanto.
