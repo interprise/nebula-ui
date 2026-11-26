@@ -74,6 +74,7 @@ import { useUiMode, ZoomScopeContext } from '../hooks/uiMode';
 import { useDensity, DENSITY_OPTIONS, type Density } from '../hooks/density';
 import { useHotkey } from '../hooks/hotkeys';
 import { useFeedback } from '../hooks/feedback';
+import { schedaConModifiche, DOMANDA_MODIFICHE_NON_SALVATE } from './schedaModifiche';
 import AddWidgetModal, { type WidgetAggiunto } from './AddWidgetModal';
 import { headerColor } from './headerColor';
 import { HeaderContextSelect } from './HeaderContextSelect';
@@ -735,6 +736,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const resetToHome = useCallback(() => {
     tabCounter = 1;
     formValuesRef.current = { tab_1: {} };
+    // Le chiavi tab_N ripartono da tab_1: niente digitato ereditato.
+    pendingByTabRef.current = {};
+    chiusuraInVerificaRef.current.clear();
     setTabs([{ key: 'tab_1', label: 'Sessione 1', sid: 'S1', formValues: {}, formCaptions: {} }]);
     // Dopo il cambio si torna sulla Home, che si rilegge per il contesto nuovo.
     workTabRef.current = 'tab_1';
@@ -1496,6 +1500,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   const forgetPanelField = useCallback((tabKey: string, name: string) => {
     panelFieldRowsRef.current[tabKey]?.delete(name);
     dirtyFieldsRef.current.delete(name);
+    pendingByTabRef.current[tabKey]?.delete(name);
     const fvs = formValuesRef.current[tabKey];
     if (fvs) delete fvs[name];
     const tab = tabsRef.current.find((t) => t.key === tabKey);
@@ -1721,11 +1726,17 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       const rowTarget = action === 'Add' ? (sentParams.postPath ?? sentParams.navpath) : sentParams.navpath;
       let sentPanel: { name: string; value: string | string[] | undefined }[] = [];
       let keptPanel: string[] = [];
+      // Il digitato del pannello che resta da spedire, letto sull'insieme di
+      // QUESTA scheda: dirtyFieldsRef lo svuota anche una richiesta di un'altra.
+      let keptPending: string[] = [];
       if (fv) {
         const scoped = scopePanelValues(fv, panelFieldRows(tab.key), endsRowScope ? null : rowTarget);
         fv = scoped.values;
         if (endsRowScope) for (const n of scoped.dropped) forgetPanelField(tab.key, n);
-        else keptPanel = scoped.dropped.filter((n) => dirtyFieldsRef.current.has(n));
+        else {
+          keptPanel = scoped.dropped.filter((n) => dirtyFieldsRef.current.has(n));
+          keptPending = scoped.dropped.filter((n) => pendingByTabRef.current[tab.key]?.has(n));
+        }
         sentPanel = scoped.sent.map((name) => ({ name, value: fv?.[name] }));
       }
       const settlePanelFields = (resp: ServerResponse) => {
@@ -1752,6 +1763,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if (fv) {
         dirtyFieldsRef.current.clear();
         for (const n of keptPanel) dirtyFieldsRef.current.add(n);
+        pendingByTabRef.current[tab.key] = new Set(keptPending);
       }
       // Replay THIS action (Save/Delete/navigation/…) with the answer appended
       // if it raises a confirmation — instead of the old hardcoded Post that
@@ -1938,12 +1950,19 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
   // dietro TUTTI i valori di form, quindi appena ne parte una l'insieme si
   // svuota: quello che resta qui e' esattamente cio' che il server non sa.
   const dirtyFieldsRef = useRef<Set<string>>(new Set());
+  // Lo stesso, per scheda: dirtyFieldsRef e' unico per tutte le schede, e alla
+  // chiusura di una scheda serve sapere se il SUO digitato e' ancora da spedire.
+  const pendingByTabRef = useRef<Record<string, Set<string>>>({});
+  // Le schede in attesa della risposta di PendingChanges: un secondo clic sulla
+  // stessa «x» non manda una seconda verifica.
+  const chiusuraInVerificaRef = useRef<Set<string>>(new Set());
 
   const handleFieldChange = useCallback(
     (name: string, value: unknown, caption?: PendingCaption) => {
       const tab = getActiveTabState();
       if (!tab) return;
       dirtyFieldsRef.current.add(name);
+      (pendingByTabRef.current[tab.key] ??= new Set()).add(name);
       // Preserve arrays (multi-valued form fields like `assegnaInput`
       // where the server reads parameterValues() — legacy behavior).
       const stored = Array.isArray(value)
@@ -2104,6 +2123,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     const tab = getActiveTabState();
     if (!tab) return;
     for (const n of names) {
+      pendingByTabRef.current[tab.key]?.delete(n);
       if (!dirtyFieldsRef.current.delete(n)) continue;
       panelFieldRowsRef.current[tab.key]?.delete(n);
       delete tab.formValues[n];
@@ -2201,39 +2221,78 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
     } else if (action === 'remove') {
       const key = typeof targetKey === 'string' ? targetKey : '';
       const closed = tabsRef.current.find((t) => t.key === key);
-      // Si chiude la scheda di lavoro: la sostituisce quella che la chiusura
-      // renderebbe attiva (la successiva, o la precedente se era l'ultima), anche
-      // quando la si chiude stando sulla Home.
-      if (workTabRef.current === key) {
-        const prima = schedeDiArea(tabsRef.current, 'menu');
-        const idx = prima.findIndex((t) => t.key === key);
-        const resto = prima.filter((t) => t.key !== key);
-        if (resto.length > 0) workTabRef.current = resto[Math.min(idx, resto.length - 1)].key;
+      if (!closed) return;
+      // Chiudere la scheda chiude la sua Session sul server, e con lei le
+      // modifiche non salvate: si chiede, con la stessa domanda del menu e del
+      // ritorno indietro (SXADV-6301). Modifiche = digitato di QUELLA scheda non
+      // ancora spedito, oppure Annulla acceso nella sua toolbar, oppure il server
+      // (PendingChanges) che ne vede in una transazione qualunque della pila:
+      // l'Annulla guarda solo quella in cima.
+      const chiedi = () =>
+        feedback.confirm('Richiesta di conferma', DOMANDA_MODIFICHE_NON_SALVATE, () => chiudiScheda(key));
+      // Rilette al momento: durante l'attesa del server si puo' battere ancora.
+      const modificheNelClient = () => {
+        const t = tabsRef.current.find((x) => x.key === key);
+        return (pendingByTabRef.current[key]?.size ?? 0) > 0 || schedaConModifiche(t?.toolbar);
+      };
+      if (modificheNelClient()) {
+        chiedi();
+        return;
       }
-      // La scheda da attivare si sceglie qui e non dentro l'updater di setTabs:
-      // setActiveTab fotografa lo scorrimento (SXADV-6008), e un updater
-      // eseguito piu' tardi, nel render, rimetterebbe in memoria quello della
-      // scheda appena chiusa.
-      // Nella stessa area: dal documentale non si finisce su una scheda del gestionale.
-      const prev = schedeDiArea(tabsRef.current, closed && isSchedaDocumentale(closed) ? 'cdms' : 'menu');
-      const idx = prev.findIndex((t) => t.key === key);
-      const next = prev.filter((t) => t.key !== key);
-      if (activeTab === key && next.length > 0) {
-        setActiveTab(next[Math.min(idx, next.length - 1)].key);
-      } else if (next.length === 0) {
-        setActiveTab('');
-      }
-      setTabs((p) => p.filter((t) => t.key !== key));
-      if (closed) dimenticaSidDocumentale(closed.sid);
-      delete formValuesRef.current[key];
-      delete scrollByTabRef.current[key];
-      // La Session resta viva sul server finche' non gliela si chiude: senza
-      // questo si accumulano (e dopo un F5 le schede appena chiuse
-      // ricomparirebbero, ricostruite da `panels`). Come il closeSession() del
-      // client legacy.
-      if (closed) void api.postAction2('CloseSession', { sid: closed.sid }).catch(() => {});
-      if (closed) clearPendingUpload(closed.sid);
+      if (chiusuraInVerificaRef.current.has(key)) return;
+      chiusuraInVerificaRef.current.add(key);
+      void api
+        .postAction2('PendingChanges', { sid: closed.sid })
+        .then((r) => (r as { modifiche?: unknown }).modifiche === true)
+        // Senza risposta si resta al criterio del client, gia' negativo: si chiude.
+        .catch(() => false)
+        .then((modifiche) => {
+          chiusuraInVerificaRef.current.delete(key);
+          if (modifiche || modificheNelClient()) chiedi();
+          else chiudiScheda(key);
+        });
     }
+  };
+
+  const chiudiScheda = (key: string) => {
+    const closed = tabsRef.current.find((t) => t.key === key);
+    // Un secondo OK sulla stessa scheda (due domande aperte) non fa niente.
+    if (!closed) return;
+    // Si chiude la scheda di lavoro: la sostituisce quella che la chiusura
+    // renderebbe attiva (la successiva, o la precedente se era l'ultima), anche
+    // quando la si chiude stando sulla Home.
+    if (workTabRef.current === key) {
+      const prima = schedeDiArea(tabsRef.current, 'menu');
+      const idx = prima.findIndex((t) => t.key === key);
+      const resto = prima.filter((t) => t.key !== key);
+      if (resto.length > 0) workTabRef.current = resto[Math.min(idx, resto.length - 1)].key;
+    }
+    // La scheda da attivare si sceglie qui e non dentro l'updater di setTabs:
+    // setActiveTab fotografa lo scorrimento (SXADV-6008), e un updater
+    // eseguito piu' tardi, nel render, rimetterebbe in memoria quello della
+    // scheda appena chiusa.
+    // Nella stessa area: dal documentale non si finisce su una scheda del gestionale.
+    const prev = schedeDiArea(tabsRef.current, isSchedaDocumentale(closed) ? 'cdms' : 'menu');
+    const idx = prev.findIndex((t) => t.key === key);
+    const next = prev.filter((t) => t.key !== key);
+    // activeTabRef e non activeTab: dopo la domanda la chiusura arriva da una
+    // callback nata in un render precedente.
+    if (activeTabRef.current === key && next.length > 0) {
+      setActiveTab(next[Math.min(idx, next.length - 1)].key);
+    } else if (next.length === 0) {
+      setActiveTab('');
+    }
+    setTabs((p) => p.filter((t) => t.key !== key));
+    dimenticaSidDocumentale(closed.sid);
+    delete formValuesRef.current[key];
+    delete pendingByTabRef.current[key];
+    delete scrollByTabRef.current[key];
+    // La Session resta viva sul server finche' non gliela si chiude: senza
+    // questo si accumulano (e dopo un F5 le schede appena chiuse
+    // ricomparirebbero, ricostruite da `panels`). Come il closeSession() del
+    // client legacy.
+    void api.postAction2('CloseSession', { sid: closed.sid }).catch(() => {});
+    clearPendingUpload(closed.sid);
   };
 
   const currentTab = getActiveTabState();
