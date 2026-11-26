@@ -112,7 +112,7 @@ function pagina(cells: unknown[]): UITree {
     path: 'S1-0',
     rows: [
       { id: 'barra', cells },
-      { id: 'sotto', cells: [{ elementType: ELTYPE_CONTENT, colspan: 1, control: { name: 'tabs', id: 'tabs', type: 'tab', tabs: [] } }] },
+      { id: 'sotto', cells: [{ elementType: ELTYPE_CONTENT, colspan: 1, control: { name: 'tabs', id: 'tabs', type: 'tab', tabs: [{ name: 't1', prompt: 'Uno', selected: true }] } }] },
     ],
   } as unknown as UITree;
 }

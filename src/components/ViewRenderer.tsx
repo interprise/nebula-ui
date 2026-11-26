@@ -549,7 +549,7 @@ function nestedTabSplit(rows: UIRow[]): { formRows: UIRow[]; bottomRows: UIRow[]
   }
   if (splitIdx <= 0 || splitIdx >= rows.length) return null;
   const bottomRows = rows.slice(splitIdx);
-  if (!bottomRows.some((r) => r.cells.some((c) => c.control?.type === 'tab'))) return null;
+  if (!bottomRows.some((r) => r.cells.some((c) => isShownTabCell(c)))) return null;
   const formRows = rows.slice(0, splitIdx);
   if (!formRows.some(isRowVisible)) return null;
   return { formRows, bottomRows };
@@ -648,7 +648,7 @@ const NestedTabSplit: React.FC<{
       />
       <div className="view-split-bottom view-nested-bottom">
         {bottomRows.map((row, ri) => {
-          const tabCell = row.cells.find((c) => c.control?.type === 'tab');
+          const tabCell = row.cells.find((c) => isShownTabCell(c));
           if (tabCell?.control) {
             return (
               <SplitTabPanel
@@ -837,8 +837,8 @@ export const StackedSectionsContext = React.createContext<boolean>(false);
 /** Le sezioni visibili del pannello inferiore, tab esclusi. */
 function bottomSectionCount(rows: UIRow[]): number {
   return rows
-    .filter((r) => !r.cells.some((c) => c.control?.type === 'tab'))
-    .reduce((n, r) => n + r.cells.filter((c) => c.control && c.visible !== false && (!['embeddedView', 'detailView'].includes(c.control.type as string) || !!(c.control.rows ?? c.control.contentRows))).length, 0);
+    .filter((r) => !r.cells.some((c) => isShownTabCell(c)))
+    .reduce((n, r) => n + r.cells.filter((c) => c.control && c.visible !== false && controlProducesOutput(c.control) && (!['embeddedView', 'detailView'].includes(c.control.type as string) || !!(c.control.rows ?? c.control.contentRows))).length, 0);
 }
 
 /** True per il contenuto di un tab del pannello inferiore. Serve a decidere
@@ -981,6 +981,12 @@ function controlProducesOutput(ctl: UIControl): boolean {
     // those rows must still collapse.
     return !!(ctl.prompt || ctl.icon);
   }
+  if (type === 'tab') {
+    // Un tab senza schede (tutte condizionali e nessuna valida per il record:
+    // regContabiliTab nel dettaglio di un rigo di Reg. contabili) non disegna
+    // niente, come nel legacy (SXADV-6297).
+    return (ctl.tabs?.length ?? 0) > 0;
+  }
   if (STRUCTURAL_TYPES.has(type)) {
     return true;
   }
@@ -1022,11 +1028,31 @@ function isRowVisible(row: UIRow): boolean {
   });
 }
 
+/** Cella con un tab che ha almeno una scheda: un tab a zero schede non e' un
+ *  tab, ne' per l'area inferiore ne' per la sua barra (SXADV-6297). */
+function isShownTabCell(cell: UICell): boolean {
+  return cell.control?.type === 'tab' && cell.visible !== false && controlProducesOutput(cell.control);
+}
+
 /** Check if a row contains a tab, embeddedView, or detailView control */
 function isBottomPanelRow(row: UIRow): boolean {
   return row.cells.some((cell) => {
     const type = cell.control?.type;
     return type === 'tab' || type === 'embeddedView' || type === 'detailView';
+  });
+}
+
+/** Il rigo pannello disegna qualcosa? Un tab a zero schede, una vista
+ *  incorporata nascosta o ancora senza righe no: da soli aprivano un'area
+ *  inferiore vuota con il solo pulsante «Ingrandisce sezione» (SXADV-6297).
+ *  Stessa regola di bottomSectionCount e di renderContainerControl. */
+function panelRowShows(row: UIRow): boolean {
+  return row.cells.some((cell) => {
+    const ctl = cell.control;
+    const type = ctl?.type;
+    if (type !== 'tab' && type !== 'embeddedView' && type !== 'detailView') return false;
+    if (cell.visible === false || !controlProducesOutput(ctl!)) return false;
+    return type === 'tab' || !!(ctl!.rows ?? ctl!.contentRows);
   });
 }
 
@@ -1944,18 +1970,26 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
   // centinaio di pixel che faceva scorrere le sezioni dentro di se' e ne
   // lasciava vedere tre su cinque (SXADV-6300). Con un tab resta la divisione:
   // la barra dei tab deve restare a vista mentre la testata scorre.
-  const flowSections = stackedSections
-    && !bottomRows.some((r) => r.cells.some((c) => c.control?.type === 'tab'));
+  const hasShownTab = bottomRows.some((r) => r.cells.some((c) => isShownTabCell(c)));
+  const flowSections = stackedSections && !hasShownTab;
+  // Pannelli in coda che non disegnano niente (tab a zero schede, viste
+  // nascoste o vuote): resta la struttura a due aree — un tab che si riaccende
+  // con la prossima risposta non deve rimontare la testata e farle perdere il
+  // fuoco — ma senza area inferiore ne' divisore: la testata prende la pagina
+  // (SXADV-6297). Lo zoom dell'area vale solo con una barra tab che lo porta,
+  // quello di una sezione solo con un'area da mostrare.
+  const bottomShows = bottomRows.some(panelRowShows);
+  const zoomOn = zoomed && bottomShows && (!panelZoom || hasShownTab);
 
   // Split layout: form scrolls, bottom panel always visible
   if (bottomRows.length > 0) {
-    const formBlock = hasVisibleFormContent && !zoomed && (
+    const formBlock = hasVisibleFormContent && !zoomOn && (
           <>
             <div
               className={`view-split-form${flowSections ? ' view-split-form--flow' : ''}${resizing ? ' view-split-form--resizing' : ''}`}
               onMouseMove={edgeScroll.onMouseMove}
               onMouseLeave={edgeScroll.onMouseLeave}
-              style={flowSections ? undefined : { flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' }}
+              style={flowSections ? undefined : bottomShows ? { flex: `0 0 ${formFlexBasisPct}%`, maxHeight: 'none' } : { flex: '1 1 0', minHeight: 0 }}
             >
               <table ref={tableRef} className="layout-table" style={tableStyle}>
                 <tbody>
@@ -1975,7 +2009,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                 </tbody>
               </table>
             </div>
-            {!flowSections && (
+            {!flowSections && bottomShows && (
               <div
                 className="view-split-resizer"
                 onMouseDown={onResizerMouseDown}
@@ -1990,7 +2024,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
           <SplitAreaContext.Provider value={true}>
           {bottomRows.map((row, ri) => {
             // Tab rows: render tab bar + content rows in a table sharing the master grid
-            const tabCell = row.cells.find((c) => c.control?.type === 'tab');
+            const tabCell = row.cells.find((c) => isShownTabCell(c));
             if (tabCell?.control) {
               return (
                 <SplitTabPanel
@@ -2003,7 +2037,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
                      ripete l'etichetta del tab. Con lo zoom dell'AREA la barra
                      resta: è il contenuto del tab a prendersi lo schermo, qualunque
                      esso sia, e cambiare tab deve continuare a funzionare. */
-                  showBar={!zoomed || panelZoom}
+                  showBar={!zoomOn || panelZoom}
                   extraRight={(
                     <Tooltip title={sectionZoomTooltip(panelZoom)} placement="bottom">
                       <Button
@@ -2037,7 +2071,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
       <ViewNameContext.Provider value={ui.viewName}>
       <PathContext.Provider value={ui.path}>
       <div className="view-container" ref={splitContainerRef} onFocusCapture={onSplitFocus} onBlurCapture={onSplitBlur} onPointerDownCapture={onSplitPointerDown} onClickCapture={onSplitClick}>
-        {zoomed && !embedded && <ZoomEscapeFallback section={panelZoom} />}
+        {zoomOn && !embedded && <ZoomEscapeFallback section={panelZoom} />}
         {ui.title && !hasOlapCube && !titleEchoesTab && <div className="view-title">{ui.title}</div>}
         {actionBarRows.length > 0 && (
           <div className="action-bar-sticky">
@@ -2049,7 +2083,7 @@ const DetailFormView: React.FC<Omit<ViewRendererProps, 'onEditRow' | 'fillHeight
         {/* Stesso elemento nei due casi, cambia solo la classe: una sezione che
             si accende o si spegne (1 <-> 2 sezioni) non deve rimontare testata e
             griglie. Senza flusso il contenitore e' `display: contents`. */}
-        <div className={flowSections ? 'view-flow' : 'view-split-body'}>{formBlock}{bottomBlock}</div>
+        <div className={flowSections ? 'view-flow' : 'view-split-body'}>{formBlock}{bottomShows ? bottomBlock : null}</div>
       </div>
       </PathContext.Provider>
       </ViewNameContext.Provider>
@@ -2123,7 +2157,8 @@ const BottomPanelRow: React.FC<{
         // griglia alta zero. Dopo il salvataggio sembrava che il tab "Azioni"
         // non comparisse affatto (SXADV-5874.5); era li', schiacciato.
         // Stessa regola che CellRenderer applica dentro la tabella.
-        if (cell.visible === false) return null;
+        // Ne' una sezione che non disegna niente (tab a zero schede, SXADV-6297).
+        if (cell.visible === false || !controlProducesOutput(cell.control)) return null;
         return (
           <div key={cell.id || ci} className={stacked ? 'bottom-section' : undefined} style={{ display: 'flex', flexDirection: 'column', flex: stacked ? '0 0 auto' : 1, minHeight: 0 }}>
             {renderContainerControl(cell.control, onAction, onChange, onGridChange)}
@@ -2416,6 +2451,7 @@ function renderContainerControl(
 ): React.ReactNode {
   switch (control.type) {
     case 'tab': {
+      if (!controlProducesOutput(control)) return null; // zero schede (SXADV-6297)
       const selectedTab = control.tabs?.find((t) => t.selected) ?? control.tabs?.[0];
       const activeTab = selectedTab?.name;
       return (
