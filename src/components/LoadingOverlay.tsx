@@ -16,7 +16,11 @@ const SLOW_REQUEST_MS = 30000;
  * timeout e ripiegava su un Refresh; qui la risposta che arriva dopo e' quella
  * giusta, errori compresi, e va mostrata.
  */
-const LoadingOverlay: React.FC<{ progressPct?: number }> = ({ progressPct }) => {
+/** Testo dell'attesa di un job senza percentuale, come il legacy
+ *  (ui.js: Ext.MessageBox.wait "Attendere...", "Elaborazione in corso..."). */
+const JOB_WAIT_TEXT = 'Elaborazione in corso...';
+
+const LoadingOverlay: React.FC<{ progressPct?: number; jobWait?: boolean }> = ({ progressPct, jobWait }) => {
   const [slow, setSlow] = useState(false);
 
   // Il velo esiste solo mentre la scheda aspetta: il suo montaggio e' l'inizio
@@ -28,9 +32,11 @@ const LoadingOverlay: React.FC<{ progressPct?: number }> = ({ progressPct }) => 
 
   const description = progressPct != null
     ? `${progressPct}%`
-    : slow
-      ? 'La richiesta ci sta mettendo più del previsto. Si prega di attendere...'
-      : undefined;
+    : jobWait
+      ? JOB_WAIT_TEXT
+      : slow
+        ? 'La richiesta ci sta mettendo più del previsto. Si prega di attendere...'
+        : undefined;
 
   return (
     <div className="loading-overlay">

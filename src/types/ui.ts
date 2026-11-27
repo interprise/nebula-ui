@@ -429,6 +429,10 @@ export interface UIData {
   ckeditor?: boolean;
   trackAsynchJob?: boolean;
   showProgress?: boolean;
+  /** Il comando dichiara di aggiornare la percentuale (managedProgress lato
+   *  CORE). Con showProgress, solo allora l'attesa mostra la %, come
+   *  Ext.MessageBox.progress del legacy (SXADV-6309). */
+  progress?: boolean;
   callback?: string;
   // Server-driven "open this URL" directive emitted by workflow navigateUrl
   // events (e.g. visualizzaFE → VisFE styled-XML viewer). The client opens it

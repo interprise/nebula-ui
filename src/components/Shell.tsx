@@ -151,6 +151,9 @@ interface TabState {
   // non si mostra, altrimenti coprirebbe la lista ogni pochi secondi.
   quietLoading?: boolean;
   progressPct?: number; // 0-100 during async job polling
+  /** Job in corso senza percentuale gestita: il velo dice subito
+   *  «Elaborazione in corso...» come Ext.MessageBox.wait del legacy (SXADV-6309). */
+  jobWait?: boolean;
   // Two-phase pipeline: the templateKey ("viewName:pageType") of the
   // template currently driving this tab's render. Echoed back to the
   // server on subsequent requests so it can serve DATA-only when the
@@ -811,14 +814,20 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
 
   const processResponseInnerRef = useRef<(tabKey: string, resp: ServerResponse) => void>(() => {});
 
+  // `showPct`: il job ha dichiarato all'avvio (uiData.showProgress e
+  // uiData.progress) di gestire la percentuale. Solo allora la si mostra, come
+  // il legacy (ui.js handleErrors: Ext.MessageBox.progress, altrimenti
+  // Ext.MessageBox.wait senza numero). Un comando che non la gestisce lascia
+  // il progress della Session a 0 per tutta l'attesa — il Bilancio per minuti —
+  // e uno 0% fermo sembra un blocco (SXADV-6309).
   const pollProgress = useCallback(
-    async (tabKey: string, sid: string) => {
+    async (tabKey: string, sid: string, showPct: boolean) => {
       let delay = 500;
       const poll = async (): Promise<void> => {
         const resp = await api.checkProgress(sid);
         const progress = (resp as Record<string, unknown>).progress as number | undefined;
         // Update progress percentage for the loading indicator
-        if (progress != null && progress >= 0 && progress < 100) {
+        if (showPct && progress != null && progress >= 0 && progress < 100) {
           updateTabState(tabKey, { progressPct: progress });
         }
         // Job complete: progress is -1 or 100, or no trackAsynchJob flag
@@ -856,6 +865,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
         throw e;
       } finally {
         api.endTrackedJob();
+        updateTabState(tabKey, { jobWait: undefined });
       }
     },
     [updateTabState, answerAddWait]
@@ -1292,7 +1302,9 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
       if ((resp.uiData?.showProgress || resp.uiData?.trackAsynchJob || resp.trackAsynchJob) && !resp.ui) {
         const tabSid = sid || tabs.find((t) => t.key === tabKey)?.sid || 'S1';
         updateTabState(tabKey, { loading: true, progressPct: undefined });
-        pollProgress(tabKey, tabSid);
+        const showPct = resp.uiData?.showProgress === true && resp.uiData?.progress === true;
+        updateTabState(tabKey, { jobWait: !showPct });
+        pollProgress(tabKey, tabSid, showPct);
         return;
       }
       processResponseInner(tabKey, resp, replay);
@@ -3192,7 +3204,7 @@ const Shell: React.FC<ShellProps> = ({ menuItems, initialPanels, sessionLimit = 
             <FormValuesContext.Provider value={() => formValuesRef.current[currentTab.key] || {}}>
               <div className="tab-content" ref={tabContentRef} style={{ position: 'relative' }}>
                 {currentTab.loading && !currentTab.quietLoading && (
-                  <LoadingOverlay progressPct={currentTab.progressPct} />
+                  <LoadingOverlay progressPct={currentTab.progressPct} jobWait={currentTab.jobWait} />
                 )}
                 {currentTab.ui ? (
                   <>
